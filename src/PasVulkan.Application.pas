@@ -1473,6 +1473,9 @@ type EpvApplication=class(Exception)
 
        property VulkanFrameBuffers:TpvVulkanSwapChainSimpleDirectRenderTargetFrameBuffers read fVulkanFrameBuffers;
 
+       {$if defined(PasVulkanUseSDL2)}
+       property SDLWindow: PSDL_Window read fSurfaceWindow;
+       {$ifend}
       published
 
        property PasMPInstance:TPasMP read fPasMPInstance;
