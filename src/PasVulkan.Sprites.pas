@@ -73,6 +73,7 @@ uses SysUtils,
      PasVulkan.XML,
      PasVulkan.VectorPath,
      PasVulkan.Streams,
+     PasVulkan.SignedDistanceField2D,
      PasVulkan.Image.BMP,
      PasVulkan.Image.JPEG,
      PasVulkan.Image.PNG,
@@ -221,6 +222,7 @@ type EpvSpriteAtlas=class(Exception);
        fTrimmedRect:TpvRect;
        fOffset:TpvVector2;
        fSize:TpvVector2;
+       fSignedDistanceFieldVariant:TpvSignedDistanceField2DVariant;
        function GetSignedDistanceField:boolean; inline;
        procedure SetSignedDistanceField(const aSignedDistanceField:boolean); inline;
        function GetRotated:boolean; inline;
@@ -252,6 +254,7 @@ type EpvSpriteAtlas=class(Exception);
        property ScaleX:TpvFloat read fScaleX write fScaleX;
        property ScaleY:TpvFloat read fScaleY write fScaleY;
        property SignedDistanceField:boolean read GetSignedDistanceField write SetSignedDistanceField;
+       property SignedDistanceFieldVariant:TpvSignedDistanceField2DVariant read fSignedDistanceFieldVariant write fSignedDistanceFieldVariant;
        property Rotated:boolean read GetRotated write SetRotated;
      end;
 
@@ -289,7 +292,7 @@ type EpvSpriteAtlas=class(Exception);
 
      TpvSpriteAtlas=class
       private
-       const FileFormatGUID:TGUID='{DBF9E645-5C92-451B-94F7-134C891D484E}';
+       const FileFormatGUID:TGUID='{DBF9E645-5C92-451B-94F7-134C891D484F}';
       private
        fDevice:TpvVulkanDevice;
        fArrayTextures:TpvSpriteAtlasArrayTextures;
@@ -327,8 +330,8 @@ type EpvSpriteAtlas=class(Exception);
        procedure ClearAll; virtual;
        function LoadXML(const aTextureStream:TStream;const aStream:TStream):boolean;
        function LoadRawSprite(const aName:TpvRawByteString;aImageData:TpvPointer;const aImageWidth,aImageHeight:TpvInt32;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1;const aDepth16Bit:boolean=false;const aTrimmedHullVectors:PpvSpriteTrimmedHullVectors=nil):TpvSprite;
-       function LoadSignedDistanceFieldSprite(const aName:TpvRawByteString;const aVectorPath:TpvVectorPath;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprite; overload;
-       function LoadSignedDistanceFieldSprite(const aName,aSVGPath:TpvRawByteString;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aVectorPathFillRule:TpvVectorPathFillRule=TpvVectorPathFillRule.NonZero;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprite; overload;
+       function LoadSignedDistanceFieldSprite(const aName:TpvRawByteString;const aVectorPath:TpvVectorPath;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1;const aSDFVariant:TpvSignedDistanceField2DVariant=TpvSignedDistanceField2DVariant.Default;const aProtectBorder:boolean=false):TpvSprite; overload;
+       function LoadSignedDistanceFieldSprite(const aName,aSVGPath:TpvRawByteString;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aVectorPathFillRule:TpvVectorPathFillRule=TpvVectorPathFillRule.NonZero;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1;const aSDFVariant:TpvSignedDistanceField2DVariant=TpvSignedDistanceField2DVariant.Default;const aProtectBorder:boolean=false):TpvSprite; overload;
        function LoadSprite(const aName:TpvRawByteString;aStream:TStream;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprite;
        function LoadSprites(const aName:TpvRawByteString;aStream:TStream;aSpriteWidth:TpvInt32=64;aSpriteHeight:TpvInt32=64;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprites;
        procedure LoadFromStream(const aStream:TStream);
@@ -351,7 +354,6 @@ implementation
 
 uses PasDblStrUtils,
      PasVulkan.Archive.ZIP,
-     PasVulkan.SignedDistanceField2D,
      PasVulkan.ConvexHullGenerator2D;
 
 const MipMapLevels:array[boolean] of TpvInt32=(1,-1);
@@ -1211,7 +1213,7 @@ end;
 
 function TpvSpriteAtlas.LoadRawSprite(const aName:TpvRawByteString;aImageData:TpvPointer;const aImageWidth,aImageHeight:TpvInt32;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1;const aDepth16Bit:boolean=false;const aTrimmedHullVectors:PpvSpriteTrimmedHullVectors=nil):TpvSprite;
 var x,y,x0,y0,x1,y1,TextureIndex,LayerIndex,Layer,TotalPadding,PaddingIndex,Index:TpvInt32;
-    ArrayTexture:TpvSpriteAtlasArrayTexture;
+    ArrayTexture,TemporaryArrayTexture:TpvSpriteAtlasArrayTexture;
     Node:PpvSpriteAtlasArrayTextureLayerRectNode;
     Sprite:TpvSprite;
     sp,dp:PpvUInt32;
@@ -1526,18 +1528,21 @@ begin
      end;
     end;
 
+    ArrayTexture:=nil;
+
     // Get free texture area
     for TextureIndex:=0 to fCountArrayTextures-1 do begin
-     ArrayTexture:=fArrayTextures[TextureIndex];
-     if not ArrayTexture.fSpecialSizedArrayTexture then begin
-      for LayerIndex:=0 to ArrayTexture.fLayers-1 do begin
-       if assigned(ArrayTexture.fLayerRootNodes[LayerIndex]) then begin
+     TemporaryArrayTexture:=fArrayTextures[TextureIndex];
+     if not TemporaryArrayTexture.fSpecialSizedArrayTexture then begin
+      for LayerIndex:=0 to TemporaryArrayTexture.fLayers-1 do begin
+       if assigned(TemporaryArrayTexture.fLayerRootNodes[LayerIndex]) then begin
         // Including 2px texel bilinear interpolation protection border pixels
-        Node:=InsertTextureRectNode(ArrayTexture.fLayerRootNodes[LayerIndex],
+        Node:=InsertTextureRectNode(TemporaryArrayTexture.fLayerRootNodes[LayerIndex],
                                     TrimmedImageWidth+TotalPadding,
                                     TrimmedImageHeight+TotalPadding,
                                     (TrimmedImageWidth+TotalPadding)*(TrimmedImageHeight+TotalPadding));
-        if assigned(ArrayTexture) and assigned(Node) then begin
+        if assigned(TemporaryArrayTexture) and assigned(Node) then begin
+         ArrayTexture:=TemporaryArrayTexture;
          Layer:=LayerIndex;
          break;
         end;
@@ -1556,19 +1561,24 @@ begin
     // array texture in width and height, or for external imported sprite atlases
     if (Layer<0) or not (assigned(ArrayTexture) and assigned(Node)) then begin
      for TextureIndex:=0 to fCountArrayTextures-1 do begin
-      ArrayTexture:=fArrayTextures[TextureIndex];
-      if ((TrimmedImageWidth+TotalPadding)<=ArrayTexture.fWidth) and
-         ((TrimmedImageHeight+TotalPadding)<=ArrayTexture.fHeight) and
-         (ArrayTexture.fLayers<fMaximumCountArrayLayers) and
-         not ArrayTexture.fSpecialSizedArrayTexture then begin
-       LayerIndex:=ArrayTexture.fLayers;
-       ArrayTexture.Resize(ArrayTexture.fWidth,ArrayTexture.fHeight,LayerIndex+1);
-       Node:=InsertTextureRectNode(ArrayTexture.fLayerRootNodes[LayerIndex],
+      TemporaryArrayTexture:=fArrayTextures[TextureIndex];
+      if ((TrimmedImageWidth+TotalPadding)<=TemporaryArrayTexture.fWidth) and
+         ((TrimmedImageHeight+TotalPadding)<=TemporaryArrayTexture.fHeight) and
+         (TemporaryArrayTexture.fLayers<fMaximumCountArrayLayers) and
+         not TemporaryArrayTexture.fSpecialSizedArrayTexture then begin
+       LayerIndex:=TemporaryArrayTexture.fLayers;
+       TemporaryArrayTexture.Resize(TemporaryArrayTexture.fWidth,TemporaryArrayTexture.fHeight,LayerIndex+1);
+       Node:=InsertTextureRectNode(TemporaryArrayTexture.fLayerRootNodes[LayerIndex],
                                    TrimmedImageWidth+TotalPadding,
                                    TrimmedImageHeight+TotalPadding,
                                    (TrimmedImageWidth+TotalPadding)*(TrimmedImageHeight+TotalPadding));
        if assigned(Node) then begin
+        ArrayTexture:=TemporaryArrayTexture;
         Layer:=LayerIndex;
+        break;
+       end else begin
+        // Undo for saving vRAM space
+        TemporaryArrayTexture.Resize(TemporaryArrayTexture.fWidth,TemporaryArrayTexture.fHeight,TemporaryArrayTexture.fLayers-1);
        end;
       end;
      end;
@@ -1600,9 +1610,9 @@ begin
      end;
     end;
 
-    Assert((Layer>=0) and (assigned(ArrayTexture) and assigned(Node)));
+    Assert((Layer>=0) and (assigned(ArrayTexture) and (Layer<ArrayTexture.fLayers) and assigned(Node)));
 
-    if not ((Layer>=0) and (assigned(ArrayTexture) and assigned(Node))) then begin
+    if not ((Layer>=0) and (assigned(ArrayTexture) and (Layer<ArrayTexture.fLayers) and assigned(Node))) then begin
      raise EpvSpriteAtlas.Create('Can''t load raw sprite');
     end;
 
@@ -1671,14 +1681,14 @@ begin
         end;
        end;
        for y:=-1 to TrimmedImageHeight do begin
-        sp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x,Sprite.y,Layer));
+        sp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x,Sprite.y+y,Layer));
         for PaddingIndex:=-1 downto -aPadding do begin
-         dp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+PaddingIndex,Sprite.y,Layer));
+         dp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+PaddingIndex,Sprite.y+y,Layer));
          dp16^:=sp16^;
         end;
-        sp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+(TrimmedImageWidth-1),Sprite.y,Layer));
+        sp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+(TrimmedImageWidth-1),Sprite.y+y,Layer));
         for PaddingIndex:=0 to aPadding-1 do begin
-         dp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+TrimmedImageWidth+PaddingIndex,Sprite.y,Layer));
+         dp16:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+TrimmedImageWidth+PaddingIndex,Sprite.y+y,Layer));
          dp16^:=sp16^;
         end;
        end;
@@ -1703,14 +1713,14 @@ begin
         end;
        end;
        for y:=-1 to TrimmedImageHeight do begin
-        sp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x,Sprite.y,Layer));
+        sp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x,Sprite.y+y,Layer));
         for PaddingIndex:=-1 downto -aPadding do begin
-         dp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+PaddingIndex,Sprite.y,Layer));
+         dp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+PaddingIndex,Sprite.y+y,Layer));
          dp^:=sp^;
         end;
-        sp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+(TrimmedImageWidth-1),Sprite.y,Layer));
+        sp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+(TrimmedImageWidth-1),Sprite.y+y,Layer));
         for PaddingIndex:=0 to aPadding-1 do begin
-         dp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+TrimmedImageWidth+PaddingIndex,Sprite.y,Layer));
+         dp:=TpvPointer(ArrayTexture.GetTexelPointer(Sprite.x+TrimmedImageWidth+PaddingIndex,Sprite.y+y,Layer));
          dp^:=sp^;
         end;
        end;
@@ -1745,29 +1755,36 @@ begin
 
 end;
 
-function TpvSpriteAtlas.LoadSignedDistanceFieldSprite(const aName:TpvRawByteString;const aVectorPath:TpvVectorPath;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprite;
+function TpvSpriteAtlas.LoadSignedDistanceFieldSprite(const aName:TpvRawByteString;const aVectorPath:TpvVectorPath;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble;const aOffsetX:TpvDouble;const aOffsetY:TpvDouble;const aAutomaticTrim:boolean;const aPadding:TpvInt32;const aTrimPadding:TpvInt32;const aSDFVariant:TpvSignedDistanceField2DVariant;const aProtectBorder:boolean):TpvSprite;
 var SignedDistanceField:TpvSignedDistanceField2D;
+    VectorPathShape:TpvVectorPathShape;
 begin
  SignedDistanceField.Pixels:=nil;
  try
   SignedDistanceField.Width:=aImageWidth;
   SignedDistanceField.Height:=aImageHeight;
   SetLength(SignedDistanceField.Pixels,aImageWidth*aImageHeight);
-  TpvSignedDistanceField2DGenerator.Generate(SignedDistanceField,aVectorPath,aScale,aOffsetX,aOffsetY);
+  VectorPathShape:=TpvVectorPathShape.Create(aVectorPath);
+  try
+   TpvSignedDistanceField2DGenerator.Generate(SignedDistanceField,VectorPathShape,aScale,aOffsetX,aOffsetY,aSDFVariant,aProtectBorder);
+  finally
+   FreeAndNil(VectorPathShape);
+  end;
   result:=LoadRawSprite(aName,@SignedDistanceField.Pixels[0],aImageWidth,aImageHeight,aAutomaticTrim,aPadding,aTrimPadding);
   result.SignedDistanceField:=true;
+  result.SignedDistanceFieldVariant:=aSDFVariant;
  finally
   SignedDistanceField.Pixels:=nil;
  end;
 end;
 
-function TpvSpriteAtlas.LoadSignedDistanceFieldSprite(const aName,aSVGPath:TpvRawByteString;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble=1.0;const aOffsetX:TpvDouble=0.0;const aOffsetY:TpvDouble=0.0;const aVectorPathFillRule:TpvVectorPathFillRule=TpvVectorPathFillRule.NonZero;const aAutomaticTrim:boolean=true;const aPadding:TpvInt32=2;const aTrimPadding:TpvInt32=1):TpvSprite;
+function TpvSpriteAtlas.LoadSignedDistanceFieldSprite(const aName,aSVGPath:TpvRawByteString;const aImageWidth,aImageHeight:TpvInt32;const aScale:TpvDouble;const aOffsetX:TpvDouble;const aOffsetY:TpvDouble;const aVectorPathFillRule:TpvVectorPathFillRule;const aAutomaticTrim:boolean;const aPadding:TpvInt32;const aTrimPadding:TpvInt32;const aSDFVariant:TpvSignedDistanceField2DVariant;const aProtectBorder:boolean):TpvSprite;
 var VectorPath:TpvVectorPath;
 begin
  VectorPath:=TpvVectorPath.CreateFromSVGPath(aSVGPath);
  try
   VectorPath.FillRule:=aVectorPathFillRule;
-  result:=LoadSignedDistanceFieldSprite(aName,VectorPath,aImageWidth,aImageHeight,aScale,aOffsetX,aOffsetY,aAutomaticTrim,aPadding,aTrimPadding);
+  result:=LoadSignedDistanceFieldSprite(aName,VectorPath,aImageWidth,aImageHeight,aScale,aOffsetX,aOffsetY,aAutomaticTrim,aPadding,aTrimPadding,aSDFVariant,aProtectBorder);
  finally
   VectorPath.Free;
  end;
@@ -2028,6 +2045,7 @@ var FileGUID:TGUID;
     ui8:TpvUInt8;
     NewImageData:TpvPointer;
     WidthValue,HeightValue,LayersValue,CountSprites,CountTrimmedHullVectors:TpvInt32;
+    IsQOI,SRGBQOI,OK:Boolean;
 begin
 
  Unload;
@@ -2132,6 +2150,9 @@ begin
       Sprite.fOffsetY:=ReadFloat;
       Sprite.fScaleX:=ReadFloat;
       Sprite.fScaleY:=ReadFloat;
+      if TpvSpriteFlag.SignedDistanceField in Sprite.fFlags then begin
+       Sprite.fSignedDistanceFieldVariant:=TpvSignedDistanceField2DVariant(TpvUInt8(ReadUInt8));
+      end;
       Sprite.fTrimmedHullVectors:=nil;
       if (ui8 and 4)<>0 then begin
        CountTrimmedHullVectors:=ReadInt32;
@@ -2161,22 +2182,45 @@ begin
    ArrayTexture:=fArrayTextures[Index];
    if assigned(ArrayTexture) then begin
     for SubIndex:=0 to ArrayTexture.fLayers-1 do begin
+     IsQOI:=false;
      Entry:=Archive.Entries.Find(TpvRawByteString(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png'));
      if not assigned(Entry) then begin
-      raise EpvSpriteAtlas.Create('Missing '+IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png');
+      Entry:=Archive.Entries.Find(TpvRawByteString(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.qoi'));
+      if assigned(Entry) then begin
+       IsQOI:=true;
+      end else begin
+       raise EpvSpriteAtlas.Create('Missing '+IntToStr(Index)+'_'+IntToStr(SubIndex)+'.[png|qoi]');
+      end;
      end;
      Stream:=TMemoryStream.Create;
      try
       Entry.SaveToStream(Stream);
       ImageData:=nil;
       try
-       if LoadPNGImage(TMemoryStream(Stream).Memory,
-                       TMemoryStream(Stream).Size,
-                       ImageData,
-                       ImageWidth,
-                       ImageHeight,
-                       false,
-                       PNGPixelFormat) then begin
+       OK:=false;
+       if IsQOI then begin
+        if LoadQOIImage(TMemoryStream(Stream).Memory,
+                        TMemoryStream(Stream).Size,
+                        ImageData,
+                        ImageWidth,
+                        ImageHeight,
+                        false,
+                        SRGBQOI) then begin
+         OK:=true;
+         PNGPixelFormat:=TpvPNGPixelFormat.R8G8B8A8;
+        end;
+       end else begin
+        if LoadPNGImage(TMemoryStream(Stream).Memory,
+                        TMemoryStream(Stream).Size,
+                        ImageData,
+                        ImageWidth,
+                        ImageHeight,
+                        false,
+                        PNGPixelFormat) then begin
+         OK:=true;
+        end;
+       end;
+       if OK then begin
         if (ImageWidth=ArrayTexture.fWidth) and
            (ImageHeight=ArrayTexture.fHeight) then begin
          if fDepth16Bit then begin
@@ -2213,10 +2257,18 @@ begin
          ArrayTexture.fLayerRootNodes[SubIndex].ContentHeight:=ImageHeight;
          ArrayTexture.CopyIn(ImageData^,ImageWidth,ImageHeight,0,0,SubIndex);
         end else begin
-         raise EpvSpriteAtlas.Create(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png has wrong size');
+         if IsQOI then begin
+          raise EpvSpriteAtlas.Create(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.qoi has wrong size');
+         end else begin
+          raise EpvSpriteAtlas.Create(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png has wrong size');
+         end;
         end;
        end else begin
-        raise EpvSpriteAtlas.Create('Corrupt '+IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png');
+        if IsQOI then begin
+         raise EpvSpriteAtlas.Create('Corrupt '+IntToStr(Index)+'_'+IntToStr(SubIndex)+'.qoi');
+        end else begin
+         raise EpvSpriteAtlas.Create('Corrupt '+IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png');
+        end;
        end;
       finally
        if assigned(ImageData) then begin
@@ -2376,6 +2428,9 @@ begin
        WriteFloat(Sprite.fOffsetY);
        WriteFloat(Sprite.fScaleX);
        WriteFloat(Sprite.fScaleY);
+       if TpvSpriteFlag.SignedDistanceField in Sprite.fFlags then begin
+        WriteUInt8(TpvUInt8(Sprite.fSignedDistanceFieldVariant));
+       end;
        if length(Sprite.fTrimmedHullVectors)>0 then begin
         WriteInt32(length(Sprite.fTrimmedHullVectors));
         for SubIndex:=0 to length(Sprite.fTrimmedHullVectors)-1 do begin
@@ -2405,7 +2460,11 @@ begin
    ArrayTexture:=fArrayTextures[Index];
    if assigned(ArrayTexture) then begin
     for SubIndex:=0 to ArrayTexture.fLayers-1 do begin
-     Entry:=Archive.Entries.Add(TpvRawByteString(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png'));
+     if fDepth16Bit then begin
+      Entry:=Archive.Entries.Add(TpvRawByteString(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png'));
+     end else begin
+      Entry:=Archive.Entries.Add(TpvRawByteString(IntToStr(Index)+'_'+IntToStr(SubIndex)+'.png'));
+     end;
      try
       Entry.Stream:=TMemoryStream.Create;
       if fDepth16Bit then begin
@@ -2422,6 +2481,11 @@ begin
                             Entry.Stream,
                             TpvPNGPixelFormat.R8G8B8A8,
                             aFast);
+{      SaveQOIImageAsStream(ArrayTexture.GetTexelPointer(0,0,SubIndex),
+                            ArrayTexture.fWidth,
+                            ArrayTexture.fHeight,
+                            Entry.Stream,
+                            true);}
       end;
      finally
       Entry.CompressionLevel:=0;

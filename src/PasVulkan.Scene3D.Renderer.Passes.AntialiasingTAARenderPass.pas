@@ -148,7 +148,7 @@ begin
  fResourceCurrentColor:=AddImageInput(fInstance.LastOutputResource.ResourceType.Name,
                                       fInstance.LastOutputResource.Resource.Name,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                      [TpvFrameGraph.TResourceTransition.TFlag.Attachment]);
+                                      []);
 
 {if fInstance.Renderer.TransparencyMode in [TpvScene3DRendererTransparencyMode.DIRECT,
                                             TpvScene3DRendererTransparencyMode.SPINLOCKOIT,
@@ -159,26 +159,26 @@ begin
   fResourceCurrentColor:=AddImageInput('resourcetype_color_optimized_non_alpha',
                                        'resource_combinedopaquetransparency_final_color',
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                       []
                                       );
  end else begin
   fResourceCurrentColor:=AddImageInput('resourcetype_color_optimized_non_alpha',
                                        'resource_forwardrendering_color',
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                       []
                                       );
  end;}
 
  fResourceCurrentDepth:=AddImageInput('resourcetype_depth',
                                       'resource_depth_data',
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                      [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                      []
                                      );
 
  fResourceVelocity:=AddImageInput('resourcetype_velocity',
                                   'resource_velocity_data',
                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                   [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                   []
                                   );
 
  fResourceSurface:=AddImageOutput('resourcetype_color_temporal_antialiasing',
@@ -260,7 +260,7 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesAntialiasingTAARenderPass.AcquireVolatileResources;
-var InFlightFrameIndex:TpvSizeInt;
+var InFlightFrameIndex,PreviousInFlightFrameIndex:TpvSizeInt;
 begin
  inherited AcquireVolatileResources;
 
@@ -301,6 +301,10 @@ begin
  fVulkanDescriptorSetLayout.Initialize;
 
  for InFlightFrameIndex:=0 to FrameGraph.CountInFlightFrames-1 do begin
+  PreviousInFlightFrameIndex:=InFlightFrameIndex-1;
+  if PreviousInFlightFrameIndex<0 then begin
+   inc(PreviousInFlightFrameIndex,FrameGraph.CountInFlightFrames);
+  end;
   fVulkanDescriptorSets[InFlightFrameIndex]:=TpvVulkanDescriptorSet.Create(fVulkanDescriptorPool,
                                                                            fVulkanDescriptorSetLayout);
   fVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(0,
@@ -330,7 +334,7 @@ begin
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
                                                                  [TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
-                                                                                                fInstance.TAAHistoryColorImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
+                                                                                                fInstance.TAAHistoryColorImages[PreviousInFlightFrameIndex].VulkanArrayImageView.Handle,
                                                                                                 TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],
@@ -341,7 +345,7 @@ begin
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
                                                                  [TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
-                                                                                                fInstance.TAAHistoryDepthImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
+                                                                                                fInstance.TAAHistoryDepthImages[PreviousInFlightFrameIndex].VulkanArrayImageView.Handle,
                                                                                                 TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],

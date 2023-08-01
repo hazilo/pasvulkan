@@ -76,7 +76,7 @@ uses {$ifdef Windows}
      PasVulkan.Types,
      PasVulkan.Utils,
      PasVulkan.Math,
-     PasVulkan.Hash.SHA3,
+     PasVulkan.Hash.xxHash64,
      PasVulkan.Collections,
      PasVulkan.HighResolutionTimer,
      PasVulkan.IDManager,
@@ -85,6 +85,7 @@ uses {$ifdef Windows}
      PasVulkan.Framework,
      PasVulkan.Application,
      PasVulkan.BVH.DynamicAABBTree,
+     PasVulkan.BVH.Triangles,
      PasVulkan.PooledObject,
      PasVulkan.Frustum;
 
@@ -96,6 +97,10 @@ type EpvScene3D=class(Exception);
       public
        const MaxRenderPassIndices=32;
              MaxVisibleLights=65536;
+             MaxDebugPrimitiveVertices=1 shl 20;
+             MaxParticles=65536; // <= Must be power of two
+             ParticleIndexMask=MaxParticles-1;
+             MaxParticleVertices=MaxParticles*3;
              LightClusterSizeX=16;
              LightClusterSizeY=8;
              LightClusterSizeZ=32;
@@ -115,12 +120,19 @@ type EpvScene3D=class(Exception);
              LightClusterGridHashMask=LightClusterGridHashSize-1;
        type TPrimitiveTopology=VK_PRIMITIVE_TOPOLOGY_POINT_LIST..VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
             TDoubleSided=boolean;
+            TFrontFacesInversed=boolean;
+            TFaceCullingMode=
+             (
+              None,
+              Normal,
+              Inversed
+             );
             TBufferStreamingMode=
              (
               Direct,
               Staging
              );
-            TGraphicsPipelines=array[TPrimitiveTopology,TDoubleSided] of TpvVulkanPipeline;
+           TGraphicsPipelines=array[TPrimitiveTopology,TFaceCullingMode] of TpvVulkanPipeline;
             TTextureRawIndex=
              (
               None=-1,
@@ -260,6 +272,7 @@ type EpvScene3D=class(Exception);
               function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0;const aDefaultW:TpvDouble=0.0):TpvVector4; overload; inline;
               function Get(const aDefault:TpvVector4):TpvVector4; overload; inline;
             end;
+            TInFlightFrameAABBs=array[0..MaxInFlightFrames-1] of TpvAABB;
        const MaxViews=65536 div SizeOf(TView);
        type TID=TpvUInt32;
             TIDManager=class(TpvGenericIDManager<TID>);
@@ -321,6 +334,62 @@ type EpvScene3D=class(Exception);
             end;
             PCachedVertex=^TCachedVertex;
             TCachedVertices=array of TCachedVertex;
+            { TDebugPrimitiveVertex }
+            TDebugPrimitiveVertex=packed record
+             public
+              constructor Create(const aPosition:TpvVector3;const aColor:TpvVector4);
+             public
+              case boolean of
+               false:(
+                Position:TpvVector3;                  //  12    0
+                Color:TpvHalfFloatVector4;            // + 8 =  8
+               );                                     //  ==   ==
+               true:(                                 //  24   24 per vertex
+                Padding:array[0..23] of TpvUInt8;
+               );
+            end;
+            PDebugPrimitiveVertex=^TDebugPrimitiveVertex;
+            TDebugPrimitiveVertices=array of TDebugPrimitiveVertex;
+            TDebugPrimitiveVertexDynamicArray=class(TpvDynamicArrayList<TDebugPrimitiveVertex>)
+            end;
+            TDebugPrimitiveVertexDynamicArrays=array[0..MaxInFlightFrames-1] of TDebugPrimitiveVertexDynamicArray;
+            TParticle=record
+             LastGeneration:TpvUInt64;
+             Generation:TpvUInt64;
+             LastPosition:TpvVector3;
+             Position:TpvVector3;
+             RotationStart:TpvFloat;
+             RotationEnd:TpvFloat;
+             SizeStart:TpvVector2;
+             SizeEnd:TpvVector2;
+             ColorStart:TpvVector4;
+             ColorEnd:TpvVector4;
+             Velocity:TpvVector3;
+             Gravity:TpvVector3;
+             Age:TpvDouble;
+             LifeTime:TpvDouble;
+             LastTime:TpvFloat;
+             Time:TpvFloat;
+             TextureID:TpvUInt32;
+            end;
+            PParticle=^TParticle;
+            TParticles=array[0..MaxParticles-1] of TParticle;
+            PParticles=^TParticles;
+            TParticleAliveBitmap=array[0..((MaxParticles+31) shr 5)-1] of TpvUInt32;
+            PParticleAliveBitmap=^TParticleAliveBitmap;
+            TParticleVertex=packed record
+             Position:TpvVector3;           //   12
+             Rotation:TpvFloat;             //    4
+             QuadCoord:TpvHalfFloatVector2; //    4
+             TextureID:TpvUInt32;           //    4
+             Size:TpvVector2;               //    8
+             Color:TpvHalfFloatVector4;     //    8
+            end;                            // = 40 bytes per particle vertex
+            PParticleVertex=^TParticleVertex;
+            TParticleVertices=array[0..(MaxParticles*3)-1] of TParticleVertex;
+            PParticleVertices=^TParticleVertices;
+            TInFlightFrameParticleVertices=array[0..MaxInFlightFrames-1] of TParticleVertices; // 18MB in total at the moment
+            PInFlightFrameParticleVertices=^TInFlightFrameParticleVertices;
             TJointBlock=packed record
              case boolean of
               false:(
@@ -347,25 +416,30 @@ type EpvScene3D=class(Exception);
               fID:TID;
               fName:TpvUTF8String;
               fReferenceCounter:Int32;
+              fDataLoaded:TPasMPBool32;
+              fInLoadData:TPasMPBool32;
               fUploaded:TPasMPBool32;
               fInUpload:TPasMPBool32;
               fAdded:TPasMPBool32;
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure PrepareDeferredFree; override;
               procedure Remove; virtual;
+              procedure LoadData; virtual;
               procedure Upload; virtual;
               procedure Unload; virtual;
               procedure IncRef; virtual;
               procedure DecRef; virtual;
+              procedure DecRefWithNondeferredFree; virtual;
              public
               property SceneInstance:TpvScene3D read fSceneInstance;
               property ID:TID read fID;
              published
               property Name:TpvUTF8String read fName write fName;
+              property DataLoaded:TPasMPBool32 read fDataLoaded;
               property Uploaded:TPasMPBool32 read fUploaded;
               property ReferenceCounter:Int32 read fReferenceCounter;
             end;
@@ -374,9 +448,9 @@ type EpvScene3D=class(Exception);
             TBakedMesh=class
              public
               type { TTriangle }
-                   TTriangle=class(TpvPooledObject)
+                   TTriangle=record
                     public
-                     type TFlag=
+                     type TTriangleFlag=
                            (
                             DoubleSided,
                             Opaque,
@@ -384,20 +458,22 @@ type EpvScene3D=class(Exception);
                             Static,
                             Animated
                            );
-                          PFlag=^TFlag;
-                          TFlags=set of TFlag;
-                          PFlags=^TFlags;
+                          PTriangleFlag=^TTriangleFlag;
+                          TTriangleFlags=set of TTriangleFlag;
+                          PTriangleFlags=^TTriangleFlags;
                     public
                      Positions:array[0..2] of TpvVector3;
                      Normals:array[0..2] of TpvVector3;
                      Normal:TpvVector3;
-                     Flags:TFlags;
+                     Flags:TTriangleFlags;
                      MetaFlags:TpvUInt32;
                     public
+                     class function Create:TpvScene3D.TBakedMesh.TTriangle; static;
                      procedure Assign(const aFrom:TpvScene3D.TBakedMesh.TTriangle);
-                     function RayIntersection(const aRayOrigin,aRayDirection:TpvVector3;var aTime,aU,v:TpvScalar):boolean;
+                     function RayIntersection(const aRayOrigin,aRayDirection:TpvVector3;var aTime,aU,aV:TpvScalar):boolean;
                    end;
-                   TTriangles=class(TpvObjectGenericList<TpvScene3D.TBakedMesh.TTriangle>)
+                   PTriangle=^TTriangle;
+                   TTriangles=class(TpvDynamicArrayList<TpvScene3D.TBakedMesh.TTriangle>)
                    end;
              private
               fTriangles:TpvScene3D.TBakedMesh.TTriangles;
@@ -471,7 +547,7 @@ type EpvScene3D=class(Exception);
                      ManualZones
                     );
                    { TNode }
-                   TNode=class(TpvPooledObject)
+                   TNode=class//(TpvPooledObject)
                     private
                      fOwner:TPotentiallyVisibleSet;
                      fParent:TNode;
@@ -481,7 +557,7 @@ type EpvScene3D=class(Exception);
                      fRight:TpvScene3D.TPotentiallyVisibleSet.TNode;
                      fIndex:TpvUInt32;
                      fSkipCount:TpvUInt32;
-                     fTag:TpvPtrInt;
+                     //fTag:TpvPtrInt;
                      fVisibleNodeList:TpvScene3D.TPotentiallyVisibleSet.TNodeIndexList;
                      fMultipleReaderSingleWriterLockState:TPasMPInt32;
                     public
@@ -512,8 +588,7 @@ type EpvScene3D=class(Exception);
               fSubdivisonMode:TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode;
               fSubdivisonOneDimensionSize:TpvSizeInt;
               fBakedMesh:TpvScene3D.TBakedMesh;
-              fTriangleDynamicAABBTree:TpvBVHDynamicAABBTree;
-              fTriangleDynamicAABBTreeSkipList:TpvBVHDynamicAABBTree.TSkipList;
+              fTriangleBVH:TpvTriangleBVH;
               fAABB:TpvAABB;
               fRoot:TpvScene3D.TPotentiallyVisibleSet.TNode;
               fNodes:TpvScene3D.TPotentiallyVisibleSet.TNodes;
@@ -563,7 +638,8 @@ type EpvScene3D=class(Exception);
                      ResourceTexture=2
                     );
                    THashData=packed record
-                    MessageDigest:TpvHashSHA3.TMessageDigest;
+                    MessageDigest:TpvHashXXHash64.TMessageDigest;
+                    FirstBytes:array[0..127-SizeOf(TpvHashXXHash64.TMessageDigest)] of TpvUInt8;
                    end;
                    PHashData=^THashData;
              private
@@ -573,11 +649,12 @@ type EpvScene3D=class(Exception);
               fTexture:TpvVulkanTexture;
               fLock:TPasMPSpinLock;
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure Remove; override;
+              procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
               function BeginLoad(const aStream:TStream):boolean; override;
@@ -609,11 +686,12 @@ type EpvScene3D=class(Exception);
               fLock:TPasMPSpinLock;
               fSampler:TpvVulkanSampler;
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure Remove; override;
+              procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
               function GetHashData:THashData;
@@ -635,11 +713,12 @@ type EpvScene3D=class(Exception);
               fImage:TImage;
               fSampler:TSampler;
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure Remove; override;
+              procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
               function GetHashData:THashData;
@@ -780,9 +859,7 @@ type EpvScene3D=class(Exception);
                      );
                    end;
                    PShaderData=^TShaderData;
-
                    { TData }
-
                    TData=record
                     public
                      ShadingModel:TShadingModel;
@@ -926,11 +1003,12 @@ type EpvScene3D=class(Exception);
               fVulkanDescriptorPool:TpvVulkanDescriptorPool;
               fVulkanDescriptorSet:TpvVulkanDescriptorSet;}
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure Remove; override;
+              procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
               procedure Assign(const aFrom:TMaterial);
@@ -941,12 +1019,13 @@ type EpvScene3D=class(Exception);
             TMaterials=TpvObjectGenericList<TMaterial>;
             TCameraData=record
              public
-              type TType=
+              type TCameraType=
                     (
                      None=0,
                      Orthographic=1,
                      Perspective=2
                     );
+                   TType=TCameraType;
                    TOrthographic=record
                     XMag:TpvFloat;
                     YMag:TpvFloat;
@@ -960,18 +1039,18 @@ type EpvScene3D=class(Exception);
                     ZFar:TpvFloat;
                    end;
              public
-              case Type_:TCameraData.TType of
-               TType.Orthographic:(
+              case Type_:TCameraData.TCameraType of
+               TCameraType.Orthographic:(
                 Orthographic:TOrthographic;
                );
-               TType.Perspective:(
+               TCameraType.Perspective:(
                 Perspective:TPerspective;
                );
             end;
             PCameraData=^TCameraData;
             TLightData=record
              public
-              type TType=
+              type TLightType=
                     (
                      None=0,
                      Directional=1,
@@ -979,8 +1058,9 @@ type EpvScene3D=class(Exception);
                      Spot=3,
                      PrimaryDirectional=4
                     );
+                   TType=TLightType;
              private
-              fType_:TType;
+              fType_:TLightType;
               fIntensity:TpvFloat;
               fRange:TpvFloat;
               fInnerConeAngle:TpvFloat;
@@ -990,7 +1070,7 @@ type EpvScene3D=class(Exception);
               fVisible:boolean;
               fAlways:boolean;
              public
-              property Type_:TType read fType_ write fType_;
+              property Type_:TLightType read fType_ write fType_;
               property Intensity:TpvFloat read fIntensity write fIntensity;
               property Range:TpvFloat read fRange write fRange;
               property InnerConeAngle:TpvFloat read fInnerConeAngle write fInnerConeAngle;
@@ -1077,7 +1157,7 @@ type EpvScene3D=class(Exception);
              public
               property Data:TpvScene3D.TLightData read fData write fData;
               property DataPointer:TpvScene3D.PLightData read fDataPointer write fDataPointer;
-              property Type_:TpvScene3D.TLightData.TType read fData.fType_ write fData.fType_;
+              property Type_:TpvScene3D.TLightData.TLightType read fData.fType_ write fData.fType_;
               property Intensity:TpvFloat read fData.fIntensity write fData.fIntensity;
               property Range:TpvFloat read fData.fRange write fData.fRange;
               property InnerConeAngle:TpvFloat read fData.fInnerConeAngle write fData.fInnerConeAngle;
@@ -1263,6 +1343,7 @@ type EpvScene3D=class(Exception);
                             TargetPointer:TpvUTF8String;
                             TargetIndex:TpvSizeInt;
                             TargetSubIndex:TpvSizeInt;
+                            TargetInstanceIndex:TpvSizeInt;
                             Interpolation:TInterpolation;
                             InputTimeArray:TpvDoubleDynamicArray;
                             OutputScalarArray:TpvFloatDynamicArray;
@@ -1277,6 +1358,7 @@ type EpvScene3D=class(Exception);
                             Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
                             TargetIndex:TpvSizeInt;
                             TargetSubIndex:TpvSizeInt;
+                            TargetInstanceIndex:TpvSizeInt;
                           end;
                           PDefaultChannel=^TDefaultChannel;
                           TDefaultChannels=array of TDefaultChannel;
@@ -1498,23 +1580,9 @@ type EpvScene3D=class(Exception);
                      type { TAnimation }
                           TAnimation=class
                            public
-                            type TChannel=class
-                                  public
-                                   type TType=
-                                         (
-                                          None,
-                                          Node,
-                                          Light,
-                                          Camera,
-                                          Material
-                                         );
-                                  private
-                                   fType:TType;
-                                   fTarget:Pointer;
-                                   fTargetSubIndex:TpvSizeInt;
-                                   fOverwrite:TpvSizeInt;
-                                 end;
-                                 TChannels=TpvObjectGenericList<TChannel>;
+                            type TChannelOverwrite=TpvSizeInt;
+                                 PChannelOverwrite=^TChannelOverwrite;
+                                 TChannelOverwrites=array of TChannelOverwrite;
                                  TLastIndices=array of TpvSizeInt;
                            private
                             fFactor:TpvFloat;
@@ -1522,7 +1590,7 @@ type EpvScene3D=class(Exception);
                             fLastIndices:TLastIndices;
                             fShadowTime:TpvDouble;
                             fComplete:LongBool;
-                            fChannels:TChannels;
+                            fChannelOverwrites:TChannelOverwrites;
                            public
                             constructor Create; reintroduce;
                             destructor Destroy; override;
@@ -1535,7 +1603,7 @@ type EpvScene3D=class(Exception);
                           TAnimations=array of TpvScene3D.TGroup.TInstance.TAnimation;
                           TNode=record
                            public
-                            type TOverwriteFlag=
+                            type TNodeOverwriteFlag=
                                   (
                                    Defaults,
                                    DefaultTranslation,
@@ -1548,21 +1616,28 @@ type EpvScene3D=class(Exception);
                                    Weights,
                                    Pointer_
                                   );
-                                 TOverwriteFlags=set of TOverwriteFlag;
-                                 TOverwrite=record
+                                 TNodeOverwriteFlags=set of TNodeOverwriteFlag;
+                                 TNodeOverwrite=record
                                   public
-                                   Flags:TOverwriteFlags;
+                                   Flags:TNodeOverwriteFlags;
                                    Translation:TpvVector3;
                                    Rotation:TpvQuaternion;
                                    Scale:TpvVector3;
                                    Weights:TpvFloatDynamicArray;
                                    Factor:TpvFloat;
                                  end;
-                                 POverwrite=^TOverwrite;
-                                 TOverwrites=array of TOverwrite;
+                                 PNodeOverwrite=^TNodeOverwrite;
+                                 TNodeOverwrites=array of TNodeOverwrite;
+                                 TNodeFlag=
+                                  (
+                                   InverseFrontFaces
+                                  );
+                                 PNodeFlag=^TNodeFlag;
+                                 TNodeFlags=set of TNodeFlag;
                            public
                             Processed:LongBool;
-                            Overwrites:TOverwrites;
+                            Flags:TNodeFlags;
+                            Overwrites:TNodeOverwrites;
                             CountOverwrites:TpvSizeInt;
                             OverwriteWeightsSum:TpvDoubleDynamicArray;
                             WorkWeights:TpvFloatDynamicArray;
@@ -1575,6 +1650,8 @@ type EpvScene3D=class(Exception);
                             CacheVerticesGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
                             CacheVerticesGeneration:TpvUInt64;
                             CacheVerticesDirtyCounter:TpvUInt32;
+                           public
+                            function InverseFrontFaces:boolean; inline;
                           end;
                           TInstanceNode=TpvScene3D.TGroup.TInstance.TNode;
                           PNode=^TInstanceNode;
@@ -1592,40 +1669,40 @@ type EpvScene3D=class(Exception);
                           { TLight }
                           TLight=class
                            public
-                            type TOverwriteFlag=
-                                         (
-                                          Defaults,
-                                          DefaultColor,
-                                          DefaultIntensity,
-                                          DefaultRange,
-                                          DefaultSpotInnerConeAngle,
-                                          DefaultSpotOuterConeAngle,
-                                          Color,
-                                          Intensity,
-                                          Range,
-                                          SpotInnerConeAngle,
-                                          SpotOuterConeAngle
-                                         );
-                                        TOverwriteFlags=set of TOverwriteFlag;
-                                        TOverwrite=record
-                                         public
-                                          Flags:TOverwriteFlags;
-                                          Factor:TpvFloat;
-                                          Color:TpvVector3;
-                                          Intensity:TpvFloat;
-                                          Range:TpvFloat;
-                                          SpotInnerConeAngle:TpvFloat;
-                                          SpotOuterConeAngle:TpvFloat;
-                                        end;
-                                        POverwrite=^TOverwrite;
-                                        TOverwrites=array of TOverwrite;
+                            type TLightOverwriteFlag=
+                                  (
+                                   Defaults,
+                                   DefaultColor,
+                                   DefaultIntensity,
+                                   DefaultRange,
+                                   DefaultSpotInnerConeAngle,
+                                   DefaultSpotOuterConeAngle,
+                                   Color,
+                                   Intensity,
+                                   Range,
+                                   SpotInnerConeAngle,
+                                   SpotOuterConeAngle
+                                  );
+                                 TLightOverwriteFlags=set of TLightOverwriteFlag;
+                                 TLightOverwrite=record
+                                  public
+                                   Flags:TLightOverwriteFlags;
+                                   Factor:TpvFloat;
+                                   Color:TpvVector3;
+                                   Intensity:TpvFloat;
+                                   Range:TpvFloat;
+                                   SpotInnerConeAngle:TpvFloat;
+                                   SpotOuterConeAngle:TpvFloat;
+                                 end;
+                                 PLightOverwrite=^TLightOverwrite;
+                                 TLightOverwrites=array of TLightOverwrite;
                            private
                             fInstance:TInstance;
                             fLight:TpvScene3D.TGroup.TLight;
                             fData:TpvScene3D.TLightData;
                             fWorkData:TpvScene3D.TLightData;
                             fEffectiveData:TpvScene3D.PLightData;
-                            fOverwrites:TOverwrites;
+                            fOverwrites:TLightOverwrites;
                             fCountOverwrites:TpvSizeInt;
                            public
                             constructor Create(const aInstance:TpvScene3D.TGroup.TInstance;const aLight:TpvScene3D.TGroup.TLight);
@@ -1641,49 +1718,49 @@ type EpvScene3D=class(Exception);
                           { TCamera }
                           TCamera=class
                            public
-                            type TOverwriteFlag=
-                                         (
-                                          Defaults,
-                                          DefaultOrthographicXMag,
-                                          DefaultOrthographicYMag,
-                                          DefaultOrthographicZFar,
-                                          DefaultOrthographicZNear,
-                                          DefaultPerspectiveAspectRatio,
-                                          DefaultPerspectiveYFov,
-                                          DefaultPerspectiveZFar,
-                                          DefaultPerspectiveZNear,
-                                          OrthographicXMag,
-                                          OrthographicYMag,
-                                          OrthographicZFar,
-                                          OrthographicZNear,
-                                          PerspectiveAspectRatio,
-                                          PerspectiveYFov,
-                                          PerspectiveZFar,
-                                          PerspectiveZNear
-                                         );
-                                        TOverwriteFlags=set of TOverwriteFlag;
-                                        TOverwrite=record
-                                         public
-                                          Flags:TOverwriteFlags;
-                                          Factor:TpvFloat;
-                                          OrthographicXMag:TpvFloat;
-                                          OrthographicYMag:TpvFloat;
-                                          OrthographicZFar:TpvFloat;
-                                          OrthographicZNear:TpvFloat;
-                                          PerspectiveAspectRatio:TpvFloat;
-                                          PerspectiveYFov:TpvFloat;
-                                          PerspectiveZFar:TpvFloat;
-                                          PerspectiveZNear:TpvFloat;
-                                        end;
-                                        POverwrite=^TOverwrite;
-                                        TOverwrites=array of TOverwrite;
+                            type TCameraOverwriteFlag=
+                                  (
+                                   Defaults,
+                                   DefaultOrthographicXMag,
+                                   DefaultOrthographicYMag,
+                                   DefaultOrthographicZFar,
+                                   DefaultOrthographicZNear,
+                                   DefaultPerspectiveAspectRatio,
+                                   DefaultPerspectiveYFov,
+                                   DefaultPerspectiveZFar,
+                                   DefaultPerspectiveZNear,
+                                   OrthographicXMag,
+                                   OrthographicYMag,
+                                   OrthographicZFar,
+                                   OrthographicZNear,
+                                   PerspectiveAspectRatio,
+                                   PerspectiveYFov,
+                                   PerspectiveZFar,
+                                   PerspectiveZNear
+                                  );
+                                 TCameraOverwriteFlags=set of TCameraOverwriteFlag;
+                                 TCameraOverwrite=record
+                                  public
+                                   Flags:TCameraOverwriteFlags;
+                                   Factor:TpvFloat;
+                                   OrthographicXMag:TpvFloat;
+                                   OrthographicYMag:TpvFloat;
+                                   OrthographicZFar:TpvFloat;
+                                   OrthographicZNear:TpvFloat;
+                                   PerspectiveAspectRatio:TpvFloat;
+                                   PerspectiveYFov:TpvFloat;
+                                   PerspectiveZFar:TpvFloat;
+                                   PerspectiveZNear:TpvFloat;
+                                 end;
+                                 PCameraOverwrite=^TCameraOverwrite;
+                                 TCameraOverwrites=array of TCameraOverwrite;
                            private
                             fInstance:TInstance;
                             fCamera:TpvScene3D.TGroup.TCamera;
                             fData:TpvScene3D.TCameraData;
                             fWorkData:TpvScene3D.TCameraData;
                             fEffectiveData:TpvScene3D.PCameraData;
-                            fOverwrites:TOverwrites;
+                            fOverwrites:TCameraOverwrites;
                             fCountOverwrites:TpvSizeInt;
                            public
                             constructor Create(const aInstance:TpvScene3D.TGroup.TInstance;const aCamera:TpvScene3D.TGroup.TCamera);
@@ -1699,108 +1776,108 @@ type EpvScene3D=class(Exception);
                           { TMaterial }
                           TMaterial=class
                            public
-                            type TOverwriteFlag=
-                                         (
-                                          Defaults,
-                                          DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
-                                          DefaultMaterialPBRMetallicRoughnessMetallicFactor,
-                                          DefaultMaterialPBRMetallicRoughnessRoughnessFactor,
-                                          DefaultMaterialAlphaCutOff,
-                                          DefaultMaterialEmissiveFactor,
-                                          DefaultMaterialNormalTextureScale,
-                                          DefaultMaterialOcclusionTextureStrength,
-                                          DefaultMaterialPBRClearCoatFactor,
-                                          DefaultMaterialPBRClearCoatRoughnessFactor,
-                                          DefaultMaterialEmissiveStrength,
-                                          DefaultMaterialIOR,
-                                          DefaultMaterialPBRIridescenceFactor,
-                                          DefaultMaterialPBRIridescenceIor,
-                                          DefaultMaterialPBRIridescenceMinimum,
-                                          DefaultMaterialPBRIridescenceMaximum,
-                                          DefaultMaterialPBRSheenColorFactor,
-                                          DefaultMaterialPBRSheenRoughnessFactor,
-                                          DefaultMaterialPBRSpecularFactor,
-                                          DefaultMaterialPBRSpecularColorFactor,
-                                          DefaultMaterialPBRTransmissionFactor,
-                                          DefaultMaterialPBRVolumeThicknessFactor,
-                                          DefaultMaterialPBRVolumeAttenuationDistance,
-                                          DefaultMaterialPBRVolumeAttenuationColor,
-                                          DefaultTextureOffset,
-                                          DefaultTextureRotation,
-                                          DefaultTextureScale,
-                                          MaterialPBRMetallicRoughnessBaseColorFactor,
-                                          MaterialPBRMetallicRoughnessMetallicFactor,
-                                          MaterialPBRMetallicRoughnessRoughnessFactor,
-                                          MaterialAlphaCutOff,
-                                          MaterialEmissiveFactor,
-                                          MaterialNormalTextureScale,
-                                          MaterialOcclusionTextureStrength,
-                                          MaterialPBRClearCoatFactor,
-                                          MaterialPBRClearCoatRoughnessFactor,
-                                          MaterialEmissiveStrength,
-                                          MaterialIOR,
-                                          MaterialPBRIridescenceFactor,
-                                          MaterialPBRIridescenceIor,
-                                          MaterialPBRIridescenceMinimum,
-                                          MaterialPBRIridescenceMaximum,
-                                          MaterialPBRSheenColorFactor,
-                                          MaterialPBRSheenRoughnessFactor,
-                                          MaterialPBRSpecularFactor,
-                                          MaterialPBRSpecularColorFactor,
-                                          MaterialPBRTransmissionFactor,
-                                          MaterialPBRVolumeThicknessFactor,
-                                          MaterialPBRVolumeAttenuationDistance,
-                                          MaterialPBRVolumeAttenuationColor,
-                                          TextureOffset,
-                                          TextureRotation,
-                                          TextureScale
-                                         );
-                                        TOverwriteFlags=set of TOverwriteFlag;
-                                        TOverwrite=record
-                                         public
-                                          Flags:TOverwriteFlags;
-                                          Factor:TpvFloat;
-                                          case SubIndex:TpvSizeInt of
-                                           -1:(
-                                            MaterialPBRMetallicRoughnessBaseColorFactor:TpvVector4;
-                                            MaterialPBRMetallicRoughnessMetallicFactor:TpvFloat;
-                                            MaterialPBRMetallicRoughnessRoughnessFactor:TpvFloat;
-                                            MaterialAlphaCutOff:TpvFloat;
-                                            MaterialEmissiveFactor:TpvVector3;
-                                            MaterialNormalTextureScale:TpvFloat;
-                                            MaterialOcclusionTextureStrength:TpvFloat;
-                                            MaterialPBRClearCoatFactor:TpvFloat;
-                                            MaterialPBRClearCoatRoughnessFactor:TpvFloat;
-                                            MaterialEmissiveStrength:TpvFloat;
-                                            MaterialIOR:TpvFloat;
-                                            MaterialPBRIridescenceFactor:TpvFloat;
-                                            MaterialPBRIridescenceIor:TpvFloat;
-                                            MaterialPBRIridescenceMinimum:TpvFloat;
-                                            MaterialPBRIridescenceMaximum:TpvFloat;
-                                            MaterialPBRSheenColorFactor:TpvVector3;
-                                            MaterialPBRSheenRoughnessFactor:TpvFloat;
-                                            MaterialPBRSpecularFactor:TpvFloat;
-                                            MaterialPBRSpecularColorFactor:TpvVector3;
-                                            MaterialPBRTransmissionFactor:TpvFloat;
-                                            MaterialPBRVolumeThicknessFactor:TpvFloat;
-                                            MaterialPBRVolumeAttenuationDistance:TpvFloat;
-                                            MaterialPBRVolumeAttenuationColor:TpvVector3;
-                                           );
-                                           0:(
-                                            TextureOffset:TpvVector2;
-                                            TextureRotation:TpvFloat;
-                                            TextureScale:TpvVector2;
-                                           );
-                                        end;
-                                        POverwrite=^TOverwrite;
-                                        TOverwrites=array of TOverwrite;
+                            type TMaterialOverwriteFlag=
+                                  (
+                                   Defaults,
+                                   DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
+                                   DefaultMaterialPBRMetallicRoughnessMetallicFactor,
+                                   DefaultMaterialPBRMetallicRoughnessRoughnessFactor,
+                                   DefaultMaterialAlphaCutOff,
+                                   DefaultMaterialEmissiveFactor,
+                                   DefaultMaterialNormalTextureScale,
+                                   DefaultMaterialOcclusionTextureStrength,
+                                   DefaultMaterialPBRClearCoatFactor,
+                                   DefaultMaterialPBRClearCoatRoughnessFactor,
+                                   DefaultMaterialEmissiveStrength,
+                                   DefaultMaterialIOR,
+                                   DefaultMaterialPBRIridescenceFactor,
+                                   DefaultMaterialPBRIridescenceIor,
+                                   DefaultMaterialPBRIridescenceMinimum,
+                                   DefaultMaterialPBRIridescenceMaximum,
+                                   DefaultMaterialPBRSheenColorFactor,
+                                   DefaultMaterialPBRSheenRoughnessFactor,
+                                   DefaultMaterialPBRSpecularFactor,
+                                   DefaultMaterialPBRSpecularColorFactor,
+                                   DefaultMaterialPBRTransmissionFactor,
+                                   DefaultMaterialPBRVolumeThicknessFactor,
+                                   DefaultMaterialPBRVolumeAttenuationDistance,
+                                   DefaultMaterialPBRVolumeAttenuationColor,
+                                   DefaultTextureOffset,
+                                   DefaultTextureRotation,
+                                   DefaultTextureScale,
+                                   MaterialPBRMetallicRoughnessBaseColorFactor,
+                                   MaterialPBRMetallicRoughnessMetallicFactor,
+                                   MaterialPBRMetallicRoughnessRoughnessFactor,
+                                   MaterialAlphaCutOff,
+                                   MaterialEmissiveFactor,
+                                   MaterialNormalTextureScale,
+                                   MaterialOcclusionTextureStrength,
+                                   MaterialPBRClearCoatFactor,
+                                   MaterialPBRClearCoatRoughnessFactor,
+                                   MaterialEmissiveStrength,
+                                   MaterialIOR,
+                                   MaterialPBRIridescenceFactor,
+                                   MaterialPBRIridescenceIor,
+                                   MaterialPBRIridescenceMinimum,
+                                   MaterialPBRIridescenceMaximum,
+                                   MaterialPBRSheenColorFactor,
+                                   MaterialPBRSheenRoughnessFactor,
+                                   MaterialPBRSpecularFactor,
+                                   MaterialPBRSpecularColorFactor,
+                                   MaterialPBRTransmissionFactor,
+                                   MaterialPBRVolumeThicknessFactor,
+                                   MaterialPBRVolumeAttenuationDistance,
+                                   MaterialPBRVolumeAttenuationColor,
+                                   TextureOffset,
+                                   TextureRotation,
+                                   TextureScale
+                                  );
+                                 TMaterialOverwriteFlags=set of TMaterialOverwriteFlag;
+                                 TMaterialOverwrite=record
+                                  public
+                                   Flags:TMaterialOverwriteFlags;
+                                   Factor:TpvFloat;
+                                   case SubIndex:TpvSizeInt of
+                                    -1:(
+                                     MaterialPBRMetallicRoughnessBaseColorFactor:TpvVector4;
+                                     MaterialPBRMetallicRoughnessMetallicFactor:TpvFloat;
+                                     MaterialPBRMetallicRoughnessRoughnessFactor:TpvFloat;
+                                     MaterialAlphaCutOff:TpvFloat;
+                                     MaterialEmissiveFactor:TpvVector3;
+                                     MaterialNormalTextureScale:TpvFloat;
+                                     MaterialOcclusionTextureStrength:TpvFloat;
+                                     MaterialPBRClearCoatFactor:TpvFloat;
+                                     MaterialPBRClearCoatRoughnessFactor:TpvFloat;
+                                     MaterialEmissiveStrength:TpvFloat;
+                                     MaterialIOR:TpvFloat;
+                                     MaterialPBRIridescenceFactor:TpvFloat;
+                                     MaterialPBRIridescenceIor:TpvFloat;
+                                     MaterialPBRIridescenceMinimum:TpvFloat;
+                                     MaterialPBRIridescenceMaximum:TpvFloat;
+                                     MaterialPBRSheenColorFactor:TpvVector3;
+                                     MaterialPBRSheenRoughnessFactor:TpvFloat;
+                                     MaterialPBRSpecularFactor:TpvFloat;
+                                     MaterialPBRSpecularColorFactor:TpvVector3;
+                                     MaterialPBRTransmissionFactor:TpvFloat;
+                                     MaterialPBRVolumeThicknessFactor:TpvFloat;
+                                     MaterialPBRVolumeAttenuationDistance:TpvFloat;
+                                     MaterialPBRVolumeAttenuationColor:TpvVector3;
+                                    );
+                                    0:(
+                                     TextureOffset:TpvVector2;
+                                     TextureRotation:TpvFloat;
+                                     TextureScale:TpvVector2;
+                                    );
+                                 end;
+                                 PMaterialOverwrite=^TMaterialOverwrite;
+                                 TMaterialOverwrites=array of TMaterialOverwrite;
                            private
                             fInstance:TInstance;
                             fMaterial:TpvScene3D.TMaterial;
                             fData:TpvScene3D.TMaterial.TData;
                             fWorkData:TpvScene3D.TMaterial.TData;
                             fEffectiveData:TpvScene3D.TMaterial.PData;
-                            fOverwrites:TOverwrites;
+                            fOverwrites:TMaterialOverwrites;
                             fCountOverwrites:TpvSizeInt;
                             fTextureOffsetSums:array[TpvScene3D.TTextureIndex] of TpvScene3D.TVector2Sum;
                             fTextureRotationSums:array[TpvScene3D.TTextureIndex] of TpvScene3D.TScalarSum;
@@ -1838,6 +1915,7 @@ type EpvScene3D=class(Exception);
                             property MorphTargetVertexWeightsBuffer:TpvVulkanBuffer read fMorphTargetVertexWeightsBuffer;
                           end;
                           TVulkanDatas=array[0..MaxInFlightFrames-1] of TVulkanData;
+                          TOnNodeFilter=function(const aInFlightFrameIndex,aRenderPassIndex:TpvInt32;const aGroup:TpvScene3D.TGroup;const aGroupInstance:TpvScene3D.TGroup.TInstance;const aNode:TpvScene3D.TGroup.TNode;const aInstanceNode:TpvScene3D.TGroup.TInstance.PNode):boolean of object;
                     private
                      fGroup:TGroup;
                      fLock:TPasMPSpinLock;
@@ -1860,6 +1938,7 @@ type EpvScene3D=class(Exception);
                      fUserData:pointer;
                      fOnNodeMatrixPre:TOnNodeMatrix;
                      fOnNodeMatrixPost:TOnNodeMatrix;
+                     fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
                      fUploaded:boolean;
                      fModelMatrix:TpvMatrix4x4;
                      fNodeMatrices:TNodeMatrices;
@@ -1869,12 +1948,15 @@ type EpvScene3D=class(Exception);
                      fVulkanMaterialIDMapBuffer:TpvVulkanBuffer;
                      fVulkanComputeDescriptorPool:TpvVulkanDescriptorPool;
                      fVulkanComputeDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
+                     fVulkanCachedVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+                     fSetGroupInstanceResourcesDone:array[0..MaxRenderPassIndices-1] of boolean;
                      fScenes:array[0..MaxInFlightFrames-1] of TpvScene3D.TGroup.TScene;
                      fActives:array[0..MaxInFlightFrames-1] of boolean;
                      fPotentiallyVisibleSetNodeIndices:array[0..MaxInFlightFrames-1] of TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
                      fAABBTreeProxy:TpvSizeInt;
                      fVisibleBitmap:TPasMPUInt32;
                      fCacheVerticesNodeDirtyBitmap:array of TpvUInt32;
+                     fCachedVerticesUpdated:boolean;
                      function GetAutomation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
                      procedure SetScene(const aScene:TpvSizeInt);
                      function GetScene:TpvScene3D.TGroup.TScene;
@@ -1888,6 +1970,11 @@ type EpvScene3D=class(Exception);
                                                     const aInFlightFrameIndex:TpvSizeInt;
                                                     const aCommandBuffer:TpvVulkanCommandBuffer;
                                                     const aPipelineLayout:TpvVulkanPipelineLayout);
+                     procedure SetGroupInstanceResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                                         const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                         const aRenderPassIndex:TpvSizeInt;
+                                                         const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                                         const aInFlightFrameIndex:TpvSizeInt);
                      procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                                     const aPreviousInFlightFrameIndex:TpvSizeInt;
                                     const aInFlightFrameIndex:TpvSizeInt;
@@ -1898,11 +1985,12 @@ type EpvScene3D=class(Exception);
                                     const aOnSetRenderPassResources:TOnSetRenderPassResources;
                                     const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
                     public
-                     constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+                     constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
                      destructor Destroy; override;
                      procedure AfterConstruction; override;
                      procedure BeforeDestruction; override;
                      procedure Remove; override;
+                     procedure LoadData; override;
                      procedure Upload; override;
                      procedure Unload; override;
                      procedure UpdateInvisible;
@@ -1913,7 +2001,8 @@ type EpvScene3D=class(Exception);
                      function GetBakedMesh(const aRelative:boolean=false;
                                            const aWithDynamicMeshs:boolean=false;
                                            const aRootNodeIndex:TpvSizeInt=-1;
-                                           const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]):TpvScene3D.TBakedMesh;
+                                           const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask];
+                                           const aNodeFilter:TOnNodeFilter=nil):TpvScene3D.TBakedMesh;
                      function GetCamera(const aNodeIndex:TPasGLTFSizeInt;
                                         out aCameraMatrix:TpvMatrix4x4;
                                         out aViewMatrix:TpvMatrix4x4;
@@ -1941,6 +2030,7 @@ type EpvScene3D=class(Exception);
                     published
                      property OnNodeMatrixPre:TOnNodeMatrix read fOnNodeMatrixPre write fOnNodeMatrixPre;
                      property OnNodeMatrixPost:TOnNodeMatrix read fOnNodeMatrixPost write fOnNodeMatrixPost;
+                     property OnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter read fOnNodeFilter write fOnNodeFilter;
                    end;
                    TInstances=TpvObjectGenericList<TInstance>;
                    TMaterialsToDuplicate=TpvObjectGenericList<TpvScene3D.TMaterial>;
@@ -1955,6 +2045,7 @@ type EpvScene3D=class(Exception);
               fMaterialIDMapArrayIndexHashMap:TpvScene3D.TGroup.TMaterialIDMapArrayIndexHashMap;
               fMaterialIDMapArrays:TpvScene3D.TGroup.TMaterialIDMapArrays;
               fAnimations:TpvScene3D.TGroup.TAnimations;
+              fCountInstanceAnimationChannels:TpvSizeInt;
               fCameras:TpvScene3D.TGroup.TCameras;
               fMeshes:TpvScene3D.TGroup.TMeshes;
               fSkins:TpvScene3D.TGroup.TSkins;
@@ -1976,7 +2067,6 @@ type EpvScene3D=class(Exception);
               fNodeShaderStorageBufferObject:TNodeShaderStorageBufferObject;
               fLock:TPasMPSpinLock;
               fVulkanVertexBuffer:TpvVulkanBuffer;
-              fVulkanCachedVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
               //fVulkanIndexBuffer:TpvVulkanBuffer;
               fVulkanDrawIndexBuffer:TpvVulkanBuffer;
               fVulkanDrawUniqueIndexBuffer:TpvVulkanBuffer;
@@ -1984,8 +2074,8 @@ type EpvScene3D=class(Exception);
               fVulkanMaterialUniqueIndexBuffer:TpvVulkanBuffer;}
               fVulkanMorphTargetVertexBuffer:TpvVulkanBuffer;
               fVulkanJointBlockBuffer:TpvVulkanBuffer;
-              fVulkanNodeMatricesStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
-              fVulkanMorphTargetVertexWeightsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+{             fVulkanNodeMatricesStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+              fVulkanMorphTargetVertexWeightsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;}
               fInstanceListLock:TPasMPSlimReaderWriterLock;
               fInstances:TInstances;
               fBoundingBox:TpvAABB;
@@ -1996,6 +2086,8 @@ type EpvScene3D=class(Exception);
               fDrawChoreographyBatchUniqueItems:TDrawChoreographyBatchItems;
               fNodeNameIndexHashMap:TpvScene3D.TGroup.TNodeNameIndexHashMap;
               fCameraNodeIndices:TpvScene3D.TGroup.TCameraNodeIndices;
+              fCachedVertexBufferMemoryBarriers:TVkBufferMemoryBarrierArray;
+              fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
               procedure ConstructBuffers;
               procedure CollectUsedVisibleDrawNodes;
               procedure CollectMaterials;
@@ -2027,11 +2119,12 @@ type EpvScene3D=class(Exception);
               function GetNodeIndexByName(const aNodeName:TpvUTF8String):TpvSizeInt;
               function GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
              public
-              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
               procedure AfterConstruction; override;
               procedure BeforeDestruction; override;
               procedure Remove; override;
+              procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
               procedure Check(const aInFlightFrameIndex:TpvSizeInt);
@@ -2058,6 +2151,7 @@ type EpvScene3D=class(Exception);
               property Nodes:TNodes read fNodes;
               property Scenes:TScenes read fScenes;
               property Scene:TScene read fScene;
+              property OnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter read fOnNodeFilter write fOnNodeFilter;
             end;
             TGroups=TpvObjectGenericList<TGroup>;
             TImageIDHashMap=TpvHashMap<TID,TImage>;
@@ -2075,11 +2169,21 @@ type EpvScene3D=class(Exception);
             TInFlightFrameBufferMemoryBarriers=array[0..MaxInFlightFrames-1] of TBufferMemoryBarriers;
             TMaterialBufferData=array[0..65535] of TMaterial.TShaderData;
             TImageInfos=array[0..65535] of TVkDescriptorImageInfo;
+            TGlobalVulkanDescriptorSets=array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
+            TVertexStagePushConstantArray=array[0..MaxRenderPassIndices-1] of TpvScene3D.TVertexStagePushConstants;
+      public
+       const DoubleSidedFaceCullingModes:array[TDoubleSided,TFrontFacesInversed] of TFaceCullingMode=
+              (
+               (TFaceCullingMode.Normal,TFaceCullingMode.Inversed),
+               (TFaceCullingMode.None,TFaceCullingMode.None)
+              );
       private
        fLock:TPasMPSpinLock;
        fVulkanDevice:TpvVulkanDevice;
        fUploaded:TPasMPBool32;
        fInUpload:TPasMPBool32;
+       fObjectListLock:TPasMPCriticalSection;
+       fObjectList:TpvObjectList;
        fPotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet;
        fBufferStreamingMode:TBufferStreamingMode;
        fDefaultSampler:TSampler;
@@ -2097,14 +2201,14 @@ type EpvScene3D=class(Exception);
        fImageDescriptorGeneration:TpvUInt64;
        fImageDescriptorProcessedGeneration:TpvUInt64;
        fGlobalVulkanViews:array[0..MaxInFlightFrames-1] of TGlobalViewUniformBuffer;
-       fGlobalVulkanViewUniformStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+//     fGlobalVulkanViewUniformStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fGlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers;
        fGlobalVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fGlobalVulkanDescriptorPool:TpvVulkanDescriptorPool;
-       fGlobalVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
-       fVulkanLightItemsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+       fGlobalVulkanDescriptorSets:TGlobalVulkanDescriptorSets;
+{      fVulkanLightItemsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanLightTreeStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
-       fVulkanLightMetaInfoStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+       fVulkanLightMetaInfoStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;}
        fMaterialBufferData:TMaterialBufferData;
        fInFlightFrameMaterialBufferData:array[0..MaxInFlightFrames-1] of TMaterialBufferData;
        fInFlightFrameMaterialBufferDataOffsets:array[0..MaxInFlightFrames-1] of TpvUInt64;
@@ -2112,7 +2216,7 @@ type EpvScene3D=class(Exception);
        fInFlightFrameMaterialBufferDataMinMaterialID:array[0..MaxInFlightFrames-1] of TpvUInt32;
        fInFlightFrameMaterialBufferDataGeneration:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fInFlightFrameMaterialBufferDataUploadedGeneration:array[0..MaxInFlightFrames-1] of TpvUInt64;
-       fVulkanMaterialDataStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+//     fVulkanMaterialDataStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialDataBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialUniformBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fTechniques:TpvTechniques;
@@ -2162,10 +2266,11 @@ type EpvScene3D=class(Exception);
        fAABBTree:TpvBVHDynamicAABBTree;
        fAABBTreeStates:array[0..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
        fBoundingBox:TpvAABB;
+       fInFlightFrameBoundingBoxes:TInFlightFrameAABBs;
        fInFlightFrameBufferMemoryBarriers:TInFlightFrameBufferMemoryBarriers;
        fPreviousViews:TViews;
        fViews:TViews;
-       fVertexStagePushConstants:array[0..MaxRenderPassIndices-1] of TpvScene3D.TVertexStagePushConstants;
+       fVertexStagePushConstants:TVertexStagePushConstantArray;
        fSetGlobalResourcesDone:array[0..MaxRenderPassIndices-1] of boolean;
        fCountInFlightFrames:TpvSizeInt;
        fUseBufferDeviceAddress:boolean;
@@ -2177,6 +2282,16 @@ type EpvScene3D=class(Exception);
        fInFlightFrameImageInfoImageDescriptorUploadedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fRenderPassIndexCounter:TPasMPInt32;
        fPrimaryLightDirection:TpvVector3;
+       fDebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays;
+       fVulkanDebugPrimitiveVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+       fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
+       fParticles:TParticles;
+       fPointerToParticles:PParticles;
+       fParticleAliveBitmap:TParticleAliveBitmap;
+       fParticleIndexCounter:TpvUInt32;
+       fInFlightFrameParticleVertices:TInFlightFrameParticleVertices;
+       fCountInFlightFrameParticleVertices:array[0..MaxInFlightFrames-1] of TpvUInt32;
+       fVulkanParticleVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        procedure NewImageDescriptorGeneration;
        procedure NewMaterialDataGeneration;
        procedure AddInFlightFrameBufferMemoryBarrier(const aInFlightFrameIndex:TpvSizeInt;
@@ -2199,7 +2314,7 @@ type EpvScene3D=class(Exception);
                                     const aRenderPassIndex:TpvSizeInt;
                                     const aInFlightFrameIndex:TpvSizeInt);
       public
-       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aVulkanDevice:TpvVulkanDevice=nil;const aUseBufferDeviceAddress:boolean=true;const aCountInFlightFrames:TpvSizeInt=MaxInFlightFrames); reintroduce;
+       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil;const aVulkanDevice:TpvVulkanDevice=nil;const aUseBufferDeviceAddress:boolean=true;const aCountInFlightFrames:TpvSizeInt=MaxInFlightFrames); reintroduce;
        destructor Destroy; override;
        procedure Upload;
        procedure Unload;
@@ -2236,6 +2351,28 @@ type EpvScene3D=class(Exception);
        function NeedFlush(const aInFlightFrameIndex:TpvSizeInt):boolean;
        function Flush(const aInFlightFrameIndex:TpvSizeInt;
                       const aCommandBuffer:TpvVulkanCommandBuffer):boolean;
+       procedure UpdateDebugPrimitives(const aInFlightFrameIndex:TpvSizeInt);
+       procedure DrawDebugPrimitives(const aGraphicsPipeline:TpvVulkanGraphicsPipeline;
+                                     const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                     const aInFlightFrameIndex:TpvSizeInt;
+                                     const aRenderPassIndex:TpvSizeInt;
+                                     const aViewBaseIndex:TpvSizeInt;
+                                     const aCountViews:TpvSizeInt;
+                                     const aFrameIndex:TpvSizeInt;
+                                     const aCommandBuffer:TpvVulkanCommandBuffer;
+                                     const aPipelineLayout:TpvVulkanPipelineLayout;
+                                     const aOnSetRenderPassResources:TOnSetRenderPassResources);
+       procedure UpdateParticles(const aInFlightFrameIndex:TpvSizeInt);
+       procedure DrawParticles(const aGraphicsPipeline:TpvVulkanGraphicsPipeline;
+                               const aPreviousInFlightFrameIndex:TpvSizeInt;
+                               const aInFlightFrameIndex:TpvSizeInt;
+                               const aRenderPassIndex:TpvSizeInt;
+                               const aViewBaseIndex:TpvSizeInt;
+                               const aCountViews:TpvSizeInt;
+                               const aFrameIndex:TpvSizeInt;
+                               const aCommandBuffer:TpvVulkanCommandBuffer;
+                               const aPipelineLayout:TpvVulkanPipelineLayout;
+                               const aOnSetRenderPassResources:TOnSetRenderPassResources);
        procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                       const aPreviousInFlightFrameIndex:TpvSizeInt;
                       const aInFlightFrameIndex:TpvSizeInt;
@@ -2253,12 +2390,35 @@ type EpvScene3D=class(Exception);
                               out aZNear:TpvScalar;
                               out aZFar:TpvScalar);
        procedure InitializeGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline;const aWithPreviousPosition:boolean=false);
+       procedure InitializeDebugPrimitiveGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline);
+       procedure InitializeParticleGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline);
+       procedure StoreParticleStates;
+       procedure UpdateParticleStates(const aDeltaTime:TpvDouble);
+       procedure InterpolateParticleStates(const aInFlightFrameIndex:TpvSizeInt;const aAlpha:TpvDouble);
+       procedure DeleteAllParticles;
+       function AddParticle(const aPosition:TpvVector3;
+                            const aVelocity:TpvVector3;
+                            const aGravity:TpvVector3;
+                            const aRotationStart:TpvFloat;
+                            const aRotationEnd:TpvFloat;
+                            const aSizeStart:TpvVector2;
+                            const aSizeEnd:TpvVector2;
+                            const aColorStart:TpvVector4;
+                            const aColorEnd:TpvVector4;
+                            const aLifeTime:TpvScalar;
+                            const aTextureID:TpvUInt32;
+                            const aAdditiveBlending:boolean):TpvSizeInt;
       public
        property BoundingBox:TpvAABB read fBoundingBox;
+       property InFlightFrameBoundingBoxes:TInFlightFrameAABBs read fInFlightFrameBoundingBoxes;
        property GlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers read fGlobalVulkanViewUniformBuffers;
+       property GlobalVulkanDescriptorSets:TGlobalVulkanDescriptorSets read fGlobalVulkanDescriptorSets;
+       property VertexStagePushConstants:TVertexStagePushConstantArray read fVertexStagePushConstants;
        property Views:TViews read fViews;
        property PrimaryLightDirection:TpvVector3 read fPrimaryLightDirection write fPrimaryLightDirection;
        property LightBuffers:TpvScene3D.TLightBuffers read fLightBuffers;
+       property DebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays read fDebugPrimitiveVertexDynamicArrays;
+       property Particles:PParticles read fPointerToParticles;
       published
        property PotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet read fPotentiallyVisibleSet;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
@@ -2268,11 +2428,16 @@ type EpvScene3D=class(Exception);
        property UseBufferDeviceAddress:boolean read fUseBufferDeviceAddress write fUseBufferDeviceAddress;
        property CountInFlightFrames:TpvSizeInt read fCountInFlightFrames;
        property BufferStreamingMode:TBufferStreamingMode read fBufferStreamingMode write fBufferStreamingMode;
+       property OnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter read fOnNodeFilter write fOnNodeFilter;
      end;
 
 implementation
 
 const FlushUpdateData=false;
+
+type TAnimationChannelTargetOverwriteGroupMap=array[TpvScene3D.TGroup.TAnimation.TChannel.TTarget] of TpvUInt64;
+
+var AnimationChannelTargetOverwriteGroupMap:TAnimationChannelTargetOverwriteGroupMap;
 
 function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvScene3D.TInt16Vector2; overload;
 var Vector:TpvVector3;
@@ -2556,12 +2721,23 @@ begin
  end;
 end;
 
+{ TpvScene3D.TDebugPrimitiveVertex }
+
+constructor TpvScene3D.TDebugPrimitiveVertex.Create(const aPosition:TpvVector3;const aColor:TpvVector4);
+begin
+ Position:=aPosition;
+ Color.x:=aColor.x;
+ Color.y:=aColor.y;
+ Color.z:=aColor.z;
+ Color.w:=aColor.w;
+end;
+
 { TpvScene3D.TBaseObject }
 
-constructor TpvScene3D.TBaseObject.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TBaseObject.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 var Current:TpvResource;
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  if assigned(Parent) then begin
   Current:=Parent;
@@ -2570,6 +2746,12 @@ begin
   end;
   if assigned(Current) and (Current is TpvScene3D) then begin
    fSceneInstance:=TpvScene3D(Current);
+   fSceneInstance.fObjectListLock.Acquire;
+   try
+    fSceneInstance.fObjectList.Add(self);
+   finally
+    fSceneInstance.fObjectListLock.Release;
+   end;
   end else begin
    fSceneInstance:=nil;
   end;
@@ -2584,6 +2766,10 @@ begin
  end;}
  ReleaseFrameDelay:=(MaxInFlightFrames*2)+1;
 
+ fDataLoaded:=false;
+
+ fInLoadData:=false;
+
  fUploaded:=false;
 
  fInUpload:=false;
@@ -2595,7 +2781,19 @@ begin
 end;
 
 destructor TpvScene3D.TBaseObject.Destroy;
+var Index:TpvSizeInt;
 begin
+ if assigned(fSceneInstance) then begin
+  fSceneInstance.fObjectListLock.Acquire;
+  try
+   Index:=fSceneInstance.fObjectList.IndexOf(self);
+   if Index>=0 then begin
+    fSceneInstance.fObjectList.Extract(Index);
+   end;
+  finally
+   fSceneInstance.fObjectListLock.Release;
+  end;
+ end;
  inherited Destroy;
 end;
 
@@ -2615,6 +2813,10 @@ begin
 end;
 
 procedure TpvScene3D.TBaseObject.Remove;
+begin
+end;
+
+procedure TpvScene3D.TBaseObject.LoadData;
 begin
 end;
 
@@ -2642,7 +2844,23 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TBaseObject.DecRefWithNondeferredFree;
+begin
+ if assigned(self) and (TPasMPInterlocked.Decrement(fReferenceCounter)=0) then begin
+  try
+   Remove;
+  finally
+   Free;
+  end;
+ end;
+end;
+
 { TpvScene3D.TBakedMesh.TTriangle }
+
+class function TpvScene3D.TBakedMesh.TTriangle.Create:TpvScene3D.TBakedMesh.TTriangle;
+begin
+ FillChar(result,SizeOf(TpvScene3D.TBakedMesh.TTriangle),#0);
+end;
 
 procedure TpvScene3D.TBakedMesh.TTriangle.Assign(const aFrom:TpvScene3D.TBakedMesh.TTriangle);
 begin
@@ -2653,7 +2871,8 @@ begin
  MetaFlags:=aFrom.MetaFlags;
 end;
 
-function TpvScene3D.TBakedMesh.TTriangle.RayIntersection(const aRayOrigin,aRayDirection:TpvVector3;var aTime,aU,v:TpvScalar):boolean;
+function TpvScene3D.TBakedMesh.TTriangle.RayIntersection(const aRayOrigin,aRayDirection:TpvVector3;var aTime,aU,aV:TpvScalar):boolean;
+const EPSILON=1e-7;
 var e0,e1,p,t,q:TpvVector3;
     Determinant,InverseDeterminant:TpvScalar;
 begin
@@ -2675,12 +2894,14 @@ begin
   exit;
  end;
 
+ InverseDeterminant:=1.0/Determinant;
+
  t.x:=aRayOrigin.x-Positions[0].x;
  t.y:=aRayOrigin.y-Positions[0].y;
  t.z:=aRayOrigin.z-Positions[0].z;
 
- aU:=(t.x*p.x)+(t.y*p.y)+(t.z*p.z);
- if (aU<0.0) or (aU>Determinant) then begin
+ aU:=((t.x*p.x)+(t.y*p.y)+(t.z*p.z))*InverseDeterminant;
+ if (aU<0.0) or (aU>1.0) then begin
   exit;
  end;
 
@@ -2688,23 +2909,15 @@ begin
  q.y:=(t.z*e0.x)-(t.x*e0.z);
  q.z:=(t.x*e0.y)-(t.y*e0.x);
 
- v:=(aRayDirection.x*q.x)+(aRayDirection.y*q.y)+(aRayDirection.z*q.z);
- if (v<0.0) or ((aU+v)>Determinant) then begin
+ aV:=((aRayDirection.x*q.x)+(aRayDirection.y*q.y)+(aRayDirection.z*q.z))*InverseDeterminant;
+ if (aV<0.0) or ((aU+aV)>1.0) then begin
   exit;
  end;
 
- aTime:=(e1.x*q.x)+(e1.y*q.y)+(e1.z*q.z);
- if abs(Determinant)<EPSILON then begin
-  Determinant:=0.01;
- end;
- InverseDeterminant:=1.0/Determinant;
- aTime:=aTime*InverseDeterminant;
- aU:=aU*InverseDeterminant;
- v:=v*InverseDeterminant;
+ aTime:=((e1.x*q.x)+(e1.y*q.y)+(e1.z*q.z))*InverseDeterminant;
 
  result:=true;
 end;
-
 
 { TpvScene3D.TBakedMesh }
 
@@ -2712,7 +2925,6 @@ constructor TpvScene3D.TBakedMesh.Create;
 begin
  inherited Create;
  fTriangles:=TpvScene3D.TBakedMesh.TTriangles.Create;
- fTriangles.OwnsObjects:=true;
 end;
 
 destructor TpvScene3D.TBakedMesh.Destroy;
@@ -2722,16 +2934,8 @@ begin
 end;
 
 procedure TpvScene3D.TBakedMesh.Combine(const aWith:TBakedMesh);
-var SrcTriangle,NewTriangle:TpvScene3D.TBakedMesh.TTriangle;
 begin
- for SrcTriangle in aWith.fTriangles do begin
-  NewTriangle:=TpvScene3D.TBakedMesh.TTriangle.Create;
-  try
-   fTriangles.Add(SrcTriangle);
-  finally
-   FreeAndNil(NewTriangle);
-  end;
- end;
+ fTriangles.Add(aWith.fTriangles);
 end;
 
 { TpvScene3D.TPotentiallyVisibleSet.TNode }
@@ -2807,7 +3011,7 @@ begin
 
  fSubdivisonMode:=TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.MeshBVH;
 
- fSubdivisonOneDimensionSize:=16;
+ fSubdivisonOneDimensionSize:=8;
 
  fManualBoundingBoxes:=TpvScene3D.TPotentiallyVisibleSet.TManualBoundingBoxes.Create;
 
@@ -2865,7 +3069,7 @@ begin
    MemoryStream.ReadBuffer(fBitmap[0],length(fBitmap)*SizeOf(TpvUInt32));
 
    for NodeIndex:=0 to FileHeader.CountNodes-1 do begin
-    fNodes.Add(TpvScene3D.TPotentiallyVisibleSet.TNode.Create(self,nil));
+    TpvScene3D.TPotentiallyVisibleSet.TNode.Create(self,nil);
    end;
 
    for NodeIndex:=0 to FileHeader.CountNodes-1 do begin
@@ -2986,9 +3190,9 @@ var Index,TapAIndex,TapBIndex:TPasMPNativeInt;
     NodeAIndex,NodeBIndex:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
     NodeA,NodeB:TpvScene3D.TPotentiallyVisibleSet.TNode;
     TapA,TapB,RayOrigin,RayDirection:TpvVector3;
-    Time,HitTime:TpvScalar;
-    HitUserData:TpvUInt32;
+    Time,Len:TpvScalar;
     Hit:boolean;
+    Intersection:TpvTriangleBVHIntersection;
 begin
 
  NodeIndexPair:=TpvScene3D.TPotentiallyVisibleSet.TNodeIndexPair(aData^);
@@ -3009,11 +3213,12 @@ begin
    TapA:=NodeA.fAABB.Min+((NodeA.fAABB.Max-NodeA.fAABB.Min)*TpvScene3D.TPotentiallyVisibleSet.RayCheckTapPoints[TapAIndex]);
    TapB:=NodeB.fAABB.Min+((NodeB.fAABB.Max-NodeB.fAABB.Min)*TpvScene3D.TPotentiallyVisibleSet.RayCheckTapPoints[TapBIndex]);
 
+   Len:=(TapB-TapA).Length;
+
    RayOrigin:=TapA;
    RayDirection:=(TapB-TapA).Normalize;
-   if NodeB.fAABB.RayIntersection(RayOrigin,RayDirection,Time) then begin
-    Hit:=fTriangleDynamicAABBTreeSkipList.RayCast(RayOrigin,RayDirection,HitTime,HitUserData,true,RayCastTriangle);
-    if (Hit and (HitTime>=(Time-EPSILON))) or not Hit then begin
+   if NodeB.fAABB.RayIntersection(RayOrigin,RayDirection,Time) and (Time>=0.0) then begin
+    if not fTriangleBVH.LineIntersection(TapA,RayOrigin+(RayDirection*Time)) then begin
      SetNodeVisibility(NodeAIndex,NodeBIndex,true);
      SetNodeVisibility(NodeBIndex,NodeAIndex,true);
      break;
@@ -3022,9 +3227,8 @@ begin
 
    RayOrigin:=TapB;
    RayDirection:=(TapA-TapB).Normalize;
-   if NodeA.fAABB.RayIntersection(RayOrigin,RayDirection,Time) then begin
-    Hit:=fTriangleDynamicAABBTreeSkipList.RayCast(RayOrigin,RayDirection,HitTime,HitUserData,true,RayCastTriangle);
-    if (Hit and (HitTime>=(Time-EPSILON))) or not Hit then begin
+   if NodeA.fAABB.RayIntersection(RayOrigin,RayDirection,Time) and (Time>=0.0) then begin
+    if not fTriangleBVH.LineIntersection(TapB,RayOrigin+(RayDirection*Time)) then begin
      SetNodeVisibility(NodeAIndex,NodeBIndex,true);
      SetNodeVisibility(NodeBIndex,NodeAIndex,true);
      break;
@@ -3093,7 +3297,7 @@ type TStackItem=record
      PStackItem=^TStackItem;
      TStack=TpvDynamicStack<TStackItem>;
 var TriangleIndex,NodeIndexCounter,Index,OtherIndex,x,y,z:TpvSizeInt;
-    BakedTriangle:TpvScene3D.TBakedMesh.TTriangle;
+    BakedTriangle:TpvScene3D.TBakedMesh.PTriangle;
     StackItem,NewStackItem:TStackItem;
     Stack:TStack;
     NodeIndexPairList:TpvScene3D.TPotentiallyVisibleSet.TNodeIndexPairList;
@@ -3110,136 +3314,93 @@ begin
   fBakedMesh:=aBakedMesh;
   try
 
-   fTriangleDynamicAABBTree:=TpvBVHDynamicAABBTree.Create;
+   if assigned(aPasMPInstance) then begin
+    fPasMPInstance:=aPasMPInstance;
+   end else begin
+    fPasMPInstance:=TPasMP.GetGlobalInstance;
+   end;
+
+   fTriangleBVH:=TpvTriangleBVH.Create(fPasMPInstance);
    try
 
     for TriangleIndex:=0 to fBakedMesh.Triangles.Count-1 do begin
-     BakedTriangle:=fBakedMesh.Triangles[TriangleIndex];
-     TemporaryAABB.Min.x:=Min(Min(BakedTriangle.Positions[0].x,BakedTriangle.Positions[1].x),BakedTriangle.Positions[2].x);
-     TemporaryAABB.Min.y:=Min(Min(BakedTriangle.Positions[0].y,BakedTriangle.Positions[1].y),BakedTriangle.Positions[2].y);
-     TemporaryAABB.Min.z:=Min(Min(BakedTriangle.Positions[0].z,BakedTriangle.Positions[1].z),BakedTriangle.Positions[2].z);
-     TemporaryAABB.Max.x:=Max(Max(BakedTriangle.Positions[0].x,BakedTriangle.Positions[1].x),BakedTriangle.Positions[2].x);
-     TemporaryAABB.Max.y:=Max(Max(BakedTriangle.Positions[0].y,BakedTriangle.Positions[1].y),BakedTriangle.Positions[2].y);
-     TemporaryAABB.Max.z:=Max(Max(BakedTriangle.Positions[0].z,BakedTriangle.Positions[1].z),BakedTriangle.Positions[2].z);
-     fTriangleDynamicAABBTree.CreateProxy(TemporaryAABB,TriangleIndex+1);
+     BakedTriangle:=@fBakedMesh.Triangles.ItemArray[TriangleIndex];
+     fTriangleBVH.AddTriangle(BakedTriangle^.Positions[0],
+                              BakedTriangle^.Positions[1],
+                              BakedTriangle^.Positions[2],
+                              nil,
+                              TriangleIndex,
+                              TpvUInt32($ffffffff));
     end;
 
-    fTriangleDynamicAABBTree.Rebuild;
+    fTriangleBVH.Build;
 
-    fTriangleDynamicAABBTreeSkipList:=TpvBVHDynamicAABBTree.TSkipList.Create(fTriangleDynamicAABBTree,nil);
-    try
+    if fTriangleBVH.CountSkipListNodes>0 then begin
 
-     if fTriangleDynamicAABBTreeSkipList.NodeArray.Count>0 then begin
+     fAABB.Min:=fTriangleBVH.SkipListNodes[0].Min.Vector3;
+     fAABB.Max:=fTriangleBVH.SkipListNodes[0].Max.Vector3;
 
-      fAABB.Min:=fTriangleDynamicAABBTreeSkipList.NodeArray.Items[0].AABBMin;
-      fAABB.Max:=fTriangleDynamicAABBTreeSkipList.NodeArray.Items[0].AABBMax;
+     case fSubdivisonMode of
 
-      case fSubdivisonMode of
+      TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.UniformGrid,
+      TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.ManualZones:begin
 
-       TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.UniformGrid,
-       TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.ManualZones:begin
+       DynamicAABBTree:=TpvBVHDynamicAABBTree.Create;
+       try
 
-        DynamicAABBTree:=TpvBVHDynamicAABBTree.Create;
-        try
+        case fSubdivisonMode of
 
-         case fSubdivisonMode of
+         TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.UniformGrid:begin
 
-          TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.UniformGrid:begin
+          Index:=0;
 
-           Index:=0;
-
-           for z:=0 to fSubdivisonOneDimensionSize-1 do begin
-            TemporaryAABB.Min.z:=FloatLerp(fAABB.Min.z,fAABB.Max.z,z/fSubdivisonOneDimensionSize);
-            TemporaryAABB.Max.z:=FloatLerp(fAABB.Min.z,fAABB.Max.z,(z+1)/fSubdivisonOneDimensionSize);
-            for y:=0 to fSubdivisonOneDimensionSize-1 do begin
-             TemporaryAABB.Min.y:=FloatLerp(fAABB.Min.y,fAABB.Max.y,y/fSubdivisonOneDimensionSize);
-             TemporaryAABB.Max.y:=FloatLerp(fAABB.Min.y,fAABB.Max.y,(y+1)/fSubdivisonOneDimensionSize);
-             for x:=0 to fSubdivisonOneDimensionSize-1 do begin
-              TemporaryAABB.Min.x:=FloatLerp(fAABB.Min.x,fAABB.Max.x,z/fSubdivisonOneDimensionSize);
-              TemporaryAABB.Max.x:=FloatLerp(fAABB.Min.x,fAABB.Max.x,(z+1)/fSubdivisonOneDimensionSize);
-              DynamicAABBTree.CreateProxy(TemporaryAABB,Index+1);
-              inc(Index);
-             end;
+          for z:=0 to fSubdivisonOneDimensionSize-1 do begin
+           TemporaryAABB.Min.z:=FloatLerp(fAABB.Min.z,fAABB.Max.z,z/fSubdivisonOneDimensionSize);
+           TemporaryAABB.Max.z:=FloatLerp(fAABB.Min.z,fAABB.Max.z,(z+1)/fSubdivisonOneDimensionSize);
+           for y:=0 to fSubdivisonOneDimensionSize-1 do begin
+            TemporaryAABB.Min.y:=FloatLerp(fAABB.Min.y,fAABB.Max.y,y/fSubdivisonOneDimensionSize);
+            TemporaryAABB.Max.y:=FloatLerp(fAABB.Min.y,fAABB.Max.y,(y+1)/fSubdivisonOneDimensionSize);
+            for x:=0 to fSubdivisonOneDimensionSize-1 do begin
+             TemporaryAABB.Min.x:=FloatLerp(fAABB.Min.x,fAABB.Max.x,z/fSubdivisonOneDimensionSize);
+             TemporaryAABB.Max.x:=FloatLerp(fAABB.Min.x,fAABB.Max.x,(z+1)/fSubdivisonOneDimensionSize);
+             DynamicAABBTree.CreateProxy(TemporaryAABB,Index+1);
+             inc(Index);
             end;
            end;
-
-           DynamicAABBTree.Rebuild;
-
           end;
 
-          TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.ManualZones:begin
-
-           for Index:=0 to fManualBoundingBoxes.Count-1 do begin
-            DynamicAABBTree.CreateProxy(fManualBoundingBoxes.Items[Index],Index+1);
-           end;
-
-           DynamicAABBTree.Rebuild;
-
-          end;
-
-          else begin
-
-          end;
+          DynamicAABBTree.Rebuild;
 
          end;
 
-         Stack.Initialize;
-         try
-          NewStackItem.Node:=nil;
-          NewStackItem.NodeIndex:=DynamicAABBTree.Root;
-          NewStackItem.MetaData:=0;
-          Stack.Push(NewStackItem);
-          while Stack.Pop(StackItem) do begin
-           if (not assigned(StackItem.Node)) or
-              (fSubdivisonMode<>TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.MeshBVH) or
-              (StackItem.Node.fLevel<aMaxDepth) then begin
-            NewStackItem.Node:=TpvScene3D.TPotentiallyVisibleSet.TNode.Create(self,StackItem.Node);
-            NewStackItem.Node.fTag:=DynamicAABBTree.Nodes[StackItem.NodeIndex].UserData-1;
-            if not assigned(fRoot) then begin
-             fRoot:=NewStackItem.Node;
-            end;
-            if assigned(StackItem.Node) then begin
-             if StackItem.MetaData>0 then begin
-              StackItem.Node.fRight:=NewStackItem.Node;
-             end else begin
-              StackItem.Node.fLeft:=NewStackItem.Node;
-             end;
-            end;
-            NewStackItem.Node.fAABB:=DynamicAABBTree.Nodes[StackItem.NodeIndex].AABB;
-            if DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1]>=0 then begin
-             NewStackItem.NodeIndex:=DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1];
-             NewStackItem.MetaData:=1;
-             Stack.Push(NewStackItem);
-            end;
-            if DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0]>=0 then begin
-             NewStackItem.NodeIndex:=DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0];
-             NewStackItem.MetaData:=0;
-             Stack.Push(NewStackItem);
-            end;
-           end;
+         TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.ManualZones:begin
+
+          for Index:=0 to fManualBoundingBoxes.Count-1 do begin
+           DynamicAABBTree.CreateProxy(fManualBoundingBoxes.Items[Index],Index+1);
           end;
-         finally
-          Stack.Finalize;
+
+          DynamicAABBTree.Rebuild;
+
          end;
 
-        finally
-         FreeAndNil(DynamicAABBTree);
+         else begin
+
+         end;
+
         end;
-
-       end;
-
-       else {TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.MeshBVH:}begin
 
         Stack.Initialize;
         try
          NewStackItem.Node:=nil;
-         NewStackItem.NodeIndex:=fTriangleDynamicAABBTree.Root;
+         NewStackItem.NodeIndex:=DynamicAABBTree.Root;
          NewStackItem.MetaData:=0;
          Stack.Push(NewStackItem);
          while Stack.Pop(StackItem) do begin
-          if (not assigned(StackItem.Node)) or (StackItem.Node.fLevel<aMaxDepth) then begin
+          if (not assigned(StackItem.Node)) or
+             (fSubdivisonMode<>TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.MeshBVH) or
+             (StackItem.Node.fLevel<aMaxDepth) then begin
            NewStackItem.Node:=TpvScene3D.TPotentiallyVisibleSet.TNode.Create(self,StackItem.Node);
-           NewStackItem.Node.fTag:=fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].UserData-1;
+           //NewStackItem.Node.fTag:=DynamicAABBTree.Nodes[StackItem.NodeIndex].UserData-1;
            if not assigned(fRoot) then begin
             fRoot:=NewStackItem.Node;
            end;
@@ -3250,14 +3411,14 @@ begin
              StackItem.Node.fLeft:=NewStackItem.Node;
             end;
            end;
-           NewStackItem.Node.fAABB:=fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].AABB;
-           if fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1]>=0 then begin
-            NewStackItem.NodeIndex:=fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1];
+           NewStackItem.Node.fAABB:=DynamicAABBTree.Nodes[StackItem.NodeIndex].AABB;
+           if DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1]>=0 then begin
+            NewStackItem.NodeIndex:=DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[1];
             NewStackItem.MetaData:=1;
             Stack.Push(NewStackItem);
            end;
-           if fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0]>=0 then begin
-            NewStackItem.NodeIndex:=fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0];
+           if DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0]>=0 then begin
+            NewStackItem.NodeIndex:=DynamicAABBTree.Nodes[StackItem.NodeIndex].Children[0];
             NewStackItem.MetaData:=0;
             Stack.Push(NewStackItem);
            end;
@@ -3267,81 +3428,115 @@ begin
          Stack.Finalize;
         end;
 
+       finally
+        FreeAndNil(DynamicAABBTree);
        end;
+
       end;
 
-      Stack.Initialize;
-      try
-       NodeIndexCounter:=0;
-       NewStackItem.Node:=fRoot;
-       NewStackItem.MetaData:=0;
-       Stack.Push(NewStackItem);
-       while Stack.Pop(StackItem) do begin
-        case StackItem.MetaData of
-         0:begin
-          StackItem.Node.fIndex:=NodeIndexCounter;
-          StackItem.Node.fSkipCount:=0;
-          inc(NodeIndexCounter);
-          NewStackItem.Node:=StackItem.Node;
-          NewStackItem.MetaData:=1;
-          Stack.Push(NewStackItem);
-          if assigned(StackItem.Node.fRight) then begin
-           NewStackItem.Node:=StackItem.Node.fRight;
-           NewStackItem.MetaData:=0;
-           Stack.Push(NewStackItem);
+      else {TpvScene3D.TPotentiallyVisibleSet.TSubdivisonMode.MeshBVH:}begin
+
+       Stack.Initialize;
+       try
+        NewStackItem.Node:=nil;
+        NewStackItem.NodeIndex:=fTriangleBVH.TreeNodeRoot;
+        NewStackItem.MetaData:=0;
+        Stack.Push(NewStackItem);
+        while Stack.Pop(StackItem) do begin
+         if (not assigned(StackItem.Node)) or (StackItem.Node.fLevel<aMaxDepth) then begin
+          NewStackItem.Node:=TpvScene3D.TPotentiallyVisibleSet.TNode.Create(self,StackItem.Node);
+          //NewStackItem.Node.fTag:=0;//fTriangleDynamicAABBTree.Nodes[StackItem.NodeIndex].UserData-1;
+          if not assigned(fRoot) then begin
+           fRoot:=NewStackItem.Node;
           end;
-          if assigned(StackItem.Node.fLeft) then begin
-           NewStackItem.Node:=StackItem.Node.fLeft;
+          if assigned(StackItem.Node) then begin
+           if StackItem.MetaData>0 then begin
+            StackItem.Node.fRight:=NewStackItem.Node;
+           end else begin
+            StackItem.Node.fLeft:=NewStackItem.Node;
+           end;
+          end;
+          NewStackItem.Node.fAABB:=fTriangleBVH.TreeNodes[StackItem.NodeIndex].Bounds;
+          if fTriangleBVH.TreeNodes[StackItem.NodeIndex].FirstLeftChild>=0 then begin
+           NewStackItem.NodeIndex:=fTriangleBVH.TreeNodes[StackItem.NodeIndex].FirstLeftChild+1;
+           NewStackItem.MetaData:=1;
+           Stack.Push(NewStackItem);
+           NewStackItem.NodeIndex:=fTriangleBVH.TreeNodes[StackItem.NodeIndex].FirstLeftChild+0;
            NewStackItem.MetaData:=0;
            Stack.Push(NewStackItem);
           end;
          end;
-         1:begin
-          StackItem.Node.fSkipCount:=NodeIndexCounter-StackItem.Node.fIndex;
-         end;
         end;
+       finally
+        Stack.Finalize;
        end;
-      finally
-       Stack.Finalize;
+
       end;
-
-      fNodes.SortByIndex;
-
-      fBitmapOneDimensionSize:=fNodes.Count;
-      fBitmapSize:=fBitmapOneDimensionSize*fBitmapOneDimensionSize;
-      SetLength(fBitmap,(fBitmapSize+31) shr 5);
-      if length(fBitmap)>0 then begin
-       FillChar(fBitmap[0],length(fBitmap)*SizeOf(TpVUInt32),#0);
-      end;
-
-      NodeIndexPairList:=TpvScene3D.TPotentiallyVisibleSet.TNodeIndexPairList.Create;
-      try
-       //Count:=((fNodes.Count*fNodes.Count) shr 1)-(fNodes.Count shr 1);
-       for Index:=0 to fNodes.Count-1 do begin
-        for OtherIndex:=Index+1 to fNodes.Count-1 do begin
-         NodeIndexPairList.Add((TpvUInt64(OtherIndex) shl 32) or TpvUInt64(Index));
-        end;
-       end;
-       if NodeIndexPairList.Count>0 then begin
-        if assigned(aPasMPInstance) then begin
-         fPasMPInstance:=aPasMPInstance;
-        end else begin
-         fPasMPInstance:=TPasMP.GetGlobalInstance;
-        end;
-        fPasMPInstance.Invoke(fPasMPInstance.ParallelFor(NodeIndexPairList,0,NodeIndexPairList.Count-1,NodePairVisibilityCheckParallelForJob,1,PasMPDefaultDepth,nil,0,0));
-       end;
-      finally
-       FreeAndNil(NodeIndexPairList);
-      end;
-
      end;
 
-    finally
-     FreeAndNil(fTriangleDynamicAABBTreeSkipList);
+     Stack.Initialize;
+     try
+      NodeIndexCounter:=0;
+      NewStackItem.Node:=fRoot;
+      NewStackItem.MetaData:=0;
+      Stack.Push(NewStackItem);
+      while Stack.Pop(StackItem) do begin
+       case StackItem.MetaData of
+        0:begin
+         StackItem.Node.fIndex:=NodeIndexCounter;
+         StackItem.Node.fSkipCount:=0;
+         inc(NodeIndexCounter);
+         NewStackItem.Node:=StackItem.Node;
+         NewStackItem.MetaData:=1;
+         Stack.Push(NewStackItem);
+         if assigned(StackItem.Node.fRight) then begin
+          NewStackItem.Node:=StackItem.Node.fRight;
+          NewStackItem.MetaData:=0;
+          Stack.Push(NewStackItem);
+         end;
+         if assigned(StackItem.Node.fLeft) then begin
+          NewStackItem.Node:=StackItem.Node.fLeft;
+          NewStackItem.MetaData:=0;
+          Stack.Push(NewStackItem);
+         end;
+        end;
+        1:begin
+         StackItem.Node.fSkipCount:=NodeIndexCounter-StackItem.Node.fIndex;
+        end;
+       end;
+      end;
+     finally
+      Stack.Finalize;
+     end;
+
+     fNodes.SortByIndex;
+
+     fBitmapOneDimensionSize:=fNodes.Count;
+     fBitmapSize:=fBitmapOneDimensionSize*fBitmapOneDimensionSize;
+     SetLength(fBitmap,(fBitmapSize+31) shr 5);
+     if length(fBitmap)>0 then begin
+      FillChar(fBitmap[0],length(fBitmap)*SizeOf(TpVUInt32),#0);
+     end;
+
+     NodeIndexPairList:=TpvScene3D.TPotentiallyVisibleSet.TNodeIndexPairList.Create;
+     try
+      //Count:=((fNodes.Count*fNodes.Count) shr 1)-(fNodes.Count shr 1);
+      for Index:=0 to fNodes.Count-1 do begin
+       for OtherIndex:=Index+1 to fNodes.Count-1 do begin
+        NodeIndexPairList.Add((TpvUInt64(OtherIndex) shl 32) or TpvUInt64(Index));
+       end;
+      end;
+      if NodeIndexPairList.Count>0 then begin
+       fPasMPInstance.Invoke(fPasMPInstance.ParallelFor(NodeIndexPairList,0,NodeIndexPairList.Count-1,NodePairVisibilityCheckParallelForJob,1,PasMPDefaultDepth,nil,0,0));
+      end;
+     finally
+      FreeAndNil(NodeIndexPairList);
+     end;
+
     end;
 
    finally
-    FreeAndNil(fTriangleDynamicAABBTree);
+    FreeAndNil(fTriangleBVH);
    end;
 
   finally
@@ -3398,16 +3593,18 @@ end;
 
 { TpvScene3D.TImage }
 
-constructor TpvScene3D.TImage.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TImage.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
  fResourceDataStream:=TMemoryStream.Create;
  fLock:=TPasMPSpinLock.Create;
+ fTexture:=nil;
 end;
 
 destructor TpvScene3D.TImage.Destroy;
 begin
  Unload;
+ FreeAndNil(fTexture);
  FreeAndNil(fLock);
  FreeAndNil(fResourceDataStream);
  inherited Destroy;
@@ -3463,7 +3660,8 @@ begin
  end;
 end;
 
-procedure TpvScene3D.TImage.Upload;
+procedure TpvScene3D.TImage.LoadData;
+// 8x8 texture data, since some GPU drivers seems to reject smaller texture sizes like 1x1 textures.
 const WhiteTexturePixels:array[0..63] of TpvUInt32=(TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),
                                                     TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),
                                                     TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),TpvUInt32($ffffffff),
@@ -3480,115 +3678,132 @@ const WhiteTexturePixels:array[0..63] of TpvUInt32=(TpvUInt32($ffffffff),TpvUInt
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080));
+begin
+ if (not fDataLoaded) and not fInLoadData then begin
+  fInLoadData:=true;
+  try
+   if (fReferenceCounter>0) and not fDataLoaded then begin
+    fLock.Acquire;
+    try
+     if (fReferenceCounter>0) and not fDataLoaded then begin
+      try
+       FreeAndNil(fTexture); // to avoid memory leaks already beforehand
+       if assigned(fSceneInstance.fVulkanDevice) then begin
+        fTexture:=TpvVulkanTexture.Create(fSceneInstance.fVulkanDevice);
+        fTexture.DoFreeDataAfterFinish:=false;
+        case fKind of
+         TpvScene3D.TImage.TKind.WhiteTexture:begin
+          fTexture.LoadFromMemory(VK_FORMAT_R8G8B8A8_UNORM,
+                                  VK_SAMPLE_COUNT_1_BIT,
+                                  8,
+                                  8,
+                                  0,
+                                  0,
+                                  1,
+                                  0,
+                                  [TpvVulkanTextureUsageFlag.General,
+                                   TpvVulkanTextureUsageFlag.TransferDst,
+                                   TpvVulkanTextureUsageFlag.TransferSrc,
+                                   TpvVulkanTextureUsageFlag.Sampled],
+                                  @WhiteTexturePixels,
+                                  SizeOf(TpvUInt32)*64,
+                                  false,
+                                  false,
+                                  0,
+                                  true,
+                                  true);
+         end;
+         TpvScene3D.TImage.TKind.DefaultNormalMapTexture:begin
+          fTexture.LoadFromMemory(VK_FORMAT_R8G8B8A8_UNORM,
+                                  VK_SAMPLE_COUNT_1_BIT,
+                                  8,
+                                  8,
+                                  0,
+                                  0,
+                                  1,
+                                  0,
+                                  [TpvVulkanTextureUsageFlag.General,
+                                   TpvVulkanTextureUsageFlag.TransferDst,
+                                   TpvVulkanTextureUsageFlag.TransferSrc,
+                                   TpvVulkanTextureUsageFlag.Sampled],
+                                  @DefaultNormalMapTexturePixels,
+                                  SizeOf(TpvUInt32)*64,
+                                  false,
+                                  false,
+                                  0,
+                                  true,
+                                  false);
+         end;
+         else begin
+          fTexture.LoadFromImage(fResourceDataStream,
+                                 true,
+                                 false,
+                                 true);
+         end;
+        end;
+       end;
+      finally
+       fDataLoaded:=true;
+      end;
+     end;
+    finally
+     fLock.Release;
+    end;
+   end;
+  finally
+   fInLoadData:=false;
+  end;
+ end;
+end;
+
+procedure TpvScene3D.TImage.Upload;
 var UniversalQueue:TpvVulkanQueue;
     UniversalCommandPool:TpvVulkanCommandPool;
     UniversalCommandBuffer:TpvVulkanCommandBuffer;
     UniversalFence:TpvVulkanFence;
 begin
- if not fInUpload then begin
+ LoadData;
+ if (not fUploaded) and not fInUpload then begin
   fInUpload:=true;
   try
    if (fReferenceCounter>0) and not fUploaded then begin
     fLock.Acquire;
     try
      if (fReferenceCounter>0) and not fUploaded then begin
-      try
-       UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
+      if assigned(fTexture) and assigned(fSceneInstance.fVulkanDevice) then begin
        try
-        UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
-                                                          fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
-                                                          TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+        UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
         try
-         UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
-                                                              VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+         UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
+                                                           fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
+                                                           TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
          try
-          UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+          UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
+                                                                VK_COMMAND_BUFFER_LEVEL_PRIMARY);
           try
-           case fKind of
-            TpvScene3D.TImage.TKind.WhiteTexture:begin
-             fTexture:=TpvVulkanTexture.CreateFromMemory(fSceneInstance.fVulkanDevice,
-                                                         UniversalQueue,
-                                                         UniversalCommandBuffer,
-                                                         UniversalFence,
-                                                         UniversalQueue,
-                                                         UniversalCommandBuffer,
-                                                         UniversalFence,
-                                                         VK_FORMAT_R8G8B8A8_UNORM,
-                                                         VK_SAMPLE_COUNT_1_BIT,
-                                                         8,
-                                                         8,
-                                                         0,
-                                                         0,
-                                                         1,
-                                                         0,
-                                                         [TpvVulkanTextureUsageFlag.General,
-                                                          TpvVulkanTextureUsageFlag.TransferDst,
-                                                          TpvVulkanTextureUsageFlag.TransferSrc,
-                                                          TpvVulkanTextureUsageFlag.Sampled],
-                                                         @WhiteTexturePixels,
-                                                         SizeOf(TpvUInt32)*64,
-                                                         false,
-                                                         false,
-                                                         0,
-                                                         true,
-                                                         true);
-            end;
-            TpvScene3D.TImage.TKind.DefaultNormalMapTexture:begin
-             fTexture:=TpvVulkanTexture.CreateFromMemory(fSceneInstance.fVulkanDevice,
-                                                         UniversalQueue,
-                                                         UniversalCommandBuffer,
-                                                         UniversalFence,
-                                                         UniversalQueue,
-                                                         UniversalCommandBuffer,
-                                                         UniversalFence,
-                                                         VK_FORMAT_R8G8B8A8_UNORM,
-                                                         VK_SAMPLE_COUNT_1_BIT,
-                                                         8,
-                                                         8,
-                                                         0,
-                                                         0,
-                                                         1,
-                                                         0,
-                                                         [TpvVulkanTextureUsageFlag.General,
-                                                          TpvVulkanTextureUsageFlag.TransferDst,
-                                                          TpvVulkanTextureUsageFlag.TransferSrc,
-                                                          TpvVulkanTextureUsageFlag.Sampled],
-                                                         @DefaultNormalMapTexturePixels,
-                                                         SizeOf(TpvUInt32)*64,
-                                                         false,
-                                                         false,
-                                                         0,
-                                                         true,
-                                                         false);
-            end;
-            else begin
-             fTexture:=TpvVulkanTexture.CreateFromImage(fSceneInstance.fVulkanDevice,
-                                                        UniversalQueue,
-                                                        UniversalCommandBuffer,
-                                                        UniversalFence,
-                                                        UniversalQueue,
-                                                        UniversalCommandBuffer,
-                                                        UniversalFence,
-                                                        fResourceDataStream,
-                                                        true,
-                                                        false,
-                                                        true);
-            end;
+           UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+           try
+            fTexture.Finish(UniversalQueue,
+                            UniversalCommandBuffer,
+                            UniversalFence,
+                            UniversalQueue,
+                            UniversalCommandBuffer,
+                            UniversalFence);
+           finally
+            FreeAndNil(UniversalFence);
            end;
           finally
-           FreeAndNil(UniversalFence);
+           FreeAndNil(UniversalCommandBuffer);
           end;
          finally
-          FreeAndNil(UniversalCommandBuffer);
+          FreeAndNil(UniversalCommandPool);
          end;
         finally
-         FreeAndNil(UniversalCommandPool);
+         UniversalQueue:=nil;
         end;
        finally
-        UniversalQueue:=nil;
+        fUploaded:=true;
        end;
-      finally
-       fUploaded:=true;
       end;
      end;
     finally
@@ -3608,7 +3823,9 @@ begin
   try
    if fUploaded then begin
     try
-     FreeAndNil(fTexture);
+     if assigned(fTexture) then begin
+      fTexture.Unload;
+     end;
     finally
      fUploaded:=false;
     end;
@@ -3626,6 +3843,7 @@ begin
   try
    aStream.Seek(0,soBeginning);
    fResourceDataStream.CopyFrom(aStream,aStream.Size);
+   LoadData;
    result:=true;
   except
   end;
@@ -3645,9 +3863,10 @@ end;
 
 function TpvScene3D.TImage.GetHashData:THashData;
 begin
- FillChar(result.MessageDigest,SizeOf(TpvHashSHA3.TMessageDigest),#0);
+ FillChar(result,SizeOf(THashData),#0);
  if fResourceDataStream.Size>0 then begin
-  TpvHashSHA3.Process(fResourceDataStream.Memory,fResourceDataStream.Size,@result.MessageDigest,SizeOf(TpvHashSHA3.TMessageDigest));
+  result.MessageDigest:=TpvHashXXHash64.Process(fResourceDataStream.Memory,fResourceDataStream.Size,0);
+  Move(fResourceDataStream.Memory^,result.FirstBytes,Min(SizeOf(result.FirstBytes),fResourceDataStream.Size));
  end;
 end;
 
@@ -3675,9 +3894,9 @@ end;
 
 { TpvScene3D.TSampler }
 
-constructor TpvScene3D.TSampler.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TSampler.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
  fLock:=TPasMPSpinLock.Create;
 end;
 
@@ -3839,6 +4058,10 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TSampler.LoadData;
+begin
+end;
+
 procedure TpvScene3D.TSampler.Upload;
 begin
  if not fInUpload then begin
@@ -3849,22 +4072,24 @@ begin
     try
      if (fReferenceCounter>0) and not fUploaded then begin
       try
-       fSampler:=TpvVulkanSampler.Create(fSceneInstance.fVulkanDevice,
-                                         fMagFilter,
-                                         fMinFilter,
-                                         fMipmapMode,
-                                         fAddressModeS,
-                                         fAddressModeT,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         0.0,
-                                         fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0,
-                                         Max(1.0,fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),
-                                         false,
-                                         VK_COMPARE_OP_ALWAYS,
-                                         0.0,
-                                         65535.0,
-                                         VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
-                                         false);
+       if assigned(fSceneInstance.fVulkanDevice) then begin
+        fSampler:=TpvVulkanSampler.Create(fSceneInstance.fVulkanDevice,
+                                          fMagFilter,
+                                          fMinFilter,
+                                          fMipmapMode,
+                                          fAddressModeS,
+                                          fAddressModeT,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                          0.0,
+                                          fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0,
+                                          Max(1.0,fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),
+                                          false,
+                                          VK_COMPARE_OP_ALWAYS,
+                                          0.0,
+                                          65535.0,
+                                          VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+                                          false);
+       end;
       finally
        fUploaded:=true;
       end;
@@ -3899,9 +4124,9 @@ end;
 
 { TpvScene3D.TTexture }
 
-constructor TpvScene3D.TTexture.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TTexture.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  fImage:=nil;
 
@@ -4025,6 +4250,10 @@ begin
    fAdded:=false;
   end;
  end;
+end;
+
+procedure TpvScene3D.TTexture.LoadData;
+begin
 end;
 
 procedure TpvScene3D.TTexture.Upload;
@@ -4312,9 +4541,9 @@ end;
 
 { TpvScene3D.TMaterial }
 
-constructor TpvScene3D.TMaterial.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TMaterial.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  fData:=DefaultData;
 
@@ -4640,6 +4869,10 @@ begin
    fAdded:=false;
   end;
  end;
+end;
+
+procedure TpvScene3D.TMaterial.LoadData;
+begin
 end;
 
 procedure TpvScene3D.TMaterial.Upload;
@@ -5582,8 +5815,8 @@ begin
   fPosition:=Position;
   fDirection:=Direction;
   case Data^.Type_ of
-   TpvScene3D.TLightData.TType.Point,
-   TpvScene3D.TLightData.TType.Spot:begin
+   TpvScene3D.TLightData.TLightType.Point,
+   TpvScene3D.TLightData.TLightType.Spot:begin
     if Data^.fRange>1e-7 then begin
      // float distanceByRange = currentDistance / light.positionRange.w;
      // lightAttenuation *= clamp(1.0 - (distanceByRange * distanceByRange * distanceByRange * distanceByRange), 0.0, 1.0) / (currentDistance * currentDistance);
@@ -5608,23 +5841,23 @@ begin
    end;
   end;
   case Data^.Type_ of
-   TpvScene3D.TLightData.TType.Directional,
-   TpvScene3D.TLightData.TType.PrimaryDirectional:begin
+   TpvScene3D.TLightData.TLightType.Directional,
+   TpvScene3D.TLightData.TLightType.PrimaryDirectional:begin
     AABB.Min:=TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity);
     AABB.Max:=TpvVector3.InlineableCreate(Infinity,Infinity,Infinity);
    end;
-   TpvScene3D.TLightData.TType.Point:begin
+   TpvScene3D.TLightData.TLightType.Point:begin
     AABB.Min:=Position-TpvVector3.InlineableCreate(Radius,Radius,Radius);
     AABB.Max:=Position+TpvVector3.InlineableCreate(Radius,Radius,Radius);
    end;
-   TpvScene3D.TLightData.TType.Spot:begin
+   TpvScene3D.TLightData.TLightType.Spot:begin
     OppositeLength:=Tan(Data^.fOuterConeAngle{*0.5})*Radius;
     OBB.Center:=fMatrix*TpvVector3.InlineableCreate(0.0,0.0,-Radius*0.5);
-    OBB.Extents:=TpvVector3.InlineableCreate(OppositeLength,OppositeLength,Radius*0.5);
+    OBB.HalfExtents:=TpvVector3.InlineableCreate(OppositeLength,OppositeLength,Radius*0.5);
     OBB.Matrix:=fMatrix.ToMatrix3x3;
     AABB:=TpvAABB.CreateFromOBB(OBB);
    end;
-   else {TpvScene3D.TLightData.TType.None:}begin
+   else {TpvScene3D.TLightData.TLightType.None:}begin
     AABB.Min:=TpvVector3.InlineableCreate(Infinity,Infinity,Infinity);
     AABB.Max:=TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity);
    end;
@@ -5684,16 +5917,33 @@ begin
 
 // fLightMetaInfos:=nil;
 
-   case fSceneInstance.fBufferStreamingMode of
+   if assigned(fSceneInstance.fVulkanDevice) then begin
 
-    TBufferStreamingMode.Direct:begin
-     fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                     MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+    case fSceneInstance.fBufferStreamingMode of
+
+     TBufferStreamingMode.Direct:begin
+      fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                      MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                      [],
+                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      [TpvVulkanBufferFlag.PersistentMapped]
+                                                     );
+      fLightTreeVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                     (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                      [],
-                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                      0,
                                                      0,
                                                      0,
@@ -5702,41 +5952,41 @@ begin
                                                      0,
                                                      [TpvVulkanBufferFlag.PersistentMapped]
                                                     );
-     fLightTreeVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                    (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
-                                                    TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                    TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                    [],
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    [TpvVulkanBufferFlag.PersistentMapped]
-                                                   );
-     fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                        MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
-                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                        [],
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        [TpvVulkanBufferFlag.PersistentMapped]
-                                                       );
-    end;
+      fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                         MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                         [],
+                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         [TpvVulkanBufferFlag.PersistentMapped]
+                                                        );
+     end;
 
-    TBufferStreamingMode.Staging:begin
-     fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                     MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+     TBufferStreamingMode.Staging:begin
+      fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                      MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                      [],
+                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                      0,
+                                                      0,
+                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      0,
+                                                      []
+                                                     );
+      fLightTreeVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                     (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                      [],
@@ -5750,41 +6000,28 @@ begin
                                                      0,
                                                      []
                                                     );
-     fLightTreeVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                    (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
-                                                    TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                    TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                    [],
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                    0,
-                                                    0,
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    0,
-                                                    []
-                                                   );
-     fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                        MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
-                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                        [],
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                        0,
-                                                        0,
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        0,
-                                                        []
-                                                       );
+      fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                         MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                         [],
+                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                         0,
+                                                         0,
+                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         []
+                                                        );
 
-    end;
+     end;
 
-    else begin
-     Assert(false);
+     else begin
+      Assert(false);
+     end;
+
     end;
 
    end;
@@ -5825,63 +6062,96 @@ begin
 
    fLightAABBTreeGeneration:=fNewLightAABBTreeGeneration;
 
-   case fSceneInstance.fBufferStreamingMode of
+   if assigned(fSceneInstance.fVulkanDevice) then begin
 
-    TBufferStreamingMode.Direct:begin
-     if fLightItems.Count>0 then begin
-      fLightItemsVulkanBuffer.UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
+    case fSceneInstance.fBufferStreamingMode of
+
+     TBufferStreamingMode.Direct:begin
+
+      if fLightItems.Count>0 then begin
+       fLightItemsVulkanBuffer.UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
+      end;
+      if fLightTree.Count>0 then begin
+       fLightTreeVulkanBuffer.UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
+      end else begin
+       fLightTreeVulkanBuffer.UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
+      end;
+      if fLightItems.Count>0 then begin
+       fLightMetaInfoVulkanBuffer.UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
+      end;
+
+ {    fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightItemsVulkanBuffer);
+      fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightTreeVulkanBuffer);
+      fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightMetaInfoVulkanBuffer);}
+
      end;
-     if fLightTree.Count>0 then begin
-      fLightTreeVulkanBuffer.UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
-     end else begin
-      fLightTreeVulkanBuffer.UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
-     end;
-     if fLightItems.Count>0 then begin
-      fLightMetaInfoVulkanBuffer.UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
-     end;
 
-{    fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightItemsVulkanBuffer);
-     fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightTreeVulkanBuffer);
-     fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightMetaInfoVulkanBuffer);}
-
-    end;
-
-    TBufferStreamingMode.Staging:begin
-     if fLightItems.Count>0 then begin
-      fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex].UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
-      fLightItemsVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
-                                       fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex],
+     TBufferStreamingMode.Staging:begin
+      if fLightItems.Count>0 then begin
+       fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
+                                                         fSceneInstance.fVulkanStagingCommandBuffer,
+                                                         fSceneInstance.fVulkanStagingFence,
+                                                         fLightItems.Items[0],
+                                                         fLightItemsVulkanBuffer,
+                                                         0,
+                                                         Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem));
+ {     fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex].UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
+       fLightItemsVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                        fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex],
+                                        0,
+                                        0,
+                                        Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem));}
+      end;
+      if fLightTree.Count>0 then begin
+       fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
+                                                         fSceneInstance.fVulkanStagingCommandBuffer,
+                                                         fSceneInstance.fVulkanStagingFence,
+                                                         fLightTree.Items[0],
+                                                         fLightTreeVulkanBuffer,
+                                                         0,
+                                                         Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));
+ {     fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
+       fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                       fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
                                        0,
                                        0,
-                                       Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem));
+                                       Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));}
+      end else begin
+       fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
+                                                         fSceneInstance.fVulkanStagingCommandBuffer,
+                                                         fSceneInstance.fVulkanStagingFence,
+                                                         EmptyGPUSkipListNode,
+                                                         fLightTreeVulkanBuffer,
+                                                         0,
+                                                         SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));
+ {     fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
+       fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                       fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
+                                       0,
+                                       0,
+                                       SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));}
+      end;
+      if fLightItems.Count>0 then begin
+       fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
+                                                         fSceneInstance.fVulkanStagingCommandBuffer,
+                                                         fSceneInstance.fVulkanStagingFence,
+                                                         fLightMetaInfos[0],
+                                                         fLightMetaInfoVulkanBuffer,
+                                                         0,
+                                                         Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo));
+ {     fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex].UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
+       fLightMetaInfoVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                           fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex],
+                                           0,
+                                           0,
+                                           Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo));}
+      end;
      end;
-     if fLightTree.Count>0 then begin
-      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
-      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
-                                      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
-                                      0,
-                                      0,
-                                      Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));
-     end else begin
-      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),FlushUpdateData);
-      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
-                                      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
-                                      0,
-                                      0,
-                                      SizeOf(TpvBVHDynamicAABBTree.TSkipListNode));
-     end;
-     if fLightItems.Count>0 then begin
-      fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex].UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
-      fLightMetaInfoVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
-                                          fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex],
-                                          0,
-                                          0,
-                                          Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo));
-     end;
-    end;
 
-    else begin
-     Assert(false);
+     else begin
+      Assert(false);
+     end;
+
     end;
 
    end;
@@ -6244,13 +6514,13 @@ begin
   if (SourceAnimationChannel.Sampler>=0) and (SourceAnimationChannel.Sampler<aSourceAnimation.Samplers.Count) then begin
    SourceAnimationSampler:=aSourceAnimation.Samplers[SourceAnimationChannel.Sampler];
    case SourceAnimationSampler.Interpolation of
-    TPasGLTF.TAnimation.TSampler.TType.Linear:begin
+    TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.Linear:begin
      DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.Linear;
     end;
-    TPasGLTF.TAnimation.TSampler.TType.Step:begin
+    TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.Step:begin
      DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.Step;
     end;
-    TPasGLTF.TAnimation.TSampler.TType.CubicSpline:begin
+    TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.CubicSpline:begin
      DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
     end;
     else begin
@@ -6425,18 +6695,18 @@ begin
  fName:=aSourceCamera.Name;
 
  case aSourceCamera.Type_ of
-  TPasGLTF.TCamera.TType.None:begin
-   fCameraData.Type_:=TpvScene3D.TCameraData.TType.None;
+  TPasGLTF.TCamera.TCameraType.None:begin
+   fCameraData.Type_:=TpvScene3D.TCameraData.TCameraType.None;
   end;
-  TPasGLTF.TCamera.TType.Orthographic:begin
-   fCameraData.Type_:=TpvScene3D.TCameraData.TType.Orthographic;
+  TPasGLTF.TCamera.TCameraType.Orthographic:begin
+   fCameraData.Type_:=TpvScene3D.TCameraData.TCameraType.Orthographic;
    fCameraData.Orthographic.XMag:=aSourceCamera.Orthographic.XMag;
    fCameraData.Orthographic.YMag:=aSourceCamera.Orthographic.YMag;
    fCameraData.Orthographic.ZNear:=aSourceCamera.Orthographic.ZNear;
    fCameraData.Orthographic.ZFar:=aSourceCamera.Orthographic.ZFar;
   end;
-  TPasGLTF.TCamera.TType.Perspective:begin
-   fCameraData.Type_:=TpvScene3D.TCameraData.TType.Perspective;
+  TPasGLTF.TCamera.TCameraType.Perspective:begin
+   fCameraData.Type_:=TpvScene3D.TCameraData.TCameraType.Perspective;
    fCameraData.Perspective.AspectRatio:=aSourceCamera.Perspective.AspectRatio;
    fCameraData.Perspective.YFoV:=aSourceCamera.Perspective.YFoV;
    fCameraData.Perspective.ZNear:=aSourceCamera.Perspective.ZNear;
@@ -6454,6 +6724,7 @@ end;
 constructor TpvScene3D.TGroup.TMesh.Create(const aGroup:TGroup;const aIndex:TpvSizeInt);
 begin
  inherited Create(aGroup);
+ fGroup:=aGroup;
  fIndex:=aIndex;
  fPrimitives:=nil;
  fNodeMeshInstances:=0;
@@ -6465,17 +6736,23 @@ var Index:TpvSizeInt;
     Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
     EmptyMaterial:TpvScene3D.TMaterial;
 begin
- EmptyMaterial:=fGroup.fSceneInstance.fEmptyMaterial;
+ if assigned(fGroup) and assigned(fGroup.fSceneInstance) then begin
+  EmptyMaterial:=fGroup.fSceneInstance.fEmptyMaterial;
+ end else begin
+  EmptyMaterial:=nil;
+ end;
  for Index:=0 to length(fPrimitives)-1 do begin
   Primitive:=@fPrimitives[Index];
   if assigned(Primitive^.Material) then begin
    try
     if Primitive^.Material<>EmptyMaterial then begin
-     fGroup.fSceneInstance.fMaterialListLock.Acquire;
-     try
-      Primitive^.Material.DecRef;
-     finally
-      fGroup.fSceneInstance.fMaterialListLock.Release;
+     if assigned(fGroup.fSceneInstance.fMaterialListLock) then begin
+      fGroup.fSceneInstance.fMaterialListLock.Acquire;
+      try
+       Primitive^.Material.DecRef;
+      finally
+       fGroup.fSceneInstance.fMaterialListLock.Release;
+      end;
      end;
     end;
    finally
@@ -7478,7 +7755,7 @@ var TypeString:TPasJSONUTF8String;
 begin
  fName:='';
  fNodes.Clear;
- fData.fType_:=TpvScene3D.TLightData.TType.None;
+ fData.fType_:=TpvScene3D.TLightData.TLightType.None;
  fData.fIntensity:=1.0;
  fData.fRange:=0.0;
  fData.fInnerConeAngle:=0.0;
@@ -7497,25 +7774,25 @@ begin
    fData.fCastShadows:=TPasJSON.GetBoolean(aSourceLight.Properties['castShadows'],true);
   end;
   if TypeString='directional' then begin
-   fData.fType_:=TpvScene3D.TLightData.TType.Directional;
+   fData.fType_:=TpvScene3D.TLightData.TLightType.Directional;
 {  if fCastShadows then begin
     fShadowMapIndex:=fCountNormalShadowMaps;
     inc(fCountNormalShadowMaps);
    end;}
   end else if TypeString='point' then begin
-   fData.fType_:=TpvScene3D.TLightData.TType.Point;
+   fData.fType_:=TpvScene3D.TLightData.TLightType.Point;
 {  if fCastShadows then begin
     fShadowMapIndex:=fCountCubeMapShadowMaps;
     inc(fCountCubeMapShadowMaps);
    end;}
   end else if TypeString='spot' then begin
-   fData.fType_:=TpvScene3D.TLightData.TType.Spot;
+   fData.fType_:=TpvScene3D.TLightData.TLightType.Spot;
 {  if fCastShadows then begin
     fShadowMapIndex:=fCountNormalShadowMaps;
     inc(fCountNormalShadowMaps);
    end;}
   end else begin
-   fData.fType_:=TpvScene3D.TLightData.TType.None;
+   fData.fType_:=TpvScene3D.TLightData.TLightType.None;
 {  if fCastShadows then begin
     fShadowMapIndex:=fCountNormalShadowMaps;
     inc(fCountNormalShadowMaps);
@@ -7896,9 +8173,9 @@ end;
 
 { TpvScene3D.TGroup }
 
-constructor TpvScene3D.TGroup.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TGroup.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  fLock:=TPasMPSpinLock.Create;
 
@@ -7957,7 +8234,9 @@ begin
 
  fMorphTargetCount:=0;
 
- fCulling:=false;
+ fCachedVertexBufferMemoryBarriers:=nil;
+
+ fCulling:=true;
 
  fUsedVisibleDrawNodes:=TUsedVisibleDrawNodes.Create;
  fUsedVisibleDrawNodes.OwnsObjects:=false;
@@ -7976,6 +8255,8 @@ begin
  fNodeNameIndexHashMap:=TpvScene3D.TGroup.TNodeNameIndexHashMap.Create(-1);
 
  fCameraNodeIndices:=TpvScene3D.TGroup.TCameraNodeIndices.Create;
+
+ fOnNodeFilter:=nil;
 
 end;
 
@@ -8013,16 +8294,18 @@ begin
 
  FreeAndNil(fObjects);
 
- if assigned(fSceneInstance) then begin
-  fSceneInstance.fMaterialListLock.Acquire;
- end;
- try
-  for Material in fMaterials do begin
-   Material.DecRef;
-  end;
- finally
+ if not (assigned(fSceneInstance) and ((not assigned(fSceneInstance.fMaterials)) or (fSceneInstance.fMaterials.Count=0))) then begin
   if assigned(fSceneInstance) then begin
-   fSceneInstance.fMaterialListLock.Release;
+   fSceneInstance.fMaterialListLock.Acquire;
+  end;
+  try
+   for Material in fMaterials do begin
+    Material.DecRef;
+   end;
+  finally
+   if assigned(fSceneInstance) then begin
+    fSceneInstance.fMaterialListLock.Release;
+   end;
   end;
  end;
  FreeAndNil(fMaterials);
@@ -8048,6 +8331,8 @@ begin
  fJointBlocks.Finalize;
 
  fJointBlockOffsets:=nil;
+
+ fCachedVertexBufferMemoryBarriers:=nil;
 
  FreeAndNil(fNodeNameIndexHashMap);
 
@@ -8099,6 +8384,10 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.LoadData;
+begin
+end;
+
 procedure TpvScene3D.TGroup.Upload;
 var Index:TpvSizeInt;
     UniversalQueue:TpvVulkanQueue;
@@ -8139,9 +8428,41 @@ var Index:TpvSizeInt;
   fMorphTargetVertices.Finish;
   fJointBlocks.Finish;
 
-  fVulkanVertexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                              fVertices.Count*SizeOf(TVertex),
-                                              TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+  if assigned(fSceneInstance.fVulkanDevice) then begin
+
+   fVulkanVertexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                               fVertices.Count*SizeOf(TVertex),
+                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                               [],
+                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                               0,
+                                               0,
+                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                               0,
+                                               0,
+                                               0,
+                                               0,
+                                               []
+                                              );
+   fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                     UniversalCommandBuffer,
+                                                     UniversalFence,
+                                                     fVertices.Items[0],
+                                                     fVulkanVertexBuffer,
+                                                     0,
+                                                     fVertices.Count*SizeOf(TVertex));
+ { fVulkanVertexBuffer.UploadData(UniversalQueue,
+                                  UniversalCommandBuffer,
+                                  UniversalFence,
+                                  fVertices.Items[0],
+                                  0,
+                                  fVertices.Count*SizeOf(TVertex),
+                                  TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);}
+
+ { fVulkanIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                              fIndices.Count*SizeOf(TVkUInt32),
+                                              TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                               [],
                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
@@ -8152,133 +8473,18 @@ var Index:TpvSizeInt;
                                               0,
                                               0,
                                               0,
-                                              []
-                                             );
-  fVulkanVertexBuffer.UploadData(UniversalQueue,
+                                              []);
+   fVulkanIndexBuffer.UploadData(UniversalQueue,
                                  UniversalCommandBuffer,
                                  UniversalFence,
-                                 fVertices.Items[0],
+                                 fIndices.Items[0],
                                  0,
-                                 fVertices.Count*SizeOf(TVertex),
-                                 TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
+                                 fIndices.Count*SizeOf(TVkUInt32),
+                                 TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);//}
 
-  for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
-   fVulkanCachedVertexBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                             fVertices.Count*SizeOf(TCachedVertex),
-                                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                             TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                             [],
-                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                             0,
-                                                             0,
-                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                             0,
-                                                             0,
-                                                             0,
-                                                             0,
-                                                             []
-                                                            );
-   fVulkanCachedVertexBuffers[Index].ClearData(UniversalQueue,
-                                               UniversalCommandBuffer,
-                                               UniversalFence,
-                                               0,
-                                               fVertices.Count*SizeOf(TCachedVertex),
-                                               TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
-  end;
-
-{ fVulkanIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                             fIndices.Count*SizeOf(TVkUInt32),
-                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-                                             TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                             [],
-                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                             0,
-                                             0,
-                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                             0,
-                                             0,
-                                             0,
-                                             0,
-                                             []);
-  fVulkanIndexBuffer.UploadData(UniversalQueue,
-                                UniversalCommandBuffer,
-                                UniversalFence,
-                                fIndices.Items[0],
-                                0,
-                                fIndices.Count*SizeOf(TVkUInt32),
-                                TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);//}
-
-  fVulkanDrawIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                 fDrawChoreographyBatchCondensedIndices.Count*SizeOf(TVkUInt32),
-                                                 TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
-                                                 TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                 [],
-                                                 TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                 0,
-                                                 0,
-                                                 TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                 0,
-                                                 0,
-                                                 0,
-                                                 0,
-                                                 []);
-  fVulkanDrawIndexBuffer.UploadData(UniversalQueue,
-                                    UniversalCommandBuffer,
-                                    UniversalFence,
-                                    fDrawChoreographyBatchCondensedIndices.Items[0],
-                                    0,
-                                    fDrawChoreographyBatchCondensedIndices.Count*SizeOf(TVkUInt32),
-                                    TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);
-
-  fVulkanDrawUniqueIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                       fDrawChoreographyBatchCondensedUniqueIndices.Count*SizeOf(TVkUInt32),
-                                                       TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                       TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                       [],
-                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                       0,
-                                                       0,
-                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                       0,
-                                                       0,
-                                                       0,
-                                                       0,
-                                                       []
-                                                      );
-  fVulkanDrawUniqueIndexBuffer.UploadData(UniversalQueue,
-                                          UniversalCommandBuffer,
-                                          UniversalFence,
-                                          fDrawChoreographyBatchCondensedUniqueIndices.Items[0],
-                                          0,
-                                          fDrawChoreographyBatchCondensedUniqueIndices.Count*SizeOf(TVkUInt32),
-                                          TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);
-
-  fVulkanMorphTargetVertexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                         fMorphTargetVertices.Count*SizeOf(TMorphTargetVertex),
-                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                         [],
-                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                         0,
-                                                         0,
-                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                         0,
-                                                         0,
-                                                         0,
-                                                         0,
-                                                         []
-                                                        );
-  fVulkanMorphTargetVertexBuffer.UploadData(UniversalQueue,
-                                            UniversalCommandBuffer,
-                                            UniversalFence,
-                                            fMorphTargetVertices.Items[0],
-                                            0,
-                                            fMorphTargetVertices.Count*SizeOf(TMorphTargetVertex),
-                                            TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);
-
-  fVulkanJointBlockBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                  fJointBlocks.Count*SizeOf(TJointBlock),
-                                                  TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+   fVulkanDrawIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                  fDrawChoreographyBatchCondensedIndices.Count*SizeOf(TVkUInt32),
+                                                  TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT),
                                                   TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                   [],
                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
@@ -8289,72 +8495,170 @@ var Index:TpvSizeInt;
                                                   0,
                                                   0,
                                                   0,
-                                                  []
-                                                 );
-  fVulkanJointBlockBuffer.UploadData(UniversalQueue,
+                                                  []);
+   fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                     UniversalCommandBuffer,
+                                                     UniversalFence,
+                                                     fDrawChoreographyBatchCondensedIndices.Items[0],
+                                                     fVulkanDrawIndexBuffer,
+                                                     0,
+                                                     fDrawChoreographyBatchCondensedIndices.Count*SizeOf(TVkUInt32));
+ { fVulkanDrawIndexBuffer.UploadData(UniversalQueue,
                                      UniversalCommandBuffer,
                                      UniversalFence,
-                                     fJointBlocks.Items[0],
+                                     fDrawChoreographyBatchCondensedIndices.Items[0],
                                      0,
-                                     fJointBlocks.Count*SizeOf(TJointBlock),
-                                     TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);
+                                     fDrawChoreographyBatchCondensedIndices.Count*SizeOf(TVkUInt32),
+                                     TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);}
 
-  case fSceneInstance.fBufferStreamingMode of
+   fVulkanDrawUniqueIndexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                        fDrawChoreographyBatchCondensedUniqueIndices.Count*SizeOf(TVkUInt32),
+                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_INDEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                        [],
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                        0,
+                                                        0,
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        []
+                                                       );
+   fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                     UniversalCommandBuffer,
+                                                     UniversalFence,
+                                                     fDrawChoreographyBatchCondensedUniqueIndices.Items[0],
+                                                     fVulkanDrawUniqueIndexBuffer,
+                                                     0,
+                                                     fDrawChoreographyBatchCondensedUniqueIndices.Count*SizeOf(TVkUInt32));
+ { fVulkanDrawUniqueIndexBuffer.UploadData(UniversalQueue,
+                                           UniversalCommandBuffer,
+                                           UniversalFence,
+                                           fDrawChoreographyBatchCondensedUniqueIndices.Items[0],
+                                           0,
+                                           fDrawChoreographyBatchCondensedUniqueIndices.Count*SizeOf(TVkUInt32),
+                                           TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);}
 
-   TBufferStreamingMode.Direct:begin
+   fVulkanMorphTargetVertexBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                          fMorphTargetVertices.Count*SizeOf(TMorphTargetVertex),
+                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                          [],
+                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                          0,
+                                                          0,
+                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          []
+                                                         );
+   fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                     UniversalCommandBuffer,
+                                                     UniversalFence,
+                                                     fMorphTargetVertices.Items[0],
+                                                     fVulkanMorphTargetVertexBuffer,
+                                                     0,
+                                                     fMorphTargetVertices.Count*SizeOf(TMorphTargetVertex));
+ { fVulkanMorphTargetVertexBuffer.UploadData(UniversalQueue,
+                                             UniversalCommandBuffer,
+                                             UniversalFence,
+                                             fMorphTargetVertices.Items[0],
+                                             0,
+                                             fMorphTargetVertices.Count*SizeOf(TMorphTargetVertex),
+                                             TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);}
 
-    for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+   fVulkanJointBlockBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                   fJointBlocks.Count*SizeOf(TJointBlock),
+                                                   TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                   TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                   [],
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                   0,
+                                                   0,
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   []
+                                                  );
+   fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                     UniversalCommandBuffer,
+                                                     UniversalFence,
+                                                     fJointBlocks.Items[0],
+                                                     fVulkanJointBlockBuffer,
+                                                     0,
+                                                     fJointBlocks.Count*SizeOf(TJointBlock));
+ { fVulkanJointBlockBuffer.UploadData(UniversalQueue,
+                                      UniversalCommandBuffer,
+                                      UniversalFence,
+                                      fJointBlocks.Items[0],
+                                      0,
+                                      fJointBlocks.Count*SizeOf(TJointBlock),
+                                      TpvVulkanBufferUseTemporaryStagingBufferMode.Yes);}
 
-     fVulkanNodeMatricesStagingBuffers[Index]:=nil;
+   case fSceneInstance.fBufferStreamingMode of
 
-     fVulkanMorphTargetVertexWeightsStagingBuffers[Index]:=nil;
+    TBufferStreamingMode.Direct:begin
+
+ {   for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+
+      fVulkanNodeMatricesStagingBuffers[Index]:=nil;
+
+      fVulkanMorphTargetVertexWeightsStagingBuffers[Index]:=nil;
+
+     end;}
 
     end;
 
-   end;
+    TBufferStreamingMode.Staging:begin
 
-   TBufferStreamingMode.Staging:begin
+ {   for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
 
-    for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+      fVulkanNodeMatricesStagingBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                                       (fNodes.Count+fCountJointNodeMatrices+1)*SizeOf(TpvMatrix4x4),
+                                                                       TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                                                       TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                       [],
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       [TpvVulkanBufferFlag.PersistentMapped]
+                                                                      );
 
-     fVulkanNodeMatricesStagingBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                                      (fNodes.Count+fCountJointNodeMatrices+1)*SizeOf(TpvMatrix4x4),
-                                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
-                                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                      [],
-                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                      0,
-                                                                      0,
-                                                                      0,
-                                                                      0,
-                                                                      0,
-                                                                      0,
-                                                                      [TpvVulkanBufferFlag.PersistentMapped]
-                                                                     );
+      fVulkanMorphTargetVertexWeightsStagingBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                                                   (Max(Max(fMorphTargetCount,fCountNodeWeights),1))*SizeOf(TpvFloat),
+                                                                                   TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                                                                   TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                   [],
+                                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   0,
+                                                                                   [TpvVulkanBufferFlag.PersistentMapped]
+                                                                                  );
 
-     fVulkanMorphTargetVertexWeightsStagingBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                                                  (Max(Max(fMorphTargetCount,fCountNodeWeights),1))*SizeOf(TpvFloat),
-                                                                                  TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
-                                                                                  TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                                  [],
-                                                                                  TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                                  TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                                  0,
-                                                                                  0,
-                                                                                  0,
-                                                                                  0,
-                                                                                  0,
-                                                                                  0,
-                                                                                  [TpvVulkanBufferFlag.PersistentMapped]
-                                                                                 );
+     end;}
 
     end;
 
-   end;
+    else begin
+     Assert(false);
+    end;
 
-   else begin
-    Assert(false);
    end;
 
   end;
@@ -8370,44 +8674,46 @@ begin
     try
      if not fUploaded then begin
       try
-       UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
-       try
-        UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
-                                                          fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
-                                                          TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+       if assigned(fSceneInstance.fVulkanDevice) then begin
+        UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
         try
-         UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
-                                                               VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+         UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
+                                                           fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
+                                                           TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
          try
-          UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+          UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
+                                                                VK_COMMAND_BUFFER_LEVEL_PRIMARY);
           try
-           ProcessPrimitives;
+           UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+           try
+            ProcessPrimitives;
+           finally
+            FreeAndNil(UniversalFence);
+           end;
           finally
-           FreeAndNil(UniversalFence);
+           FreeAndNil(UniversalCommandBuffer);
           end;
          finally
-          FreeAndNil(UniversalCommandBuffer);
+          FreeAndNil(UniversalCommandPool);
          end;
         finally
-         FreeAndNil(UniversalCommandPool);
+         UniversalQueue:=nil;
         end;
-       finally
-        UniversalQueue:=nil;
-       end;
-       for Node in fNodes do begin
-        Mesh:=Node.Mesh;
-        if assigned(Mesh) then begin
-         for Index:=0 to length(Mesh.fPrimitives)-1 do begin
-          Primitive:=@Mesh.fPrimitives[Index];
-          Material:=Primitive.Material;
-          if assigned(Primitive.Material) then begin
-           Material.Upload;
+        for Node in fNodes do begin
+         Mesh:=Node.Mesh;
+         if assigned(Mesh) then begin
+          for Index:=0 to length(Mesh.fPrimitives)-1 do begin
+           Primitive:=@Mesh.fPrimitives[Index];
+           Material:=Primitive.Material;
+           if assigned(Primitive.Material) then begin
+            Material.Upload;
+           end;
           end;
          end;
         end;
+        fSceneInstance.NewImageDescriptorGeneration;
+        fSceneInstance.NewMaterialDataGeneration;
        end;
-       fSceneInstance.NewImageDescriptorGeneration;
-       fSceneInstance.NewMaterialDataGeneration;
       finally
        fUploaded:=true;
       end;
@@ -8432,7 +8738,7 @@ end;
 
 procedure TpvScene3D.TGroup.Unload;
 var Instance:TpvScene3D.TGroup.TInstance;
-    Index:TpvSizeInt;
+//  Index:TpvSizeInt;
 begin
  fLock.Acquire;
  try
@@ -8448,18 +8754,15 @@ begin
    if fUploaded then begin
     try
      FreeAndNil(fVulkanVertexBuffer);
-     for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
-      FreeAndNil(fVulkanCachedVertexBuffers[Index]);
-     end;
 //   FreeAndNil(fVulkanIndexBuffer);
      FreeAndNil(fVulkanDrawIndexBuffer);
      FreeAndNil(fVulkanDrawUniqueIndexBuffer);
      FreeAndNil(fVulkanMorphTargetVertexBuffer);
      FreeAndNil(fVulkanJointBlockBuffer);
-     for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+{    for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
       FreeAndNil(fVulkanNodeMatricesStagingBuffers[Index]);
       FreeAndNil(fVulkanMorphTargetVertexWeightsStagingBuffers[Index]);
-     end;
+     end;}
     finally
      fUploaded:=false;
     end;
@@ -8741,6 +9044,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
      end;
      if assigned(CurrentImage) and (NewImages.IndexOf(CurrentImage)<0) then begin
       CurrentImage.IncRef;
+      CurrentImage.LoadData;
       NewImages.Add(CurrentImage);
      end;
     finally
@@ -8901,7 +9205,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
       TTargetUsedBitmap=array of TpvUInt32;
  var Index,ChannelIndex,TargetIndex,CountDefaultChannels,
      MaterialArrayIndex,MaterialIDMapArrayIndex,
-     MaterialIndex:TpvSizeInt;
+     MaterialIndex,InstanceChannelTargetIndex:TpvSizeInt;
      SourceAnimation:TPasGLTF.TAnimation;
      Animation:TpvScene3D.TGroup.TAnimation;
      Channel:TpvScene3D.TGroup.TAnimation.PChannel;
@@ -8909,6 +9213,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
      MaterialHashMap:TMaterialHashMap;
      MaterialArrayList:TMaterialArrayList;
      TargetHashMap:TTargetHashMap;
+     InstanceChannelTargetHashMap:TTargetHashMap;
      TargetArrayList:TTargetArrayList;
      TargetUsedBitmap:TTargetUsedBitmap;
      CompactCode:TpvUInt64;
@@ -8916,138 +9221,209 @@ var LightMap:TpvScene3D.TGroup.TLights;
      MaterialIDMapArray:TpvScene3D.TGroup.TMaterialIDMapArray;
      OK:boolean;
  begin
+  fCountInstanceAnimationChannels:=0;
   MaterialHashMap:=TMaterialHashMap.Create(-1);
   try
    MaterialArrayList:=TMaterialArrayList.Create;
    try
-    TargetHashMap:=TTargetHashMap.Create(-1);
+    InstanceChannelTargetHashMap:=TTargetHashMap.Create(-1);
     try
-     TargetArrayList:=TTargetArrayList.Create;
+     TargetHashMap:=TTargetHashMap.Create(-1);
      try
-      for Index:=0 to aSourceDocument.Animations.Count-1 do begin
-       SourceAnimation:=aSourceDocument.Animations[Index];
-       Animation:=TAnimation.Create(self,Index);
-       try
-        Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
-        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-         Channel:=@Animation.fChannels[ChannelIndex];
-         if Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.MaterialTargets then begin
-          OK:=false;
-          if (Channel^.TargetIndex>=0) and (Channel^.TargetIndex<fMaterials.Count) then begin
-           MaterialIndex:=Channel^.TargetIndex;
-           Material:=fMaterials[MaterialIndex];
-           MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
-           if MaterialIDMapArrayIndex>=0 then begin
-            MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
-            if MaterialIDMapArray.Count>0 then begin
-             if MaterialIDMapArray.Count>=2 then begin
-              fSceneInstance.fMaterialListLock.Acquire;
-              try
-               DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
-               try
-                DuplicatedMaterial.Assign(Material);
-                Material.DecRef;
-                Material:=DuplicatedMaterial;
-                Material.IncRef;
-                MaterialIDMapArray.Remove(MaterialIndex);
-                MaterialIDMapArray:=TMaterialIDMapArray.Create;
-                fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
-                MaterialIDMapArray.Add(MaterialIndex);
-               finally
-                fMaterials[MaterialIndex]:=Material;
-                fMaterialMap[Index+1]:=Material.fID;
+      TargetArrayList:=TTargetArrayList.Create;
+      try
+       for Index:=0 to aSourceDocument.Animations.Count-1 do begin
+        SourceAnimation:=aSourceDocument.Animations[Index];
+        Animation:=TAnimation.Create(self,Index);
+        try
+         Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
+         for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+          Channel:=@Animation.fChannels[ChannelIndex];
+          Channel^.TargetInstanceIndex:=-1;
+          case Channel^.Target of
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+            OK:=false;
+            if (Channel^.TargetIndex>=0) and (Channel^.TargetIndex<fMaterials.Count) then begin
+             MaterialIndex:=Channel^.TargetIndex;
+             Material:=fMaterials[MaterialIndex];
+             MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
+             if MaterialIDMapArrayIndex>=0 then begin
+              MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
+              if MaterialIDMapArray.Count>0 then begin
+               if MaterialIDMapArray.Count>=2 then begin
+                fSceneInstance.fMaterialListLock.Acquire;
+                try
+                 DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+                 try
+                  DuplicatedMaterial.Assign(Material);
+                  Material.DecRef;
+                  Material:=DuplicatedMaterial;
+                  Material.IncRef;
+                  MaterialIDMapArray.Remove(MaterialIndex);
+                  MaterialIDMapArray:=TMaterialIDMapArray.Create;
+                  fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
+                  MaterialIDMapArray.Add(MaterialIndex);
+                 finally
+                  fMaterials[MaterialIndex]:=Material;
+                  fMaterialMap[Index+1]:=Material.fID;
+                 end;
+                finally
+                 fSceneInstance.fMaterialListLock.Release;
+                end;
                end;
-              finally
-               fSceneInstance.fMaterialListLock.Release;
+               //Channel^.TargetIndex:=Material.fID;
+               MaterialArrayIndex:=MaterialHashMap[Material.fID];
+               if MaterialArrayIndex<0 then begin
+                MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
+                MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
+                fMaterialsToDuplicate.Add(Material);
+               end;
+               OK:=true;
               end;
              end;
-             //Channel^.TargetIndex:=Material.fID;
-             MaterialArrayIndex:=MaterialHashMap[Material.fID];
-             if MaterialArrayIndex<0 then begin
-              MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
-              MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
-              fMaterialsToDuplicate.Add(Material);
+             if assigned(Material) and (Channel^.TargetSubIndex>=0) then begin
+              case Channel^.Target of
+               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+                Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
+               end;
+              end;
+{             if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
+                 (Channel^.TargetSubIndex>=0) then begin
+               Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
+              end;}
              end;
-             OK:=true;
             end;
-           end;
-           if assigned(Material) then begin
-            if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
-               (Channel^.TargetSubIndex>=0) then begin
-             Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
+            if not OK then begin
+             Channel^.TargetIndex:=-1;
             end;
            end;
           end;
-          if not OK then begin
-           Channel^.TargetIndex:=-1;
-          end;
+{         if Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.MaterialTargets then begin
+          end;}
          end;
-        end;
-        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-         Channel:=@Animation.fChannels[ChannelIndex];
-         if Channel^.TargetIndex>=0 then begin
-          CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
-                       (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                       (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-          TargetIndex:=TargetHashMap[CompactCode];
-          if TargetIndex<0 then begin
-           TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
-          end;
-         end;
-        end;
-       finally
-        fAnimations.Add(Animation);
-       end;
-      end;
-      if TargetArrayList.Count>0 then begin
-       TargetUsedBitmap:=nil;
-       try
-        SetLength(TargetUsedBitmap,(TargetArrayList.Count+31) shr 5);
-        for Index:=0 to fAnimations.Count-1 do begin
-         Animation:=fAnimations[Index];
-         FillChar(TargetUsedBitmap[0],length(TargetUsedBitmap)*SizeOf(TpvUInt32),#0);
          for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
           Channel:=@Animation.fChannels[ChannelIndex];
           if Channel^.TargetIndex>=0 then begin
-           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-           TargetIndex:=TargetHashMap[CompactCode];
-           if (TargetIndex>=0) and (TargetIndex<TargetArrayList.Count) then begin
-            TargetUsedBitmap[TargetIndex shr 5]:=TargetUsedBitmap[TargetIndex shr 5] or (TpvUInt32(1) shl (TargetIndex and 31));
+           begin
+            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+            TargetIndex:=TargetHashMap[CompactCode];
+            if TargetIndex<0 then begin
+             TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
+            end;
+           end;
+           begin
+            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[Channel^.Target])) and TpvUInt64($ffff)) shl 48) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+            InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
+            if InstanceChannelTargetIndex<0 then begin
+             InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
+             inc(fCountInstanceAnimationChannels);
+             InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
+            end;
+            Channel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
            end;
           end;
          end;
-         CountDefaultChannels:=0;
-         for TargetIndex:=0 to TargetArrayList.Count-1 do begin
-          if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
-           inc(CountDefaultChannels);
+        finally
+         fAnimations.Add(Animation);
+        end;
+       end;
+       if TargetArrayList.Count>0 then begin
+        TargetUsedBitmap:=nil;
+        try
+         SetLength(TargetUsedBitmap,(TargetArrayList.Count+31) shr 5);
+         for Index:=0 to fAnimations.Count-1 do begin
+          Animation:=fAnimations[Index];
+          FillChar(TargetUsedBitmap[0],length(TargetUsedBitmap)*SizeOf(TpvUInt32),#0);
+          for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+           Channel:=@Animation.fChannels[ChannelIndex];
+           if Channel^.TargetIndex>=0 then begin
+            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+            TargetIndex:=TargetHashMap[CompactCode];
+            if (TargetIndex>=0) and (TargetIndex<TargetArrayList.Count) then begin
+             TargetUsedBitmap[TargetIndex shr 5]:=TargetUsedBitmap[TargetIndex shr 5] or (TpvUInt32(1) shl (TargetIndex and 31));
+            end;
+           end;
           end;
-         end;
-         if CountDefaultChannels>0 then begin
-          SetLength(Animation.fDefaultChannels,CountDefaultChannels);
           CountDefaultChannels:=0;
           for TargetIndex:=0 to TargetArrayList.Count-1 do begin
            if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
-            DefaultChannel:=@Animation.fDefaultChannels[CountDefaultChannels];
             inc(CountDefaultChannels);
-            CompactCode:=TargetArrayList[TargetIndex];
-            DefaultChannel^.Target:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvInt32(TpvUInt64(TpvUInt64(CompactCode) shr 48)));
-            DefaultChannel^.TargetIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 16) and TpvUInt64($ffffffff)))-1;
-            DefaultChannel^.TargetSubIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 0) and TpvUInt64($ffff)))-1;
+           end;
+          end;
+          if CountDefaultChannels>0 then begin
+           SetLength(Animation.fDefaultChannels,CountDefaultChannels);
+           CountDefaultChannels:=0;
+           for TargetIndex:=0 to TargetArrayList.Count-1 do begin
+            if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
+             DefaultChannel:=@Animation.fDefaultChannels[CountDefaultChannels];
+             inc(CountDefaultChannels);
+             begin
+              CompactCode:=TargetArrayList[TargetIndex];
+              DefaultChannel^.Target:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvInt32(TpvUInt64(TpvUInt64(CompactCode) shr 48)));
+              DefaultChannel^.TargetIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 16) and TpvUInt64($ffffffff)))-1;
+              DefaultChannel^.TargetSubIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 0) and TpvUInt64($ffff)))-1;
+             end;
+             begin
+              CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[DefaultChannel^.Target])) and TpvUInt64($ffff)) shl 48) or
+                           (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                           (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+              InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
+              if InstanceChannelTargetIndex<0 then begin
+               InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
+               inc(fCountInstanceAnimationChannels);
+               InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
+              end;
+              DefaultChannel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
+             end;
+            end;
            end;
           end;
          end;
+        finally
+         TargetUsedBitmap:=nil;
         end;
-       finally
-        TargetUsedBitmap:=nil;
        end;
+      finally
+       FreeAndNil(TargetArrayList);
       end;
      finally
-      FreeAndNil(TargetArrayList);
+      FreeAndNil(TargetHashMap);
      end;
     finally
-     FreeAndNil(TargetHashMap);
+     FreeAndNil(InstanceChannelTargetHashMap);
     end;
    finally
     FreeAndNil(MaterialArrayList);
@@ -9511,10 +9887,6 @@ const Offsets:TVkDeviceSize=0;
 begin
  if not fSetGroupResourcesDone[aRenderPassIndex] then begin
   fSetGroupResourcesDone[aRenderPassIndex]:=true;
-  aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanCachedVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
-  if aPreviousInFlightFrameIndex>=0 then begin
-   aCommandBuffer.CmdBindVertexBuffers(1,1,@fVulkanCachedVertexBuffers[aPreviousInFlightFrameIndex].Handle,@Offsets);
-  end;
   aCommandBuffer.CmdBindIndexBuffer(fVulkanDrawIndexBuffer.Handle,0,TVkIndexType.VK_INDEX_TYPE_UINT32);
  end;
 end;
@@ -9524,7 +9896,8 @@ procedure TpvScene3D.TGroup.UpdateCachedVertices(const aPipeline:TpvVulkanPipeli
                                                  const aCommandBuffer:TpvVulkanCommandBuffer;
                                                  const aPipelineLayout:TpvVulkanPipelineLayout);
 var Instance:TpvScene3D.TGroup.TInstance;
-    BufferMemoryBarrier:TVkBufferMemoryBarrier;
+    BufferMemoryBarrier:PVkBufferMemoryBarrier;
+    Count:TVkSizeInt;
 begin
  fCachedVerticesUpdated:=false;
  for Instance in fInstances do begin
@@ -9534,24 +9907,35 @@ begin
                                 aPipelineLayout);
  end;
  if fCachedVerticesUpdated then begin
-  FillChar(BufferMemoryBarrier,SizeOf(TVkBufferMemoryBarrier),#0);
-  BufferMemoryBarrier.sType:=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-  BufferMemoryBarrier.pNext:=nil;
-  BufferMemoryBarrier.buffer:=fVulkanCachedVertexBuffers[aInFlightFrameIndex].Handle;
-  BufferMemoryBarrier.srcAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT);
-  BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
-  BufferMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
-  BufferMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
-  BufferMemoryBarrier.offset:=0;
-  BufferMemoryBarrier.size:=VK_WHOLE_SIZE;
-  aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
-                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT) or
-                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT) or
-                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT),
-                                    0,
-                                    0,nil,
-                                    1,@BufferMemoryBarrier,
-                                    0,nil);
+  if length(fCachedVertexBufferMemoryBarriers)<fInstances.Count then begin
+   SetLength(fCachedVertexBufferMemoryBarriers,fInstances.Count*2);
+  end;
+  Count:=0;
+  for Instance in fInstances do begin
+   if Instance.fCachedVerticesUpdated then begin
+    BufferMemoryBarrier:=@fCachedVertexBufferMemoryBarriers[Count];
+    FillChar(BufferMemoryBarrier^,SizeOf(TVkBufferMemoryBarrier),#0);
+    BufferMemoryBarrier^.sType:=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    BufferMemoryBarrier^.pNext:=nil;
+    BufferMemoryBarrier^.buffer:=Instance.fVulkanCachedVertexBuffers[aInFlightFrameIndex].Handle;
+    BufferMemoryBarrier^.srcAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT);
+    BufferMemoryBarrier^.dstAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+    BufferMemoryBarrier^.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+    BufferMemoryBarrier^.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+    BufferMemoryBarrier^.offset:=0;
+    BufferMemoryBarrier^.size:=VK_WHOLE_SIZE;
+   end;
+  end;
+  if Count>0 then begin
+   aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                     TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT) or
+                                     TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_INPUT_BIT) or
+                                     TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT),
+                                     0,
+                                     0,nil,
+                                     Count,@fCachedVertexBufferMemoryBarriers[0],
+                                     0,nil);
+  end;
  end;
 end;
 
@@ -9601,6 +9985,13 @@ begin
  end;
 end;
 
+{ TpvScene3D.TGroup.TInstance.TNode }
+
+function TpvScene3D.TGroup.TInstance.TNode.InverseFrontFaces:boolean;
+begin
+ result:=TpvScene3D.TGroup.TInstance.TNode.TNodeFlag.InverseFrontFaces in Flags;
+end;
+
 { TpvScene3D.TGroup.TInstance.TLight }
 
 constructor TpvScene3D.TGroup.TInstance.TLight.Create(const aInstance:TpvScene3D.TGroup.TInstance;const aLight:TpvScene3D.TGroup.TLight);
@@ -9624,7 +10015,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TLight.Update;
 var Index:TpvSizeInt;
     Factor:TpvDouble;
-    Overwrite:TpvScene3D.TGroup.TInstance.TLight.POverwrite;
+    Overwrite:TpvScene3D.TGroup.TInstance.TLight.PLightOverwrite;
     ColorSum:TpvScene3D.TVector3Sum;
     IntensitySum:TpvScene3D.TScalarSum;
     RangeSum:TpvScene3D.TScalarSum;
@@ -9647,43 +10038,43 @@ begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
    if not IsZero(Factor) then begin
-    if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Defaults in Overwrite^.Flags then begin
+    if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Defaults in Overwrite^.Flags then begin
      ColorSum.Add(fData.fColor,Factor);
      IntensitySum.Add(fData.fIntensity,Factor);
      RangeSum.Add(fData.fRange,Factor);
      SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor);
      SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor);
     end else begin
-     if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Color in Overwrite^.Flags then begin
-      if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultColor in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultColor in Overwrite^.Flags then begin
        ColorSum.Add(fData.fColor,Factor);
       end else begin
        ColorSum.Add(Overwrite^.Color,Factor);
       end;
      end;
-     if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Intensity in Overwrite^.Flags then begin
-      if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultIntensity in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Intensity in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultIntensity in Overwrite^.Flags then begin
        IntensitySum.Add(fData.fIntensity,Factor);
       end else begin
        IntensitySum.Add(Overwrite^.Intensity,Factor);
       end;
      end;
-     if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Range in Overwrite^.Flags then begin
-      if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultRange in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Range in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultRange in Overwrite^.Flags then begin
        RangeSum.Add(fData.fRange,Factor);
       end else begin
        RangeSum.Add(Overwrite^.Range,Factor);
       end;
      end;
-     if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotInnerConeAngle in Overwrite^.Flags then begin
-      if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultSpotInnerConeAngle in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotInnerConeAngle in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotInnerConeAngle in Overwrite^.Flags then begin
        SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor);
       end else begin
        SpotInnerConeAngleSum.Add(Overwrite^.SpotInnerConeAngle,Factor);
       end;
      end;
-     if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotOuterConeAngle in Overwrite^.Flags then begin
-      if TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultSpotOuterConeAngle in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotOuterConeAngle in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotOuterConeAngle in Overwrite^.Flags then begin
        SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor);
       end else begin
        SpotOuterConeAngleSum.Add(Overwrite^.SpotOuterConeAngle,Factor);
@@ -9723,7 +10114,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TCamera.Update;
 var Index:TpvSizeInt;
     Factor:TpvDouble;
-    Overwrite:TpvScene3D.TGroup.TInstance.TCamera.POverwrite;
+    Overwrite:TpvScene3D.TGroup.TInstance.TCamera.PCameraOverwrite;
     OrthographicXMagSum:TpvScene3D.TScalarSum;
     OrthographicYMagSum:TpvScene3D.TScalarSum;
     OrthographicZFarSum:TpvScene3D.TScalarSum;
@@ -9752,15 +10143,15 @@ begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
    if not IsZero(Factor) then begin
-    if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.Defaults in Overwrite^.Flags then begin
+    if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Defaults in Overwrite^.Flags then begin
      case fData.Type_ of
-      TpvScene3D.TCameraData.TType.Orthographic:begin
+      TpvScene3D.TCameraData.TCameraType.Orthographic:begin
        OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor);
        OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor);
        OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor);
        OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor);
       end;
-      TpvScene3D.TCameraData.TType.Perspective:begin
+      TpvScene3D.TCameraData.TCameraType.Perspective:begin
        PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor);
        PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor);
        PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor);
@@ -9771,60 +10162,60 @@ begin
      end;
     end else begin
      case fData.Type_ of
-      TpvScene3D.TCameraData.TType.Orthographic:begin
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicXMag in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicXMag in Overwrite^.Flags then begin
+      TpvScene3D.TCameraData.TCameraType.Orthographic:begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicXMag in Overwrite^.Flags then begin
          OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor);
         end else begin
          OrthographicXMagSum.Add(Overwrite^.OrthographicXMag,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicYMag in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicYMag in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicYMag in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicYMag in Overwrite^.Flags then begin
          OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor);
         end else begin
          OrthographicYMagSum.Add(Overwrite^.OrthographicYMag,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZFar in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicZFar in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZFar in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZFar in Overwrite^.Flags then begin
          OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor);
         end else begin
          OrthographicZFarSum.Add(Overwrite^.OrthographicZFar,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZNear in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicZNear in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZNear in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZNear in Overwrite^.Flags then begin
          OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor);
         end else begin
          OrthographicZNearSum.Add(Overwrite^.OrthographicZNear,Factor);
         end;
        end;
       end;
-      TpvScene3D.TCameraData.TType.Perspective:begin
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveAspectRatio in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveAspectRatio in Overwrite^.Flags then begin
+      TpvScene3D.TCameraData.TCameraType.Perspective:begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveAspectRatio in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveAspectRatio in Overwrite^.Flags then begin
          PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor);
         end else begin
          PerspectiveAspectRatioSum.Add(Overwrite^.PerspectiveAspectRatio,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveYFov in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveYFov in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveYFov in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveYFov in Overwrite^.Flags then begin
          PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor);
         end else begin
          PerspectiveYFovSum.Add(Overwrite^.PerspectiveYFov,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZFar in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveZFar in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZFar in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZFar in Overwrite^.Flags then begin
          PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor);
         end else begin
          PerspectiveZFarSum.Add(Overwrite^.PerspectiveZFar,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZNear in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveZNear in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZNear in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZNear in Overwrite^.Flags then begin
          PerspectiveZNearSum.Add(fData.Perspective.ZNear,Factor);
         end else begin
          PerspectiveZNearSum.Add(Overwrite^.PerspectiveZNear,Factor);
@@ -9838,13 +10229,13 @@ begin
    end;
   end;
   case fData.Type_ of
-   TpvScene3D.TCameraData.TType.Orthographic:begin
+   TpvScene3D.TCameraData.TCameraType.Orthographic:begin
     fWorkData.Orthographic.XMag:=OrthographicXMagSum.Get(fData.Orthographic.XMag);
     fWorkData.Orthographic.YMag:=OrthographicYMagSum.Get(fData.Orthographic.YMag);
     fWorkData.Orthographic.ZFar:=OrthographicZFarSum.Get(fData.Orthographic.ZFar);
     fWorkData.Orthographic.ZNear:=OrthographicZNearSum.Get(fData.Orthographic.ZNear);
    end;
-   TpvScene3D.TCameraData.TType.Perspective:begin
+   TpvScene3D.TCameraData.TCameraType.Perspective:begin
     fWorkData.Perspective.AspectRatio:=PerspectiveAspectRatioSum.Get(fData.Perspective.AspectRatio);
     fWorkData.Perspective.YFoV:=PerspectiveYFovSum.Get(fData.Perspective.YFov);
     fWorkData.Perspective.ZFar:=PerspectiveZFarSum.Get(fData.Perspective.ZFar);
@@ -9879,7 +10270,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TMaterial.Update;
 var Index,AnimatedTextureIndex:TpvSizeInt;
     Factor:TpvDouble;
-    Overwrite:TpvScene3D.TGroup.TInstance.TMaterial.POverwrite;
+    Overwrite:TpvScene3D.TGroup.TInstance.TMaterial.PMaterialOverwrite;
     MaterialPBRMetallicRoughnessBaseColorFactorSum:TpvScene3D.TVector4Sum;
     MaterialPBRMetallicRoughnessMetallicFactorSum:TpvScene3D.TScalarSum;
     MaterialPBRMetallicRoughnessRoughnessFactorSum:TpvScene3D.TScalarSum;
@@ -9954,7 +10345,7 @@ begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
    if not IsZero(Factor) then begin
-    if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.Defaults in Overwrite^.Flags then begin
+    if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.Defaults in Overwrite^.Flags then begin
      if Overwrite^.SubIndex<0 then begin
       // Material
       MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor);
@@ -9992,162 +10383,162 @@ begin
     end else begin
      if Overwrite^.SubIndex<0 then begin
       // Material
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
         MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor);
        end else begin
         MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessBaseColorFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
         MaterialPBRMetallicRoughnessMetallicFactorSum.Add(fData.PBRMetallicRoughness.MetallicFactor,Factor);
        end else begin
         MaterialPBRMetallicRoughnessMetallicFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessMetallicFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
         MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(fData.PBRMetallicRoughness.RoughnessFactor,Factor);
        end else begin
         MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessRoughnessFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialAlphaCutOff in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialAlphaCutOff in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialAlphaCutOff in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialAlphaCutOff in Overwrite^.Flags then begin
         MaterialAlphaCutOffSum.Add(fData.AlphaCutOff,Factor);
        end else begin
         MaterialAlphaCutOffSum.Add(Overwrite^.MaterialAlphaCutOff,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialEmissiveFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveFactor in Overwrite^.Flags then begin
         MaterialEmissiveFactorSum.Add(fData.EmissiveFactor.xyz,Factor);
        end else begin
         MaterialEmissiveFactorSum.Add(Overwrite^.MaterialEmissiveFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialNormalTextureScale in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialNormalTextureScale in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialNormalTextureScale in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialNormalTextureScale in Overwrite^.Flags then begin
         MaterialNormalTextureScaleSum.Add(fData.NormalTextureScale,Factor);
        end else begin
         MaterialNormalTextureScaleSum.Add(Overwrite^.MaterialNormalTextureScale,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialOcclusionTextureStrength in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialOcclusionTextureStrength in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialOcclusionTextureStrength in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialOcclusionTextureStrength in Overwrite^.Flags then begin
         MaterialOcclusionTextureStrengthSum.Add(fData.OcclusionTextureStrength,Factor);
        end else begin
         MaterialOcclusionTextureStrengthSum.Add(Overwrite^.MaterialOcclusionTextureStrength,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRClearCoatFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatFactor in Overwrite^.Flags then begin
         MaterialPBRClearCoatFactorSum.Add(fData.PBRClearCoat.Factor,Factor);
        end else begin
         MaterialPBRClearCoatFactorSum.Add(Overwrite^.MaterialPBRClearCoatFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
         MaterialPBRClearCoatRoughnessFactorSum.Add(fData.PBRClearCoat.RoughnessFactor,Factor);
        end else begin
         MaterialPBRClearCoatRoughnessFactorSum.Add(Overwrite^.MaterialPBRClearCoatRoughnessFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveStrength in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialEmissiveStrength in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveStrength in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveStrength in Overwrite^.Flags then begin
         MaterialEmissiveStrengthSum.Add(fData.EmissiveFactor[3],Factor);
        end else begin
         MaterialEmissiveStrengthSum.Add(Overwrite^.MaterialEmissiveStrength,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialIOR in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialIOR in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialIOR in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialIOR in Overwrite^.Flags then begin
         MaterialIORSum.Add(fData.IOR,Factor);
        end else begin
         MaterialIORSum.Add(Overwrite^.MaterialIOR,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceFactor in Overwrite^.Flags then begin
         MaterialPBRIridescenceFactorSum.Add(fData.Iridescence.Factor,Factor);
        end else begin
         MaterialPBRIridescenceFactorSum.Add(Overwrite^.MaterialPBRIridescenceFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceIor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceIor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceIor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceIor in Overwrite^.Flags then begin
         MaterialPBRIridescenceIorSum.Add(fData.Iridescence.Ior,Factor);
        end else begin
         MaterialPBRIridescenceIorSum.Add(Overwrite^.MaterialPBRIridescenceIor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
         MaterialPBRIridescenceMinimumSum.Add(fData.Iridescence.ThicknessMinimum,Factor);
        end else begin
         MaterialPBRIridescenceMinimumSum.Add(Overwrite^.MaterialPBRIridescenceMinimum,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
         MaterialPBRIridescenceMaximumSum.Add(fData.Iridescence.ThicknessMaximum,Factor);
        end else begin
         MaterialPBRIridescenceMaximumSum.Add(Overwrite^.MaterialPBRIridescenceMaximum,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenColorFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSheenColorFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenColorFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenColorFactor in Overwrite^.Flags then begin
         MaterialPBRSheenColorFactorSum.Add(fData.PBRSheen.ColorFactor,Factor);
        end else begin
         MaterialPBRSheenColorFactorSum.Add(Overwrite^.MaterialPBRSheenColorFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
         MaterialPBRSheenRoughnessFactorSum.Add(fData.PBRSheen.RoughnessFactor,Factor);
        end else begin
         MaterialPBRSheenRoughnessFactorSum.Add(Overwrite^.MaterialPBRSheenRoughnessFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSpecularFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularFactor in Overwrite^.Flags then begin
         MaterialPBRSpecularFactorSum.Add(fData.PBRMetallicRoughness.SpecularFactor,Factor);
        end else begin
         MaterialPBRSpecularFactorSum.Add(Overwrite^.MaterialPBRSpecularFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
         MaterialPBRSpecularColorFactorSum.Add(fData.PBRMetallicRoughness.SpecularColorFactor,Factor);
        end else begin
         MaterialPBRSpecularColorFactorSum.Add(Overwrite^.MaterialPBRSpecularColorFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRTransmissionFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRTransmissionFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRTransmissionFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRTransmissionFactor in Overwrite^.Flags then begin
         MaterialPBRTransmissionFactorSum.Add(fData.Transmission.Factor,Factor);
        end else begin
         MaterialPBRTransmissionFactorSum.Add(Overwrite^.MaterialPBRTransmissionFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
         MaterialPBRVolumeThicknessFactorSum.Add(fData.Volume.ThicknessFactor,Factor);
        end else begin
         MaterialPBRVolumeThicknessFactorSum.Add(Overwrite^.MaterialPBRVolumeThicknessFactor,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
         MaterialPBRVolumeAttenuationDistanceSum.Add(fData.Volume.AttenuationDistance,Factor);
        end else begin
         MaterialPBRVolumeAttenuationDistanceSum.Add(Overwrite^.MaterialPBRVolumeAttenuationDistance,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
         MaterialPBRVolumeAttenuationColorSum.Add(fData.Volume.AttenuationColor,Factor);
        end else begin
         MaterialPBRVolumeAttenuationColorSum.Add(Overwrite^.MaterialPBRVolumeAttenuationColor,Factor);
@@ -10157,22 +10548,22 @@ begin
       // Texture
       TextureTransform:=fData.GetTextureTransform(TpvScene3D.TTextureIndex(Overwrite^.SubIndex));
       if assigned(TextureTransform) then begin
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureOffset in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureOffset in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureOffset in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureOffset in Overwrite^.Flags then begin
          fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Offset,Factor);
         end else begin
          fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureOffset,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureRotation in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureRotation in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureRotation in Overwrite^.Flags then begin
          fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Rotation,Factor);
         end else begin
          fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureRotation,Factor);
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureScale in Overwrite^.Flags then begin
-        if TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureScale in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureScale in Overwrite^.Flags then begin
+        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureScale in Overwrite^.Flags then begin
          fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Scale,Factor);
         end else begin
          fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureScale,Factor);
@@ -10264,85 +10655,90 @@ begin
 
     try
 
-     case fInstance.fSceneInstance.fBufferStreamingMode of
+     if assigned(fInstance.fSceneInstance.fVulkanDevice) then begin
 
-      TBufferStreamingMode.Direct:begin
+      case fInstance.fSceneInstance.fBufferStreamingMode of
 
-       fNodeMatricesBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
-                                                   length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),
-                                                   TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                   TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                   [],
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   [TpvVulkanBufferFlag.PersistentMapped]
-                                                  );
+       TBufferStreamingMode.Direct:begin
 
-       fMorphTargetVertexWeightsBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
-                                                               length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),
-                                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                               [],
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               [TpvVulkanBufferFlag.PersistentMapped]
-                                                              );
+        fNodeMatricesBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
+                                                    length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),
+                                                    TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                    TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                    [],
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    [TpvVulkanBufferFlag.PersistentMapped]
+                                                   );
 
-      end;
+        fMorphTargetVertexWeightsBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
+                                                                length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),
+                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                [],
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                [TpvVulkanBufferFlag.PersistentMapped]
+                                                               );
 
-      TBufferStreamingMode.Staging:begin
+       end;
 
-       fNodeMatricesBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
-                                                   length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),
-                                                   TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                   TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                   [],
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                   0,
-                                                   0,
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   0,
-                                                   []
-                                                  );
+       TBufferStreamingMode.Staging:begin
 
-       fMorphTargetVertexWeightsBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
-                                                               length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),
-                                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                               [],
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                               0,
-                                                               0,
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               0,
-                                                               []
-                                                              );
+        fNodeMatricesBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
+                                                    length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),
+                                                    TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                    TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                    [],
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                    0,
+                                                    0,
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    0,
+                                                    []
+                                                   );
 
-      end;
+        fMorphTargetVertexWeightsBuffer:=TpvVulkanBuffer.Create(fInstance.fSceneInstance.fVulkanDevice,
+                                                                length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),
+                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                [],
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                0,
+                                                                0,
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                0,
+                                                                []
+                                                               );
 
-      else begin
-       Assert(false);
+       end;
+
+       else begin
+        Assert(false);
+       end;
+
       end;
 
      end;
+
     finally
      fUploaded:=true;
     end;
@@ -10403,7 +10799,23 @@ begin
 
    TBufferStreamingMode.Staging:begin
 
-    fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex].UpdateData(fNodeMatrices[0],0,length(fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
+    fInstance.fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fInstance.fSceneInstance.fVulkanStagingQueue,
+                                                                fInstance.fSceneInstance.fVulkanStagingCommandBuffer,
+                                                                fInstance.fSceneInstance.fVulkanStagingFence,
+                                                                fNodeMatrices[0],
+                                                                fNodeMatricesBuffer,
+                                                                0,
+                                                                length(fNodeMatrices)*SizeOf(TpvMatrix4x4));
+
+    fInstance.fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fInstance.fSceneInstance.fVulkanStagingQueue,
+                                                                fInstance.fSceneInstance.fVulkanStagingCommandBuffer,
+                                                                fInstance.fSceneInstance.fVulkanStagingFence,
+                                                                fMorphTargetVertexWeights[0],
+                                                                fMorphTargetVertexWeightsBuffer,
+                                                                0,
+                                                                length(fMorphTargetVertexWeights)*SizeOf(TpvFloat));
+
+{   fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex].UpdateData(fNodeMatrices[0],0,length(fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
 
     fNodeMatricesBuffer.CopyFrom(fInstance.fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
                                  fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex],
@@ -10418,7 +10830,7 @@ begin
                                              fInstance.fGroup.fVulkanMorphTargetVertexWeightsStagingBuffers[aInFlightFrameIndex],
                                              0,
                                              0,
-                                             length(fMorphTargetVertexWeights)*SizeOf(TpvFloat));
+                                             length(fMorphTargetVertexWeights)*SizeOf(TpvFloat));}
 
    end;
 
@@ -10439,8 +10851,7 @@ end;
 constructor TpvScene3D.TGroup.TInstance.TAnimation.Create;
 begin
  inherited Create;
- fChannels:=TChannels.Create;
- fChannels.OwnsObjects:=true;
+ fChannelOverwrites:=nil;
  fTime:=0.0;
  fLastIndices:=nil;
  fShadowTime:=0.0;
@@ -10450,13 +10861,13 @@ end;
 destructor TpvScene3D.TGroup.TInstance.TAnimation.Destroy;
 begin
  fLastIndices:=nil;
- FreeAndNil(fChannels);
+ fChannelOverwrites:=nil;
  inherited Destroy;
 end;
 
 { TpvScene3D.TGroup.TInstance }
 
-constructor TpvScene3D.TGroup.TInstance.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvScene3D.TGroup.TInstance.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 var Index,OtherIndex,MaterialIndex,MaterialIDMapArrayIndex:TpvSizeInt;
     InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
     Node:TpvScene3D.TGroup.TNode;
@@ -10467,7 +10878,7 @@ var Index,OtherIndex,MaterialIndex,MaterialIDMapArrayIndex:TpvSizeInt;
     MaterialToDuplicate,DuplicatedMaterial,Material:TpvScene3D.TMaterial;
     MaterialIDMapArray:TpvScene3D.TGroup.TMaterialIDMapArray;
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  if aParent is TGroup then begin
   fGroup:=TpvScene3D.TGroup(aParent);
@@ -10597,6 +11008,7 @@ begin
   InstanceNode:=@fNodes[Index];
   Node:=fGroup.fNodes[Index];
   InstanceNode^.Processed:=false;
+  InstanceNode^.Flags:=[];
   SetLength(InstanceNode^.WorkWeights,length(Node.fWeights));
   SetLength(InstanceNode^.OverwriteWeightsSum,length(Node.fWeights));
   SetLength(InstanceNode^.Overwrites,fGroup.fAnimations.Count+1);
@@ -10620,9 +11032,7 @@ begin
    for OtherIndex:=0 to length(fAnimations[Index].fLastIndices)-1 do begin
     fAnimations[Index].fLastIndices[OtherIndex]:=0;
    end;
-   for OtherIndex:=0 to (length(Animation.fChannels)+length(Animation.fDefaultChannels))-1 do begin
-    fAnimations[Index].fChannels.Add(TpvScene3D.TGroup.TInstance.TAnimation.TChannel.Create);
-   end;
+   SetLength(fAnimations[Index].fChannelOverwrites,length(Animation.fChannels)+length(Animation.fDefaultChannels));
   end;
  end;
 
@@ -10644,6 +11054,8 @@ begin
  fAABBTreeProxy:=-1;
 
  SetLength(fCacheVerticesNodeDirtyBitmap,((length(fNodes)+31) shr 5)+1);
+
+ fOnNodeFilter:=nil;
 
 end;
 
@@ -10677,10 +11089,12 @@ begin
  end;
  FreeAndNil(fMaterials);
  fCacheVerticesNodeDirtyBitmap:=nil;
- for Index:=0 to fDuplicatedMaterials.Count-1 do begin
-  fDuplicatedMaterials[Index].DecRef;
+ if assigned(fDuplicatedMaterials) then begin
+  for Index:=0 to fDuplicatedMaterials.Count-1 do begin
+   fDuplicatedMaterials[Index].DecRef;
+  end;
+  FreeAndNil(fDuplicatedMaterials);
  end;
- FreeAndNil(fDuplicatedMaterials);
  fNodes:=nil;
  fSkins:=nil;
  fMaterialMap:=nil;
@@ -10784,6 +11198,10 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.TInstance.LoadData;
+begin
+end;
+
 procedure TpvScene3D.TGroup.TInstance.Upload;
 var Index:TpvSizeInt;
     DescriptorSet:TpvVulkanDescriptorSet;
@@ -10810,141 +11228,183 @@ begin
 
       try
 
-{      SetLength(fNodeMatrices,fGroup.fNodes.Count+fGroup.fCountJointNodeMatrices+1);
+       if assigned(fSceneInstance.fVulkanDevice) then begin
 
-       SetLength(fMorphTargetVertexWeights,Max(Max(fGroup.fMorphTargetCount,fGroup.fCountNodeWeights),1));}
+ {      SetLength(fNodeMatrices,fGroup.fNodes.Count+fGroup.fCountJointNodeMatrices+1);
 
-       for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
-        fVulkanDatas[Index].Upload;
-       end;
+        SetLength(fMorphTargetVertexWeights,Max(Max(fGroup.fMorphTargetCount,fGroup.fCountNodeWeights),1));}
 
-       UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
-       try
-        UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
-                                                          fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
-                                                          TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+        for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+         fVulkanDatas[Index].Upload;
+        end;
+
+        UniversalQueue:=fSceneInstance.fVulkanDevice.UniversalQueue;
         try
-         UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
-                                                               VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+         UniversalCommandPool:=TpvVulkanCommandPool.Create(fSceneInstance.fVulkanDevice,
+                                                           fSceneInstance.fVulkanDevice.UniversalQueueFamilyIndex,
+                                                           TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
          try
-          UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+          UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
+                                                                VK_COMMAND_BUFFER_LEVEL_PRIMARY);
           try
+           UniversalFence:=TpvVulkanFence.Create(fSceneInstance.fVulkanDevice);
+           try
 
-           fVulkanMaterialIDMapBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                              length(fMaterialMap)*SizeOf(TpvUInt32),
-                                                              TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
-                                                              TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                              [],
-                                                              TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                              0,
-                                                              0,
-                                                              TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                              0,
-                                                              0,
-                                                              0,
-                                                              0,
-                                                              []
-                                                             );
+            fVulkanMaterialIDMapBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                               Max(length(fMaterialMap),1)*SizeOf(TpvUInt32),
+                                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                               [],
+                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                               0,
+                                                               0,
+                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                               0,
+                                                               0,
+                                                               0,
+                                                               0,
+                                                               []
+                                                              );
 
-           fVulkanMaterialIDMapBuffer.UploadData(UniversalQueue,
-                                                 UniversalCommandBuffer,
-                                                 UniversalFence,
-                                                 fMaterialMap[0],
-                                                 0,
-                                                 length(fMaterialMap)*SizeOf(TpvUInt32),
-                                                 TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
+             fSceneInstance.fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                               UniversalCommandBuffer,
+                                                               UniversalFence,
+                                                               fMaterialMap[0],
+                                                               fVulkanMaterialIDMapBuffer,
+                                                               0,
+                                                               length(fMaterialMap)*SizeOf(TpvUInt32));
 
+ {          fVulkanMaterialIDMapBuffer.UploadData(UniversalQueue,
+                                                  UniversalCommandBuffer,
+                                                  UniversalFence,
+                                                  fMaterialMap[0],
+                                                  0,
+                                                  length(fMaterialMap)*SizeOf(TpvUInt32),
+                                                  TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);//}
+
+            for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+             fVulkanCachedVertexBuffers[Index]:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                                       fGroup.fVertices.Count*SizeOf(TCachedVertex),
+                                                                       TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                                       TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                       [],
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       []
+                                                                      );
+             fSceneInstance.fVulkanDevice.MemoryStaging.Zero(UniversalQueue,
+                                                             UniversalCommandBuffer,
+                                                             UniversalFence,
+                                                             fVulkanCachedVertexBuffers[Index],
+                                                             0,
+                                                             fGroup.fVertices.Count*SizeOf(TCachedVertex));
+          {  fVulkanCachedVertexBuffers[Index].ClearData(UniversalQueue,
+                                                         UniversalCommandBuffer,
+                                                         UniversalFence,
+                                                         0,
+                                                         fGroup.fVertices.Count*SizeOf(TCachedVertex),
+                                                         TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);}
+            end;
+
+           finally
+            FreeAndNil(UniversalFence);
+           end;
           finally
-           FreeAndNil(UniversalFence);
+           FreeAndNil(UniversalCommandBuffer);
           end;
          finally
-          FreeAndNil(UniversalCommandBuffer);
+          FreeAndNil(UniversalCommandPool);
          end;
         finally
-         FreeAndNil(UniversalCommandPool);
         end;
-       finally
-       end;
 
-       fVulkanComputeDescriptorPool:=TpvVulkanDescriptorPool.Create(fSceneInstance.fVulkanDevice,
-                                                                    TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
-                                                                    length(fVulkanComputeDescriptorSets));
-       fVulkanComputeDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fVulkanComputeDescriptorSets)*8);
-       fVulkanComputeDescriptorPool.Initialize;
+        fVulkanComputeDescriptorPool:=TpvVulkanDescriptorPool.Create(fSceneInstance.fVulkanDevice,
+                                                                     TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
+                                                                     length(fVulkanComputeDescriptorSets));
+        fVulkanComputeDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fVulkanComputeDescriptorSets)*8);
+        fVulkanComputeDescriptorPool.Initialize;
 
-       for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+        for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
 
-        DescriptorSet:=TpvVulkanDescriptorSet.Create(fVulkanComputeDescriptorPool,
-                                                     fSceneInstance.fMeshComputeVulkanDescriptorSetLayout);
-        try
-         DescriptorSet.WriteToDescriptorSet(0,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fGroup.fVulkanVertexBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(1,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fGroup.fVulkanCachedVertexBuffers[Index].DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(2,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fGroup.fVulkanDrawUniqueIndexBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(3,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fGroup.fVulkanMorphTargetVertexBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(4,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fGroup.fVulkanJointBlockBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(5,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fVulkanDatas[Index].fNodeMatricesBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(6,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fVulkanDatas[Index].fMorphTargetVertexWeightsBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.WriteToDescriptorSet(7,
-                                            0,
-                                            1,
-                                            TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                            [],
-                                            [fVulkanMaterialIDMapBuffer.DescriptorBufferInfo],
-                                            [],
-                                            false);
-         DescriptorSet.Flush;
-        finally
-         fVulkanComputeDescriptorSets[Index]:=DescriptorSet;
+         DescriptorSet:=TpvVulkanDescriptorSet.Create(fVulkanComputeDescriptorPool,
+                                                      fSceneInstance.fMeshComputeVulkanDescriptorSetLayout);
+         try
+          DescriptorSet.WriteToDescriptorSet(0,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fGroup.fVulkanVertexBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(1,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fVulkanCachedVertexBuffers[Index].DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(2,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fGroup.fVulkanDrawUniqueIndexBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(3,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fGroup.fVulkanMorphTargetVertexBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(4,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fGroup.fVulkanJointBlockBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(5,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fVulkanDatas[Index].fNodeMatricesBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(6,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fVulkanDatas[Index].fMorphTargetVertexWeightsBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.WriteToDescriptorSet(7,
+                                             0,
+                                             1,
+                                             TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                             [],
+                                             [fVulkanMaterialIDMapBuffer.DescriptorBufferInfo],
+                                             [],
+                                             false);
+          DescriptorSet.Flush;
+         finally
+          fVulkanComputeDescriptorSets[Index]:=DescriptorSet;
+         end;
         end;
+
        end;
 
       finally
@@ -10976,6 +11436,7 @@ begin
     try
      for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
       FreeAndNil(fVulkanComputeDescriptorSets[Index]);
+      FreeAndNil(fVulkanCachedVertexBuffers[Index]);
      end;
      FreeAndNil(fVulkanComputeDescriptorPool);
      FreeAndNil(fVulkanMaterialIDMapBuffer);
@@ -11059,16 +11520,16 @@ var CullFace,Blend:TPasGLTFInt32;
      InstanceLight:TpvScene3D.TGroup.TInstance.TLight;
      InstanceCamera:TpvScene3D.TGroup.TInstance.TCamera;
      InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
-     LightOverwrite:TpvScene3D.TGroup.TInstance.TLight.POverwrite;
-     CameraOverwrite:TpvScene3D.TGroup.TInstance.TCamera.POverwrite;
-     NodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.POverwrite;
+     LightOverwrite:TpvScene3D.TGroup.TInstance.TLight.PLightOverwrite;
+     CameraOverwrite:TpvScene3D.TGroup.TInstance.TCamera.PCameraOverwrite;
+     NodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
  begin
   if aFactor>=-0.5 then begin
    for Index:=0 to fLights.Count-1 do begin
     InstanceLight:=fLights[Index];
     if InstanceLight.fCountOverwrites<length(InstanceLight.fOverwrites) then begin
      LightOverwrite:=@InstanceLight.fOverwrites[InstanceLight.fCountOverwrites];
-     LightOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Defaults];
+     LightOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Defaults];
      LightOverwrite^.Factor:=Max(aFactor,0.0);
      inc(InstanceLight.fCountOverwrites);
     end;
@@ -11077,7 +11538,7 @@ var CullFace,Blend:TPasGLTFInt32;
     InstanceCamera:=fCameras[Index];
     if InstanceCamera.fCountOverwrites<length(InstanceCamera.fOverwrites) then begin
      CameraOverwrite:=@InstanceCamera.fOverwrites[InstanceCamera.fCountOverwrites];
-     CameraOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.Defaults];
+     CameraOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Defaults];
      CameraOverwrite^.Factor:=Max(aFactor,0.0);
      inc(InstanceCamera.fCountOverwrites);
     end;
@@ -11086,7 +11547,7 @@ var CullFace,Blend:TPasGLTFInt32;
     InstanceNode:=@fNodes[Index];
     if InstanceNode^.CountOverwrites<length(InstanceNode^.Overwrites) then begin
      NodeOverwrite:=@InstanceNode^.Overwrites[InstanceNode^.CountOverwrites];
-     NodeOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Defaults];
+     NodeOverwrite^.Flags:=[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults];
      NodeOverwrite^.Factor:=Max(aFactor,0.0);
      inc(InstanceNode^.CountOverwrites);
     end;
@@ -11233,7 +11694,7 @@ var CullFace,Blend:TPasGLTFInt32;
    end;
   end;
   procedure ProcessWeights(const aNode:TpvScene3D.TGroup.TInstance.PNode;
-                           const aNodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.POverwrite;
+                           const aNodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
                            const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
                            const aTimeIndex0:TpvSizeInt;
                            const aTimeIndex1:TpvSizeInt;
@@ -11243,7 +11704,7 @@ var CullFace,Blend:TPasGLTFInt32;
       InvFactor,SqrFactor,CubeFactor:TpvDouble;
   begin
    CountWeights:=length(aNode^.WorkWeights);
-   Include(aNodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights);
+   Include(aNodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Weights);
    case aAnimationChannel^.Interpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
      InvFactor:=1.0-aFactor;
@@ -11295,7 +11756,7 @@ var CullFace,Blend:TPasGLTFInt32;
      AnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
      AnimationDefaultChannel:TpvScene3D.TGroup.TAnimation.PDefaultChannel;
      InstanceAnimation:TpvScene3D.TGroup.TInstance.TAnimation;
-     InstanceAnimationChannel:TpvScene3D.TGroup.TInstance.TAnimation.TChannel;
+     InstanceAnimationChannelOverwrite:TpvScene3D.TGroup.TInstance.TAnimation.PChannelOverwrite;
      //Node:TpvScene3D.TGroup.TNode;
      Node:TpvScene3D.TGroup.TInstance.PNode;
      Time,Factor,Value,KeyDelta,v0,v1,a,b:TpvDouble;
@@ -11304,14 +11765,14 @@ var CullFace,Blend:TPasGLTFInt32;
      Vector3:TpvVector3;
      Vector4:TpvVector4;
      TimeIndices:array[0..1] of TpvSizeInt;
-     NodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.POverwrite;
+     NodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
      Mesh:TpvScene3D.TGroup.TMesh;
      Light:TpvScene3D.TGroup.TInstance.TLight;
-     LightOverwrite:TpvScene3D.TGroup.TInstance.TLight.POverwrite;
+     LightOverwrite:TpvScene3D.TGroup.TInstance.TLight.PLightOverwrite;
      Camera:TpvScene3D.TGroup.TInstance.TCamera;
-     CameraOverwrite:TpvScene3D.TGroup.TInstance.TCamera.POverwrite;
+     CameraOverwrite:TpvScene3D.TGroup.TInstance.TCamera.PCameraOverwrite;
      Material:TpvScene3D.TGroup.TInstance.TMaterial;
-     MaterialOverwrite:TpvScene3D.TGroup.TInstance.TMaterial.POverwrite;
+     MaterialOverwrite:TpvScene3D.TGroup.TInstance.TMaterial.PMaterialOverwrite;
  begin
 
   Animation:=fGroup.fAnimations[aAnimationIndex];
@@ -11319,15 +11780,12 @@ var CullFace,Blend:TPasGLTFInt32;
   InstanceAnimation:=fAnimations[aAnimationIndex+1];
 
   if InstanceAnimation.Complete then begin
-   CountInstanceChannels:=InstanceAnimation.fChannels.Count;
+   CountInstanceChannels:=length(InstanceAnimation.fChannelOverwrites);
   end else begin
    CountInstanceChannels:=length(Animation.fChannels);
   end;
-  for InstanceChannelIndex:=0 to CountInstanceChannels-1 do begin
-   InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-   InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.None;
-   InstanceAnimationChannel.fTarget:=nil;
-   InstanceAnimationChannel.fOverwrite:=-1;
+  if length(InstanceAnimation.fChannelOverwrites)>0 then begin
+   FillChar(InstanceAnimation.fChannelOverwrites[0],length(InstanceAnimation.fChannelOverwrites)*SizeOf(TpvScene3D.TGroup.TInstance.TAnimation.TChannelOverwrite),$ff);
   end;
 
   CountInstanceChannels:=0;
@@ -11336,7 +11794,9 @@ var CullFace,Blend:TPasGLTFInt32;
 
    AnimationChannel:=@Animation.fChannels[ChannelIndex];
 
-   if (AnimationChannel.TargetIndex>=0) and (length(AnimationChannel.InputTimeArray)>0) then begin
+   if (AnimationChannel^.TargetInstanceIndex>=0) and
+      (AnimationChannel^.TargetIndex>=0) and
+      (length(AnimationChannel^.InputTimeArray)>0) then begin
 
     LastIndex:=InstanceAnimation.fLastIndices[ChannelIndex];
 
@@ -11505,38 +11965,20 @@ var CullFace,Blend:TPasGLTFInt32;
 
        if aFactor>=-0.5 then begin
 
-        InstanceAnimationChannel:=nil;
-        for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-         if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node) and
-            (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Node) then begin
-          InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-          break;
-         end;
-        end;
-        if assigned(InstanceAnimationChannel) then begin
-         if assigned(Node) then begin
-          NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-         end else begin
-          NodeOverwrite:=nil;
-         end;
-        end else if assigned(Node) and
-                    (Node.CountOverwrites<length(Node.Overwrites)) and
-                    (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-         InstanceChannelIndex:=CountInstanceChannels;
-         inc(CountInstanceChannels);
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node;
-         InstanceAnimationChannel.fTarget:=Node;
-         InstanceAnimationChannel.fOverwrite:=Node.CountOverwrites;
-         inc(Node.CountOverwrites);
-         NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-         NodeOverwrite^.Flags:=[];
-         NodeOverwrite^.Factor:=Max(aFactor,0.0);
-        end else begin
-         NodeOverwrite:=nil;
-        end;
+        InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
-        if assigned(NodeOverwrite) then begin
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Node.CountOverwrites;
+          inc(Node.CountOverwrites);
+          NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
+          NodeOverwrite^.Flags:=[];
+          NodeOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
+         end;
+
          case AnimationChannel^.Target of
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
@@ -11546,12 +11988,12 @@ var CullFace,Blend:TPasGLTFInt32;
            case AnimationChannel^.Target of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation:begin
-             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation);
+             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Translation);
              NodeOverwrite^.Translation:=Vector3;
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale:begin
-             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale);
+             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Scale);
              NodeOverwrite^.Scale:=Vector3;
             end;
             else begin
@@ -11564,7 +12006,7 @@ var CullFace,Blend:TPasGLTFInt32;
            case AnimationChannel^.Target of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation:begin
-             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation);
+             Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Rotation);
              NodeOverwrite^.Rotation.Vector:=Vector4;
             end;
             else begin
@@ -11602,39 +12044,22 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if aFactor>=-0.5 then begin
 
-           InstanceAnimationChannel:=nil;
-           for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-            if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node) and
-               (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Node) then begin
-             InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-             break;
-            end;
-           end;
-           if assigned(InstanceAnimationChannel) then begin
-            if assigned(Node) then begin
-             NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-            end else begin
-             NodeOverwrite:=nil;
-            end;
-           end else if assigned(Node) and
-                       (Node.CountOverwrites<length(Node.Overwrites)) and
-                       (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-            InstanceChannelIndex:=CountInstanceChannels;
-            inc(CountInstanceChannels);
-            InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-            InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node;
-            InstanceAnimationChannel.fTarget:=Node;
-            InstanceAnimationChannel.fOverwrite:=Node.CountOverwrites;
-            inc(Node.CountOverwrites);
-            NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-            NodeOverwrite^.Flags:=[];
-            NodeOverwrite^.Factor:=Max(aFactor,0.0);
-           end else begin
-            NodeOverwrite:=nil;
-           end;
+           InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+           if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
-           if assigned(NodeOverwrite) then begin
+            InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+            if InstanceAnimationChannelOverwrite^<0 then begin
+             InstanceAnimationChannelOverwrite^:=Node.CountOverwrites;
+             inc(Node.CountOverwrites);
+             NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
+             NodeOverwrite^.Flags:=[];
+             NodeOverwrite^.Factor:=Max(aFactor,0.0);
+            end else begin
+             NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
+            end;
+
             ProcessWeights(Node,NodeOverwrite,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+
            end;
 
           end;
@@ -11658,62 +12083,45 @@ var CullFace,Blend:TPasGLTFInt32;
        LightOverwrite:=nil;
 
        if aFactor>=-0.5 then begin
-        InstanceAnimationChannel:=nil;
-        for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-         if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Light) and
-            (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Light) then begin
-          InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-          break;
-         end;
-        end;
-        if assigned(InstanceAnimationChannel) then begin
-         if assigned(Light) then begin
-          LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         end else begin
-          LightOverwrite:=nil;
-         end;
-        end else if assigned(Light) and
-                    (Light.fCountOverwrites<length(Light.fOverwrites)) and
-                    (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-         InstanceChannelIndex:=CountInstanceChannels;
-         inc(CountInstanceChannels);
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Light;
-         InstanceAnimationChannel.fTarget:=Light;
-         InstanceAnimationChannel.fOverwrite:=Light.fCountOverwrites;
-         inc(Light.fCountOverwrites);
-         LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         LightOverwrite^.Flags:=[];
-         LightOverwrite^.Factor:=Max(aFactor,0.0);
-        end else begin
-         LightOverwrite:=nil;
-        end;
 
-        if assigned(LightOverwrite) then begin
+        InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Light.fCountOverwrites;
+          inc(Light.fCountOverwrites);
+          LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
+          LightOverwrite^.Flags:=[];
+          LightOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
+         end;
+
          case AnimationChannel^.Target of
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
            ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Color);
+           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color);
            LightOverwrite^.Color:=Vector3;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Intensity);
+           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Intensity);
            LightOverwrite^.Intensity:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Range);
+           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Range);
            LightOverwrite^.Range:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotInnerConeAngle);
+           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotInnerConeAngle);
            LightOverwrite^.SpotInnerConeAngle:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotOuterConeAngle);
+           Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotOuterConeAngle);
            LightOverwrite^.SpotOuterConeAngle:=Scalar;
           end;
           else begin
@@ -11739,77 +12147,60 @@ var CullFace,Blend:TPasGLTFInt32;
        CameraOverwrite:=nil;
 
        if aFactor>=-0.5 then begin
-        InstanceAnimationChannel:=nil;
-        for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-         if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Camera) and
-            (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Camera) then begin
-          InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-          break;
-         end;
-        end;
-        if assigned(InstanceAnimationChannel) then begin
-         if assigned(Camera) then begin
-          CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         end else begin
-          CameraOverwrite:=nil;
-         end;
-        end else if assigned(Camera) and
-                    (Camera.fCountOverwrites<length(Camera.fOverwrites)) and
-                    (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-         InstanceChannelIndex:=CountInstanceChannels;
-         inc(CountInstanceChannels);
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Camera;
-         InstanceAnimationChannel.fTarget:=Camera;
-         InstanceAnimationChannel.fOverwrite:=Camera.fCountOverwrites;
-         inc(Camera.fCountOverwrites);
-         CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         CameraOverwrite^.Flags:=[];
-         CameraOverwrite^.Factor:=Max(aFactor,0.0);
-        end else begin
-         CameraOverwrite:=nil;
-        end;
 
-        if assigned(CameraOverwrite) then begin
+        InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Camera.fCountOverwrites;
+          inc(Camera.fCountOverwrites);
+          CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
+          CameraOverwrite^.Flags:=[];
+          CameraOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
+         end;
+
          case AnimationChannel^.Target of
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicXMag);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag);
            CameraOverwrite^.OrthographicXMag:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicYMag);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicYMag);
            CameraOverwrite^.OrthographicYMag:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZFar);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZFar);
            CameraOverwrite^.OrthographicZFar:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZNear);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZNear);
            CameraOverwrite^.OrthographicZNear:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveAspectRatio);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveAspectRatio);
            CameraOverwrite^.PerspectiveAspectRatio:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveYFov);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveYFov);
            CameraOverwrite^.PerspectiveYFov:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZFar);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZFar);
            CameraOverwrite^.PerspectiveZFar:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZNear);
+           Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZNear);
            CameraOverwrite^.PerspectiveZNear:=Scalar;
           end;
           else begin
@@ -11850,175 +12241,160 @@ var CullFace,Blend:TPasGLTFInt32;
 
        Material:=fMaterials[AnimationChannel^.TargetIndex];
 
+{      if not assigned(Material) then begin
+        Material:=fMaterials[AnimationChannel^.TargetIndex];
+       end;}
+
        TargetSubIndex:=AnimationChannel^.TargetSubIndex;
 
        MaterialOverwrite:=nil;
 
-       if aFactor>=-0.5 then begin
-        InstanceAnimationChannel:=nil;
-        for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-         if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Material) and
-            (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Material) and
-            (InstanceAnimation.fChannels[InstanceChannelIndex].fTargetSubIndex=TargetSubIndex) then begin
-          InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-          break;
-         end;
-        end;
-        if assigned(InstanceAnimationChannel) then begin
-         if assigned(Material) then begin
-          MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         end else begin
-          MaterialOverwrite:=nil;
-         end;
-        end else if assigned(Material) and
-                    (Material.fCountOverwrites<length(Material.fOverwrites)) and
-                    (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-         InstanceChannelIndex:=CountInstanceChannels;
-         inc(CountInstanceChannels);
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Material;
-         InstanceAnimationChannel.fTarget:=Material;
-         InstanceAnimationChannel.fTargetSubIndex:=TargetSubIndex;
-         InstanceAnimationChannel.fOverwrite:=Material.fCountOverwrites;
-         inc(Material.fCountOverwrites);
-         MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannel.fOverwrite];
-         MaterialOverwrite^.Flags:=[];
-         MaterialOverwrite^.SubIndex:=TargetSubIndex;
-         MaterialOverwrite^.Factor:=Max(aFactor,0.0);
-        end else begin
-         MaterialOverwrite:=nil;
-        end;
+       if (aFactor>=-0.5) and assigned(Material) then begin
 
-        if assigned(MaterialOverwrite) then begin
+        InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Material.fCountOverwrites;
+          inc(Material.fCountOverwrites);
+          MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
+          MaterialOverwrite^.Flags:=[];
+          MaterialOverwrite^.SubIndex:=TargetSubIndex;
+          MaterialOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
+         end;
+
          case AnimationChannel^.Target of
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
            ProcessVector4(Vector4,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor,false);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor);
            MaterialOverwrite^.MaterialPBRMetallicRoughnessBaseColorFactor:=Vector4;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor);
            MaterialOverwrite^.MaterialPBRMetallicRoughnessMetallicFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor);
            MaterialOverwrite^.MaterialPBRMetallicRoughnessRoughnessFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialAlphaCutOff);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialAlphaCutOff);
            MaterialOverwrite^.MaterialAlphaCutOff:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor:begin
            ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveFactor);
            MaterialOverwrite^.MaterialEmissiveFactor:=Vector3;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialNormalTextureScale);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialNormalTextureScale);
            MaterialOverwrite^.MaterialNormalTextureScale:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialOcclusionTextureStrength);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialOcclusionTextureStrength);
            MaterialOverwrite^.MaterialOcclusionTextureStrength:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatFactor);
            MaterialOverwrite^.MaterialPBRClearCoatFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatRoughnessFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatRoughnessFactor);
            MaterialOverwrite^.MaterialPBRClearCoatRoughnessFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveStrength);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveStrength);
            MaterialOverwrite^.MaterialEmissiveStrength:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialIOR);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialIOR);
            MaterialOverwrite^.MaterialIOR:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceFactor);
            MaterialOverwrite^.MaterialPBRIridescenceFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceIor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceIor);
            MaterialOverwrite^.MaterialPBRIridescenceIor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMinimum);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMinimum);
            MaterialOverwrite^.MaterialPBRIridescenceMinimum:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMaximum);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMaximum);
            MaterialOverwrite^.MaterialPBRIridescenceMaximum:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor:begin
            ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenColorFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenColorFactor);
            MaterialOverwrite^.MaterialPBRSheenColorFactor:=Vector3;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenRoughnessFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenRoughnessFactor);
            MaterialOverwrite^.MaterialPBRSheenRoughnessFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularFactor);
            MaterialOverwrite^.MaterialPBRSpecularFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor:begin
            ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularColorFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularColorFactor);
            MaterialOverwrite^.MaterialPBRSpecularColorFactor:=Vector3;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRTransmissionFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRTransmissionFactor);
            MaterialOverwrite^.MaterialPBRTransmissionFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeThicknessFactor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeThicknessFactor);
            MaterialOverwrite^.MaterialPBRVolumeThicknessFactor:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationDistance);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationDistance);
            MaterialOverwrite^.MaterialPBRVolumeAttenuationDistance:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor:begin
            ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationColor);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationColor);
            MaterialOverwrite^.MaterialPBRVolumeAttenuationColor:=Vector3;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
            ProcessVector2(Vector2,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureOffset);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureOffset);
            MaterialOverwrite^.TextureOffset:=Vector2;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation:begin
            ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureRotation);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation);
            MaterialOverwrite^.TextureRotation:=Scalar;
           end;
           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
            ProcessVector2(Vector2,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureScale);
+           Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureScale);
            MaterialOverwrite^.TextureScale:=Vector2;
           end;
           else begin
@@ -12047,397 +12423,330 @@ var CullFace,Blend:TPasGLTFInt32;
 
     AnimationDefaultChannel:=@Animation.fDefaultChannels[ChannelIndex];
 
-    case AnimationDefaultChannel^.Target of
+    if AnimationDefaultChannel^.TargetInstanceIndex>=0 then begin
 
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
-      Node:=@fNodes[AnimationDefaultChannel^.TargetIndex];
-      NodeOverwrite:=nil;
-      if aFactor>=-0.5 then begin
-       InstanceAnimationChannel:=nil;
-       for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-        if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node) and
-           (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Node) then begin
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         break;
-        end;
-       end;
-       if assigned(InstanceAnimationChannel) then begin
-        NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-       end else if (Node.CountOverwrites<length(Node.Overwrites)) and
-                   (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-        InstanceChannelIndex:=CountInstanceChannels;
-        inc(CountInstanceChannels);
-        InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-        InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Node;
-        InstanceAnimationChannel.fTarget:=Node;
-        InstanceAnimationChannel.fOverwrite:=Node.CountOverwrites;
-        inc(Node.CountOverwrites);
-        NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
-        NodeOverwrite^.Flags:=[];
-        NodeOverwrite^.Factor:=Max(aFactor,0.0);
-       end;
-       if assigned(NodeOverwrite) then begin
-        case AnimationDefaultChannel^.Target of
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation:begin
-          NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultTranslation,
-                                                      TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation];
+     case AnimationDefaultChannel^.Target of
+
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
+       Node:=@fNodes[AnimationDefaultChannel^.TargetIndex];
+       NodeOverwrite:=nil;
+       if aFactor>=-0.5 then begin
+        InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Node.CountOverwrites;
+          inc(Node.CountOverwrites);
+          NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
+          NodeOverwrite^.Flags:=[];
+          NodeOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
          end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale:begin
-          NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultScale,
-                                                      TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation:begin
-          NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultRotation,
-                                                      TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
-          NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultWeights,
-                                                      TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights];
-         end;
-         else begin
+         case AnimationDefaultChannel^.Target of
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation:begin
+           NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultTranslation,
+                                                       TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Translation];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale:begin
+           NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultScale,
+                                                       TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Scale];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation:begin
+           NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultRotation,
+                                                       TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Rotation];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
+           NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultWeights,
+                                                       TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Weights];
+          end;
+          else begin
+          end;
          end;
         end;
        end;
       end;
-     end;
 
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
-      Light:=fLights[AnimationDefaultChannel^.TargetIndex];
-      LightOverwrite:=nil;
-      if aFactor>=-0.5 then begin
-       InstanceAnimationChannel:=nil;
-       for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-        if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Light) and
-           (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Light) then begin
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         break;
-        end;
-       end;
-       if assigned(InstanceAnimationChannel) then begin
-        if assigned(Light) then begin
-         LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        end else begin
-         LightOverwrite:=nil;
-        end;
-       end else if assigned(Light) and
-                   (Light.fCountOverwrites<length(Light.fOverwrites)) and
-                   (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-        InstanceChannelIndex:=CountInstanceChannels;
-        inc(CountInstanceChannels);
-        InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-        InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Light;
-        InstanceAnimationChannel.fTarget:=Light;
-        InstanceAnimationChannel.fOverwrite:=Light.fCountOverwrites;
-        inc(Light.fCountOverwrites);
-        LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        LightOverwrite^.Flags:=[];
-        LightOverwrite^.Factor:=Max(aFactor,0.0);
-       end else begin
-        LightOverwrite:=nil;
-       end;
-       if assigned(LightOverwrite) then begin
-        case AnimationDefaultChannel^.Target of
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
-          LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultColor,
-                                                        TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Color];
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
+       Light:=fLights[AnimationDefaultChannel^.TargetIndex];
+       LightOverwrite:=nil;
+       if aFactor>=-0.5 then begin
+        InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Light.fCountOverwrites;
+          inc(Light.fCountOverwrites);
+          LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
+          LightOverwrite^.Flags:=[];
+          LightOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
          end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity:begin
-          LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultIntensity,
-                                                        TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Intensity];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange:begin
-          LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultRange,
-                                                        TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.Range];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle:begin
-          LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultSpotInnerConeAngle,
-                                                        TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotInnerConeAngle];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
-          LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.DefaultSpotOuterConeAngle,
-                                                        TpvScene3D.TGroup.TInstance.TLight.TOverwriteFlag.SpotOuterConeAngle];
-         end;
-         else begin
+         case AnimationDefaultChannel^.Target of
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
+           LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultColor,
+                                                         TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity:begin
+           LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultIntensity,
+                                                         TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Intensity];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange:begin
+           LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultRange,
+                                                         TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Range];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle:begin
+           LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotInnerConeAngle,
+                                                         TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotInnerConeAngle];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
+           LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotOuterConeAngle,
+                                                         TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotOuterConeAngle];
+          end;
+          else begin
+          end;
          end;
         end;
        end;
       end;
-     end;
 
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
-      Camera:=fCameras[AnimationDefaultChannel^.TargetIndex];
-      CameraOverwrite:=nil;
-      if aFactor>=-0.5 then begin
-       InstanceAnimationChannel:=nil;
-       for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-        if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Camera) and
-           (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Camera) then begin
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         break;
-        end;
-       end;
-       if assigned(InstanceAnimationChannel) then begin
-        if assigned(Camera) then begin
-         CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        end else begin
-         CameraOverwrite:=nil;
-        end;
-       end else if assigned(Camera) and
-                   (Camera.fCountOverwrites<length(Camera.fOverwrites)) and
-                   (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-        InstanceChannelIndex:=CountInstanceChannels;
-        inc(CountInstanceChannels);
-        InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-        InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Camera;
-        InstanceAnimationChannel.fTarget:=Camera;
-        InstanceAnimationChannel.fOverwrite:=Camera.fCountOverwrites;
-        inc(Camera.fCountOverwrites);
-        CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        CameraOverwrite^.Flags:=[];
-        CameraOverwrite^.Factor:=Max(aFactor,0.0);
-       end else begin
-        CameraOverwrite:=nil;
-       end;
-       if assigned(CameraOverwrite) then begin
-        case AnimationDefaultChannel^.Target of
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicXMag,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicXMag];
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
+       Camera:=fCameras[AnimationDefaultChannel^.TargetIndex];
+       CameraOverwrite:=nil;
+       if aFactor>=-0.5 then begin
+        InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Camera.fCountOverwrites;
+          inc(Camera.fCountOverwrites);
+          CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
+          CameraOverwrite^.Flags:=[];
+          CameraOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
          end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicYMag,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicYMag];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicZFar,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZFar];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultOrthographicZNear,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.OrthographicZNear];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveAspectRatio,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveAspectRatio];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveYFov,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveYFov];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveZFar,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZFar];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
-          CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.DefaultPerspectiveZNear,
-                                                          TpvScene3D.TGroup.TInstance.TCamera.TOverwriteFlag.PerspectiveZNear];
-         end;
-         else begin
+         case AnimationDefaultChannel^.Target of
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicXMag,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicYMag,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicYMag];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZFar,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZFar];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZNear,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZNear];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveAspectRatio,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveAspectRatio];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveYFov,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveYFov];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZFar,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZFar];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
+           CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZNear,
+                                                           TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZNear];
+          end;
+          else begin
+          end;
          end;
         end;
        end;
       end;
-     end;
 
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
-     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-      Material:=fMaterials[AnimationDefaultChannel^.TargetIndex];
-      TargetSubIndex:=AnimationDefaultChannel^.TargetSubIndex;
-      MaterialOverwrite:=nil;
-      if aFactor>=-0.5 then begin
-       InstanceAnimationChannel:=nil;
-       for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
-        if (InstanceAnimation.fChannels[InstanceChannelIndex].fType=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Material) and
-           (InstanceAnimation.fChannels[InstanceChannelIndex].fTarget=Material) and
-           (InstanceAnimation.fChannels[InstanceChannelIndex].fTargetSubIndex=TargetSubIndex) then begin
-         InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-         break;
-        end;
-       end;
-       if assigned(InstanceAnimationChannel) then begin
-        if assigned(Material) then begin
-         MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        end else begin
-         MaterialOverwrite:=nil;
-        end;
-       end else if assigned(Material) and
-                   (Material.fCountOverwrites<length(Material.fOverwrites)) and
-                   (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
-        InstanceChannelIndex:=CountInstanceChannels;
-        inc(CountInstanceChannels);
-        InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
-        InstanceAnimationChannel.fType:=TpvScene3D.TGroup.TInstance.TAnimation.TChannel.TType.Material;
-        InstanceAnimationChannel.fTarget:=Material;
-        InstanceAnimationChannel.fTargetSubIndex:=TargetSubIndex;
-        InstanceAnimationChannel.fOverwrite:=Material.fCountOverwrites;
-        inc(Material.fCountOverwrites);
-        MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannel.fOverwrite];
-        MaterialOverwrite^.Flags:=[];
-        MaterialOverwrite^.SubIndex:=TargetSubIndex;
-        MaterialOverwrite^.Factor:=Max(aFactor,0.0);
-       end else begin
-        MaterialOverwrite:=nil;
-       end;
-       if assigned(MaterialOverwrite) then begin
-        case AnimationDefaultChannel^.Target of
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor];
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+       Material:=fMaterials[AnimationDefaultChannel^.TargetIndex];
+       TargetSubIndex:=AnimationDefaultChannel^.TargetSubIndex;
+       MaterialOverwrite:=nil;
+       if (aFactor>=-0.5) and assigned(Material) then begin
+        InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+        if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
+         InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
+         if InstanceAnimationChannelOverwrite^<0 then begin
+          InstanceAnimationChannelOverwrite^:=Material.fCountOverwrites;
+          inc(Material.fCountOverwrites);
+          MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
+          MaterialOverwrite^.Flags:=[];
+          MaterialOverwrite^.SubIndex:=TargetSubIndex;
+          MaterialOverwrite^.Factor:=Max(aFactor,0.0);
+         end else begin
+          MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
          end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessMetallicFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRMetallicRoughnessRoughnessFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialAlphaCutOff,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialAlphaCutOff];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialEmissiveFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialNormalTextureScale,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialNormalTextureScale];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialOcclusionTextureStrength,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialOcclusionTextureStrength];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRClearCoatFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRClearCoatRoughnessFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRClearCoatRoughnessFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialEmissiveStrength,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialEmissiveStrength];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialIOR,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialIOR];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceIor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceIor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceMinimum,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMinimum];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRIridescenceMaximum,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRIridescenceMaximum];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSheenColorFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenColorFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSheenRoughnessFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSheenRoughnessFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSpecularFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRSpecularColorFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRSpecularColorFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRTransmissionFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRTransmissionFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeThicknessFactor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeThicknessFactor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeAttenuationDistance,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationDistance];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultMaterialPBRVolumeAttenuationColor,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.MaterialPBRVolumeAttenuationColor];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureOffset,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureOffset];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureRotation,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureRotation];
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-          MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.DefaultTextureScale,
-                                                              TpvScene3D.TGroup.TInstance.TMaterial.TOverwriteFlag.TextureScale];
-         end;
-         else begin
+         case AnimationDefaultChannel^.Target of
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessMetallicFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessRoughnessFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialAlphaCutOff,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialAlphaCutOff];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialNormalTextureScale,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialNormalTextureScale];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialOcclusionTextureStrength,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialOcclusionTextureStrength];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatRoughnessFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatRoughnessFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveStrength,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveStrength];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialIOR,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialIOR];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceIor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceIor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMinimum,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMinimum];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMaximum,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMaximum];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenColorFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenColorFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenRoughnessFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenRoughnessFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularColorFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularColorFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRTransmissionFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRTransmissionFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeThicknessFactor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeThicknessFactor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationDistance,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationDistance];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationColor,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationColor];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureOffset,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureOffset];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureRotation,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation];
+          end;
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+           MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureScale,
+                                                               TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureScale];
+          end;
+          else begin
+          end;
          end;
         end;
        end;
       end;
-     end;
 
-     else begin
+      else begin
+      end;
+
      end;
 
     end;
@@ -12458,7 +12767,7 @@ var CullFace,Blend:TPasGLTFInt32;
      Factor,
      RotationFactorSum,
      WeightsFactorSum:TpvDouble;
-     Overwrite:TpvScene3D.TGroup.TInstance.TNode.POverwrite;
+     Overwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
      FirstWeights,SkinUsed,Dirty:boolean;
      Light:TpvScene3D.TLight;
      InstanceLight:TpvScene3D.TGroup.TInstance.TLight;
@@ -12515,7 +12824,7 @@ var CullFace,Blend:TPasGLTFInt32;
     Overwrite:=@InstanceNode^.Overwrites[Index];
     Factor:=Overwrite^.Factor;
     if not IsZero(Factor) then begin
-     if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Defaults in Overwrite^.Flags then begin
+     if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults in Overwrite^.Flags then begin
       TranslationSum.Add(Node.fTranslation,Factor);
       ScaleSum.Add(Node.fScale,Factor);
       AddRotation(Node.fRotation,Factor);
@@ -12532,35 +12841,35 @@ var CullFace,Blend:TPasGLTFInt32;
        WeightsFactorSum:=WeightsFactorSum+Factor;
       end;
      end else begin
-      if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultTranslation in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Translation in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultTranslation in Overwrite^.Flags then begin
         TranslationSum.Add(Node.fTranslation,Factor);
        end else begin
         TranslationSum.Add(Overwrite^.Translation,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultScale in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Scale in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultScale in Overwrite^.Flags then begin
         ScaleSum.Add(Node.fScale,Factor);
        end else begin
         ScaleSum.Add(Overwrite^.Scale,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation in Overwrite^.Flags then begin
-       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultRotation in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Rotation in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultRotation in Overwrite^.Flags then begin
         AddRotation(Node.fRotation,Factor);
        end else begin
         AddRotation(Overwrite^.Rotation,Factor);
        end;
       end;
-      if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights in Overwrite^.Flags then begin
+      if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Weights in Overwrite^.Flags then begin
        if FirstWeights then begin
         FirstWeights:=false;
         for OtherIndex:=0 to length(InstanceNode^.OverwriteWeightsSum)-1 do begin
          InstanceNode^.OverwriteWeightsSum[OtherIndex]:=0.0;
         end;
        end;
-       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultWeights in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultWeights in Overwrite^.Flags then begin
         for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Node.fWeights))-1 do begin
          InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights[OtherIndex]*Factor);
         end;
@@ -12612,6 +12921,11 @@ var CullFace,Blend:TPasGLTFInt32;
   Matrix:=Matrix*aMatrix;
   InstanceNode^.WorkMatrix:=Matrix;
   if assigned(Node.fMesh) then begin
+   if Matrix.Determinant<0.0 then begin
+    Include(InstanceNode^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeFlag.InverseFrontFaces);
+   end else begin
+    Exclude(InstanceNode^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeFlag.InverseFrontFaces);
+   end;
    if {SkinUsed and} assigned(Node.fSkin) then begin
     fSkins[Node.fSkin.Index].Used:=true;
    end;
@@ -12894,10 +13208,11 @@ begin
      Node:=fGroup.fNodes[Index];
      InstanceNode:=@fNodes[Index];
      if InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
-      if (InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
-         ((InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
-          fSceneInstance.fPotentiallyVisibleSet.fNodes[InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]].fAABB.Intersect(InstanceNode^.BoundingBoxes[aInFlightFrameIndex])) then begin
-       InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=fSceneInstance.fPotentiallyVisibleSet.GetNodeIndexByAABB(InstanceNode^.BoundingBoxes[aInFlightFrameIndex]);
+      if assigned(fGroup.fSceneInstance.fPotentiallyVisibleSet) and
+         ((InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
+          ((InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
+           fSceneInstance.fPotentiallyVisibleSet.fNodes[InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]].fAABB.Intersect(InstanceNode^.BoundingBoxes[aInFlightFrameIndex]))) then begin
+       InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=fGroup.fSceneInstance.fPotentiallyVisibleSet.GetNodeIndexByAABB(InstanceNode^.BoundingBoxes[aInFlightFrameIndex]);
       end;
      end else begin
       InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex;
@@ -12919,10 +13234,11 @@ begin
   end;
 
   if aInFlightFrameIndex>=0 then begin
-   if (fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
-      ((fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
-       fSceneInstance.fPotentiallyVisibleSet.fNodes[fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]].fAABB.Intersect(fBoundingBox)) then begin
-    fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=fSceneInstance.fPotentiallyVisibleSet.GetNodeIndexByAABB(fBoundingBox);
+   if assigned(fGroup.fSceneInstance.fPotentiallyVisibleSet) and
+      ((fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
+       ((fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
+        fSceneInstance.fPotentiallyVisibleSet.fNodes[fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]].fAABB.Intersect(fBoundingBox))) then begin
+    fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=fGroup.fSceneInstance.fPotentiallyVisibleSet.GetNodeIndexByAABB(fBoundingBox);
    end;
   end;
 
@@ -12954,7 +13270,7 @@ begin
    end;
   end;
 
-  fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=fSceneInstance.fPotentiallyVisibleSet.NoNodeIndex;
+  fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex;
 
   fPreviousActive:=false;
 
@@ -12989,7 +13305,8 @@ end;
 function TpvScene3D.TGroup.TInstance.GetBakedMesh(const aRelative:boolean=false;
                                                   const aWithDynamicMeshs:boolean=false;
                                                   const aRootNodeIndex:TpvSizeInt=-1;
-                                                  const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]):TpvScene3D.TBakedMesh;
+                                                  const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask];
+                                                  const aNodeFilter:TOnNodeFilter=nil):TpvScene3D.TBakedMesh;
 var BakedMesh:TpvScene3D.TBakedMesh;
  procedure ProcessMorphSkinNode(const aNode:TpvScene3D.TGroup.TNode;const aInstanceNode:TpvScene3D.TGroup.TInstance.PNode);
  type TBakedVertex=record
@@ -13011,7 +13328,7 @@ var BakedMesh:TpvScene3D.TBakedMesh;
      MorphTargetVertex:TpvScene3D.TGroup.PMorphTargetVertex;
      BakedVertices:TBakedVertices;
      BakedVertex:PBakedVertex;
-     BakedTriangle:TpvScene3D.TBakedMesh.TTriangle;
+     BakedTriangle:TpvScene3D.TBakedMesh.PTriangle;
      TemporaryTriangleIndices:TTemporaryTriangleIndices;
  begin
   BakedVertices:=nil;
@@ -13024,7 +13341,8 @@ var BakedMesh:TpvScene3D.TBakedMesh;
          (length(aNode.fWeights)=0) and
          ((aInstanceNode^.CountOverwrites=0) or
           ((aInstanceNode^.CountOverwrites=1) and
-           ((aInstanceNode^.Overwrites[0].Flags=[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Defaults]))))))) then begin
+           ((aInstanceNode^.Overwrites[0].Flags=[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults]))))))) and
+       ((not assigned(aNodeFilter)) or aNodeFilter(-1,-1,fGroup,self,aNode,aInstanceNode)) then begin
     Skin:=aNode.fSkin;
     if assigned(Skin) then begin
      InverseMatrix:=aInstanceNode^.WorkMatrix.Inverse;
@@ -13108,27 +13426,26 @@ var BakedMesh:TpvScene3D.TBakedMesh;
          IndexIndex:=0;
          while (IndexIndex+2)<length(TemporaryTriangleIndices) do begin
           for SideIndex:=0 to ord(Primitive^.Material.fData.DoubleSided) and 1 do begin
-           BakedTriangle:=TpvScene3D.TBakedMesh.TTriangle.Create;
+           BakedTriangle:=pointer(BakedMesh.fTriangles.AddNew);
            try
             if SideIndex>0 then begin
-             BakedTriangle.Positions[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Position;
-             BakedTriangle.Positions[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Position;
-             BakedTriangle.Positions[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Position;
-             BakedTriangle.Normals[0]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal;
-             BakedTriangle.Normals[1]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal;
-             BakedTriangle.Normals[2]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal;
-             BakedTriangle.Normal:=-(BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal).Normalize;
+             BakedTriangle^.Positions[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Position;
+             BakedTriangle^.Positions[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Position;
+             BakedTriangle^.Positions[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Position;
+             BakedTriangle^.Normals[0]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal;
+             BakedTriangle^.Normals[1]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal;
+             BakedTriangle^.Normals[2]:=-BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal;
+             BakedTriangle^.Normal:=-(BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal).Normalize;
             end else begin
-             BakedTriangle.Positions[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Position;
-             BakedTriangle.Positions[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Position;
-             BakedTriangle.Positions[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Position;
-             BakedTriangle.Normals[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal;
-             BakedTriangle.Normals[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal;
-             BakedTriangle.Normals[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal;
-             BakedTriangle.Normal:=(BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal).Normalize;
+             BakedTriangle^.Positions[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Position;
+             BakedTriangle^.Positions[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Position;
+             BakedTriangle^.Positions[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Position;
+             BakedTriangle^.Normals[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal;
+             BakedTriangle^.Normals[1]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal;
+             BakedTriangle^.Normals[2]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal;
+             BakedTriangle^.Normal:=(BakedVertices[TemporaryTriangleIndices[IndexIndex+0]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+1]].Normal+BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Normal).Normalize;
             end;
            finally
-            BakedMesh.fTriangles.Add(BakedTriangle);
            end;
           end;
           inc(IndexIndex,3);
@@ -13183,7 +13500,7 @@ begin
         ((not aWithDynamicMeshs) and
          ((GroupInstanceNode^.CountOverwrites=0) or
           ((GroupInstanceNode^.CountOverwrites=1) and
-           ((GroupInstanceNode^.Overwrites[0].Flags=[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Defaults])))))) then begin
+           ((GroupInstanceNode^.Overwrites[0].Flags=[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults])))))) then begin
      for Index:=GroupNode.fChildren.Count-1 downto 0 do begin
       NodeStack.Push(GroupNode.fChildren[Index].fIndex);
      end;
@@ -13221,7 +13538,7 @@ begin
   aCameraMatrix:=NodeMatrix;
   aViewMatrix:=NodeMatrix.Inverse;
   case Camera.EffectiveData^.Type_ of
-   TpvScene3D.TCameraData.TType.Orthographic:begin
+   TpvScene3D.TCameraData.TCameraType.Orthographic:begin
     if aReversedZ or (Camera.EffectiveData^.Orthographic.ZFar<0) then begin
      aProjectionMatrix:=TpvMatrix4x4.CreateOrthoRightHandedZeroToOne(-Camera.EffectiveData^.Orthographic.XMag,
                                                                      Camera.EffectiveData^.Orthographic.XMag,
@@ -13245,7 +13562,7 @@ begin
     end;
     aProjectionMatrix:=aProjectionMatrix*TpvMatrix4x4.FlipYClipSpace;
    end;
-   TpvScene3D.TCameraData.TType.Perspective:begin
+   TpvScene3D.TCameraData.TCameraType.Perspective:begin
      if ((aAspectRatio<0.0) and not IsZero(aAspectRatio)) or
         IsZero(Camera.EffectiveData^.Perspective.AspectRatio) then begin
      AspectRatio:=abs(aAspectRatio);
@@ -13311,6 +13628,7 @@ procedure TpvScene3D.TGroup.TInstance.Prepare(const aInFlightFrameIndex:TpvSizeI
                                               const aFrustums:TpvFrustumDynamicArray;
                                               const aPotentiallyVisibleSetCulling:boolean);
 var VisibleBit:TpvUInt32;
+    GroupOnNodeFilter,GlobalOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
  procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMask:TpvUInt32);
  var Index,NodeIndex,ViewIndex:TpvSizeInt;
      PotentiallyVisibleSetNodeIndex,ViewPotentiallyVisibleSetNodeIndex:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
@@ -13358,10 +13676,15 @@ var VisibleBit:TpvUInt32;
       OK:=true;
      end;
      if OK then begin
-      TPasMPInterlocked.BitwiseOr(InstanceNode^.VisibleBitmap,VisibleBit);
-      Node:=fGroup.fNodes[aNodeIndex];
-      for NodeIndex:=0 to Node.fChildren.Count-1 do begin
-       ProcessNode(Node.fChildren[NodeIndex].fIndex,Mask);
+      OK:=((not assigned(fOnNodeFilter)) or fOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode)) and
+          ((not assigned(GroupOnNodeFilter)) or GroupOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode)) and
+          ((not assigned(GlobalOnNodeFilter)) or GlobalOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode));
+      if OK then begin
+       TPasMPInterlocked.BitwiseOr(InstanceNode^.VisibleBitmap,VisibleBit);
+       Node:=fGroup.fNodes[aNodeIndex];
+       for NodeIndex:=0 to Node.fChildren.Count-1 do begin
+        ProcessNode(Node.fChildren[NodeIndex].fIndex,Mask);
+       end;
       end;
      end;
     end;
@@ -13375,7 +13698,13 @@ var NodeIndex,ViewIndex:TpvSizeInt;
 begin
  VisibleBit:=TpvUInt32(1) shl aRenderPassIndex;
  if fActives[aInFlightFrameIndex] and ((fVisibleBitmap and (TpvUInt32(1) shl aRenderPassIndex))<>0) then begin
-  if (length(aFrustums)>0) or aPotentiallyVisibleSetCulling then begin
+  GroupOnNodeFilter:=fGroup.fOnNodeFilter;
+  GlobalOnNodeFilter:=fGroup.fSceneInstance.fOnNodeFilter;
+  if (length(aFrustums)>0) or
+     aPotentiallyVisibleSetCulling or
+     assigned(fOnNodeFilter) or
+     assigned(GroupOnNodeFilter) or
+     assigned(GlobalOnNodeFilter) then begin
    for NodeIndex:=0 to length(fNodes)-1 do begin
     TPasMPInterlocked.BitwiseAnd(fNodes[NodeIndex].VisibleBitmap,not VisibleBit);
    end;
@@ -13430,6 +13759,8 @@ var NodeIndex,IndicesStart,IndicesCount,InFlightFrameIndex,
     DrawChoreographyBatchUniqueItem:TpvScene3D.TGroup.TDrawChoreographyBatchItem;
     MeshComputeStagePushConstants:TpvScene3D.TMeshComputeStagePushConstants;
 begin
+
+ fCachedVerticesUpdated:=false;
 
  if fActives[aInFlightFrameIndex] then begin
 
@@ -13510,6 +13841,8 @@ begin
 
       fGroup.fCachedVerticesUpdated:=true;
 
+      fCachedVerticesUpdated:=true;
+
       if FirstFlush then begin
 
        FirstFlush:=false;
@@ -13547,6 +13880,23 @@ begin
 
 end;
 
+procedure TpvScene3D.TGroup.TInstance.SetGroupInstanceResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                                                const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                                const aRenderPassIndex:TpvSizeInt;
+                                                                const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                                                const aInFlightFrameIndex:TpvSizeInt);
+const Offsets:TVkDeviceSize=0;
+begin
+ if not fSetGroupInstanceResourcesDone[aRenderPassIndex] then begin
+  fSetGroupInstanceResourcesDone[aRenderPassIndex]:=true;
+  aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanCachedVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
+  if aPreviousInFlightFrameIndex>=0 then begin
+   aCommandBuffer.CmdBindVertexBuffers(1,1,@fVulkanCachedVertexBuffers[aPreviousInFlightFrameIndex].Handle,@Offsets);
+  end;
+ end;
+end;
+
+
 procedure TpvScene3D.TGroup.TInstance.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                                            const aPreviousInFlightFrameIndex:TpvSizeInt;
                                            const aInFlightFrameIndex:TpvSizeInt;
@@ -13560,13 +13910,23 @@ var IndicesStart,IndicesCount,
     DrawChoreographyBatchItemIndex,
     CountDrawChoreographyBatchItems:TpvSizeInt;
     Scene:TpvScene3D.TGroup.TScene;
+    InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
-    DoubleSided,Culling,FirstFlush:boolean;
+    DoubleSided,InverseFrontFaces,Culling,FirstFlush:boolean;
     VisibleBit:TpvUInt32;
     DrawChoreographyBatchItem:TpvScene3D.TGroup.TDrawChoreographyBatchItem;
     Pipeline:TpvVulkanPipeline;
+    GroupOnNodeFilter,GlobalOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
 begin
- if fActives[aInFlightFrameIndex] and ((fVisibleBitmap and (TpvUInt32(1) shl aRenderPassIndex))<>0) then begin
+
+ VisibleBit:=TpvUInt32(1) shl aRenderPassIndex;
+
+ if fActives[aInFlightFrameIndex] and ((fVisibleBitmap and VisibleBit)<>0) then begin
+
+  GroupOnNodeFilter:=fGroup.fOnNodeFilter;
+  GlobalOnNodeFilter:=fGroup.fSceneInstance.fOnNodeFilter;
+
+  fSetGroupInstanceResourcesDone[aRenderPassIndex]:=false;
 
   Culling:=fGroup.fCulling;
 
@@ -13574,9 +13934,9 @@ begin
 
   if assigned(Scene) then begin
 
-   VisibleBit:=TpvUInt32(1) shl aRenderPassIndex;
-
    FirstFlush:=true;
+
+   InverseFrontFaces:=false;
 
    IndicesStart:=0;
    IndicesCount:=0;
@@ -13591,65 +13951,90 @@ begin
 
     if DrawChoreographyBatchItem.fMaterial.fVisible and
        (DrawChoreographyBatchItem.fAlphaMode in aMaterialAlphaModes) and
-       (DrawChoreographyBatchItem.fCountIndices>0) and
-       ((not Culling) or
-        ((fNodes[DrawChoreographyBatchItem.Node.fIndex].VisibleBitmap and VisibleBit)<>0)) then begin
+       (DrawChoreographyBatchItem.fCountIndices>0) then begin
 
-     IndicesStart:=DrawChoreographyBatchItem.fStartIndex;
-     IndicesCount:=DrawChoreographyBatchItem.fCountIndices;
+     InstanceNode:=@fNodes[DrawChoreographyBatchItem.Node.fIndex];
 
-     PrimitiveTopology:=DrawChoreographyBatchItem.fPrimitiveTopology;
+     if ((not Culling) or ((InstanceNode^.VisibleBitmap and VisibleBit)<>0)) and
+        (Culling or
+         ((not Culling) and
+          ((not assigned(fOnNodeFilter)) or fOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)) and
+          ((not assigned(GroupOnNodeFilter)) or GroupOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)) and
+          ((not assigned(GlobalOnNodeFilter)) or GlobalOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)))) then begin
 
-     DoubleSided:=DrawChoreographyBatchItem.fDoubleSided;
+      IndicesStart:=DrawChoreographyBatchItem.fStartIndex;
+      IndicesCount:=DrawChoreographyBatchItem.fCountIndices;
 
-     while DrawChoreographyBatchItemIndex<CountDrawChoreographyBatchItems do begin
+      PrimitiveTopology:=DrawChoreographyBatchItem.fPrimitiveTopology;
 
-      DrawChoreographyBatchItem:=Scene.fDrawChoreographyBatchItems[DrawChoreographyBatchItemIndex];
+      DoubleSided:=DrawChoreographyBatchItem.fDoubleSided;
 
-      if DrawChoreographyBatchItem.fMaterial.fVisible and
-         (DrawChoreographyBatchItem.fAlphaMode in aMaterialAlphaModes) and
-         (DrawChoreographyBatchItem.fCountIndices>0) and
-         ((not Culling) or
-          ((fNodes[DrawChoreographyBatchItem.Node.fIndex].VisibleBitmap and VisibleBit)<>0)) and
-         (DrawChoreographyBatchItem.fPrimitiveTopology=PrimitiveTopology) and
-         (DrawChoreographyBatchItem.fDoubleSided=DoubleSided) and
-         ((IndicesStart+IndicesCount)=DrawChoreographyBatchItem.fStartIndex) then begin
+      InverseFrontFaces:=InstanceNode^.InverseFrontFaces;
 
-       inc(IndicesCount,DrawChoreographyBatchItem.fCountIndices);
-       inc(DrawChoreographyBatchItemIndex);
+      while DrawChoreographyBatchItemIndex<CountDrawChoreographyBatchItems do begin
 
-      end else begin
+       DrawChoreographyBatchItem:=Scene.fDrawChoreographyBatchItems[DrawChoreographyBatchItemIndex];
+
+       if DrawChoreographyBatchItem.fMaterial.fVisible and
+          (DrawChoreographyBatchItem.fAlphaMode in aMaterialAlphaModes) and
+          (DrawChoreographyBatchItem.fCountIndices>0) then begin
+
+        InstanceNode:=@fNodes[DrawChoreographyBatchItem.Node.fIndex];
+
+        if ((not Culling) or ((InstanceNode.VisibleBitmap and VisibleBit)<>0)) and
+           (Culling or
+            ((not Culling) and
+             ((not assigned(fOnNodeFilter)) or fOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)) and
+             ((not assigned(GroupOnNodeFilter)) or GroupOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)) and
+             ((not assigned(GlobalOnNodeFilter)) or GlobalOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Group.Nodes[DrawChoreographyBatchItem.Node.fIndex],InstanceNode)))) and
+           (DrawChoreographyBatchItem.fPrimitiveTopology=PrimitiveTopology) and
+           (DrawChoreographyBatchItem.fDoubleSided=DoubleSided) and
+           (DoubleSided or (InstanceNode^.InverseFrontFaces=InverseFrontFaces)) and
+           ((IndicesStart+IndicesCount)=DrawChoreographyBatchItem.fStartIndex) then begin
+
+         inc(IndicesCount,DrawChoreographyBatchItem.fCountIndices);
+         inc(DrawChoreographyBatchItemIndex);
+
+         continue;
+
+        end;
+
+       end;
+
        break;
+
       end;
 
-     end;
+      if IndicesCount>0 then begin
 
-     if IndicesCount>0 then begin
-
-      Pipeline:=aGraphicsPipelines[PrimitiveTopology,DoubleSided];
-      if aPipeline<>Pipeline then begin
-       aPipeline:=Pipeline;
-       if assigned(Pipeline) then begin
-        aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,Pipeline.Handle);
-       end;
-      end;
-
-      if FirstFlush then begin
-
-       FirstFlush:=false;
-
-       fSceneInstance.SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
-
-       fGroup.SetGroupResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
-
-       if assigned(aOnSetRenderPassResources) then begin
-        aOnSetRenderPassResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+       Pipeline:=aGraphicsPipelines[PrimitiveTopology,DoubleSidedFaceCullingModes[DoubleSided,InverseFrontFaces]];
+       if aPipeline<>Pipeline then begin
+        aPipeline:=Pipeline;
+        if assigned(Pipeline) then begin
+         aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,Pipeline.Handle);
+        end;
        end;
 
-      end;
+       if FirstFlush then begin
 
-      if assigned(aPipeline) then begin
-       aCommandBuffer.CmdDrawIndexed(IndicesCount,1,IndicesStart,0,0);
+        FirstFlush:=false;
+
+        fSceneInstance.SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
+
+        SetGroupInstanceResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+
+        fGroup.SetGroupResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+
+        if assigned(aOnSetRenderPassResources) then begin
+         aOnSetRenderPassResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+        end;
+
+       end;
+
+       if assigned(aPipeline) then begin
+        aCommandBuffer.CmdDrawIndexed(IndicesCount,1,IndicesStart,0,0);
+       end;
+
       end;
 
      end;
@@ -13666,11 +14051,11 @@ end;
 
 { TpvScene3D }
 
-constructor TpvScene3D.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource;const aVulkanDevice:TpvVulkanDevice;const aUseBufferDeviceAddress:boolean;const aCountInFlightFrames:TpvSizeInt);
+constructor TpvScene3D.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource;const aMetaResource:TpvMetaResource;const aVulkanDevice:TpvVulkanDevice;const aUseBufferDeviceAddress:boolean;const aCountInFlightFrames:TpvSizeInt);
 var Index:TpvSizeInt;
 begin
 
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
 
  if assigned(aVulkanDevice) then begin
   fVulkanDevice:=aVulkanDevice;
@@ -13680,6 +14065,11 @@ begin
   fVulkanDevice:=nil;
  end;
 
+ fObjectListLock:=TPasMPCriticalSection.Create;
+
+ fObjectList:=TpvObjectList.Create;
+ fObjectList.OwnsObjects:=false;
+
  fCountInFlightFrames:=Min(Max(aCountInFlightFrames,1),MaxInFlightFrames);
 
  fLock:=TPasMPSpinLock.Create;
@@ -13688,7 +14078,14 @@ begin
 
  fMaterialDataGenerationLock:=TPasMPSpinLock.Create;
 
- fBufferStreamingMode:=TBufferStreamingMode.Direct;
+(*{$ifdef Linux}
+ if TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID)=TpvVulkanVendorID.NVIDIA then begin
+  fBufferStreamingMode:=TBufferStreamingMode.Staging;
+ end else {$endif}*)if assigned(fVulkanDevice) and fVulkanDevice.MemoryManager.CompleteTotalMemoryMappable then begin
+  fBufferStreamingMode:=TBufferStreamingMode.Direct;
+ end else begin
+  fBufferStreamingMode:=TBufferStreamingMode.Staging;
+ end;
 
  fUseBufferDeviceAddress:=aUseBufferDeviceAddress;
 
@@ -13702,7 +14099,16 @@ begin
 
  for Index:=0 to fCountInFlightFrames-1 do begin
   fVulkanBufferCopyBatchItemArrays[Index].Initialize;
+  fDebugPrimitiveVertexDynamicArrays[Index]:=TpvScene3D.TDebugPrimitiveVertexDynamicArray.Create;
  end;
+
+ fPointerToParticles:=@fParticles;
+
+ FillChar(fParticleAliveBitmap,SizeOf(TParticleAliveBitmap),#0);
+
+ fParticleIndexCounter:=0;
+
+ FillChar(fCountInFlightFrameParticleVertices,SizeOf(fCountInFlightFrameParticleVertices),#0);
 
  fTechniques:=TpvTechniques.Create;
 
@@ -13763,6 +14169,7 @@ begin
  fWhiteImage:=TpvScene3D.TImage.Create(ResourceManager,self);
  fWhiteImage.AssignFromWhiteTexture;
  fWhiteImage.IncRef;
+ fWhiteImage.LoadData;
 
  fWhiteTexture:=TpvScene3D.TTexture.Create(ResourceManager,self);
  fWhiteTexture.AssignFromWhiteTexture;
@@ -13771,6 +14178,7 @@ begin
  fDefaultNormalMapImage:=TpvScene3D.TImage.Create(ResourceManager,self);
  fDefaultNormalMapImage.AssignFromDefaultNormalMapTexture;
  fDefaultNormalMapImage.IncRef;
+ fDefaultNormalMapImage.LoadData;
 
  fDefaultNormalMapTexture:=TpvScene3D.TTexture.Create(ResourceManager,self);
  fDefaultNormalMapTexture.AssignFromDefaultNormalMapTexture;
@@ -13807,104 +14215,108 @@ begin
 
  ReleaseFrameDelay:=fCountInFlightFrames+1;
 
- fMeshComputeVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice);
+ if assigned(fVulkanDevice) then begin
 
- // Group - Vertices
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(0,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  fMeshComputeVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice);
 
- // Group - Cached vertices
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(1,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Group - Vertices
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(0,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Group - Indices
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(2,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Group - Cached vertices
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(1,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Group - Morph target vertices
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(3,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Group - Indices
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(2,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Group - Joint blocks
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(4,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Group - Morph target vertices
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(3,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Instance - Node matrices
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(5,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Group - Joint blocks
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(4,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Instance - Morph target weights
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(6,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Instance - Node matrices
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(5,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- // Instance - Material ID map
- fMeshComputeVulkanDescriptorSetLayout.AddBinding(7,
-                                                  VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                                  1,
-                                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
-                                                  []);
+  // Instance - Morph target weights
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(6,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- fMeshComputeVulkanDescriptorSetLayout.Initialize;
+  // Instance - Material ID map
+  fMeshComputeVulkanDescriptorSetLayout.AddBinding(7,
+                                                   VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   1,
+                                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                                   []);
 
- fGlobalVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice,TVkDescriptorSetLayoutCreateFlags(VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT_EXT),true);
- fGlobalVulkanDescriptorSetLayout.AddBinding(0,
-                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                             1,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(1,
-                                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                             1,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(2,
-                                             VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                             1,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- if fUseBufferDeviceAddress then begin
-  fGlobalVulkanDescriptorSetLayout.AddBinding(3,
+  fMeshComputeVulkanDescriptorSetLayout.Initialize;
+
+  fGlobalVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice,TVkDescriptorSetLayoutCreateFlags(VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT_EXT),true);
+  fGlobalVulkanDescriptorSetLayout.AddBinding(0,
                                               VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                               1,
-                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                               []);
- end else begin
-  fGlobalVulkanDescriptorSetLayout.AddBinding(3,
+  fGlobalVulkanDescriptorSetLayout.AddBinding(1,
                                               VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                               1,
                                               TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                               []);
+  fGlobalVulkanDescriptorSetLayout.AddBinding(2,
+                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                              1,
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                              []);
+  if fUseBufferDeviceAddress then begin
+   fGlobalVulkanDescriptorSetLayout.AddBinding(3,
+                                               VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                               1,
+                                               TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                               []);
+  end else begin
+   fGlobalVulkanDescriptorSetLayout.AddBinding(3,
+                                               VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                               1,
+                                               TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                               []);
+  end;
+  fGlobalVulkanDescriptorSetLayout.AddBinding(4,
+                                              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                              length(fImageInfos),
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                              [],
+                                              TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT) or
+                                              TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT) or
+                                              TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT_EXT));
+  fGlobalVulkanDescriptorSetLayout.Initialize;
+
  end;
- fGlobalVulkanDescriptorSetLayout.AddBinding(4,
-                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             length(fImageInfos),
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             [],
-                                             TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT) or
-                                             TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT) or
-                                             TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT_EXT));
- fGlobalVulkanDescriptorSetLayout.Initialize;
 
  fLightAABBTree:=TpvBVHDynamicAABBTree.Create;
 
@@ -13932,11 +14344,18 @@ begin
   fAABBTreeStates[Index].TreeNodes:=nil;
  end;
 
+ fOnNodeFilter:=nil;
+
 end;
 
 destructor TpvScene3D.Destroy;
 var Index:TpvSizeInt;
+    CurrentObject:TObject;
 begin
+
+ if assigned(ResourceManager) then begin
+  ResourceManager.DestroyDelayedFreeingObjectsWithParent(self);
+ end;
 
  Unload;
 
@@ -13949,9 +14368,9 @@ begin
   FreeAndNil(fGlobalVulkanViewUniformBuffers[Index]);
  end;
 
- for Index:=0 to fCountInFlightFrames-1 do begin
+{for Index:=0 to fCountInFlightFrames-1 do begin
   FreeAndNil(fGlobalVulkanViewUniformStagingBuffers[Index]);
- end;
+ end;}
 
  for Index:=0 to fCountInFlightFrames-1 do begin
   fAABBTreeStates[Index].TreeNodes:=nil;
@@ -14046,6 +14465,7 @@ begin
  fViews.Finalize;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
+  FreeAndNil(fDebugPrimitiveVertexDynamicArrays[Index]);
   fVulkanBufferCopyBatchItemArrays[Index].Finalize;
  end;
 
@@ -14054,6 +14474,19 @@ begin
  FreeAndNil(fMaterialDataGenerationLock);
 
  FreeAndNil(fPotentiallyVisibleSet);
+
+ fObjectListLock.Acquire;
+ try
+  Index:=0;
+  while fObjectList.Count>0 do begin
+   CurrentObject:=fObjectList.Extract(0);
+   FreeAndNil(CurrentObject);
+  end;
+ finally
+  fObjectListLock.Release;
+ end;
+
+ FreeAndNil(fObjectListLock);
 
  FreeAndNil(fLock);
 
@@ -14153,62 +14586,115 @@ begin
      if not fUploaded then begin
       try
 
-       fDefaultSampler.Upload;
+       if assigned(fVulkanDevice) then begin
 
-       fWhiteTexture.Upload;
+        fDefaultSampler.Upload;
 
-       fVulkanStagingQueue:=fVulkanDevice.UniversalQueue;
+        fWhiteTexture.Upload;
 
-       fVulkanStagingCommandPool:=TpvVulkanCommandPool.Create(fVulkanDevice,
-                                                              fVulkanDevice.UniversalQueueFamilyIndex,
-                                                              TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+        fVulkanStagingQueue:=fVulkanDevice.UniversalQueue;
 
-       fVulkanStagingCommandBuffer:=TpvVulkanCommandBuffer.Create(fVulkanStagingCommandPool,
-                                                                  VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+        fVulkanStagingCommandPool:=TpvVulkanCommandPool.Create(fVulkanDevice,
+                                                               fVulkanDevice.UniversalQueueFamilyIndex,
+                                                               TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
 
-       fVulkanStagingFence:=TpvVulkanFence.Create(fVulkanDevice);
+        fVulkanStagingCommandBuffer:=TpvVulkanCommandBuffer.Create(fVulkanStagingCommandPool,
+                                                                   VK_COMMAND_BUFFER_LEVEL_PRIMARY);
 
-       case fBufferStreamingMode of
+        fVulkanStagingFence:=TpvVulkanFence.Create(fVulkanDevice);
 
-        TBufferStreamingMode.Direct:begin
+        case fBufferStreamingMode of
 
-         for Index:=0 to fCountInFlightFrames-1 do begin
+         TBufferStreamingMode.Direct:begin
 
-          fVulkanLightItemsStagingBuffers[Index]:=nil;
+ {        for Index:=0 to fCountInFlightFrames-1 do begin
 
-          fVulkanLightTreeStagingBuffers[Index]:=nil;
+           fVulkanLightItemsStagingBuffers[Index]:=nil;
 
-          fVulkanLightMetaInfoStagingBuffers[Index]:=nil;
+           fVulkanLightTreeStagingBuffers[Index]:=nil;
 
-          fGlobalVulkanViewUniformStagingBuffers[Index]:=nil;
+           fVulkanLightMetaInfoStagingBuffers[Index]:=nil;
+
+           fGlobalVulkanViewUniformStagingBuffers[Index]:=nil;
+
+          end;}
+
+          for Index:=0 to fCountInFlightFrames-1 do begin
+           fGlobalVulkanViewUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                          SizeOf(TGlobalViewUniformBuffer),
+                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                          [],
+                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          [TpvVulkanBufferFlag.PersistentMapped]);
+          end;
+
+          for Index:=0 to fCountInFlightFrames-1 do begin
+           fVulkanDebugPrimitiveVertexBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                             SizeOf(TpvScene3D.TDebugPrimitiveVertex)*MaxDebugPrimitiveVertices,
+                                                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+                                                                             TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                             [],
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             [TpvVulkanBufferFlag.PersistentMapped]);
+          end;
+
+          for Index:=0 to fCountInFlightFrames-1 do begin
+           fVulkanParticleVertexBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                       SizeOf(TpvScene3D.TParticleVertex)*MaxParticleVertices,
+                                                                       TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+                                                                       TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                       [],
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       [TpvVulkanBufferFlag.PersistentMapped]);
+          end;
 
          end;
 
-         for Index:=0 to fCountInFlightFrames-1 do begin
-          fGlobalVulkanViewUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                         SizeOf(TGlobalViewUniformBuffer),
-                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
-                                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                         [],
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         [TpvVulkanBufferFlag.PersistentMapped]);
-         end;
+         TBufferStreamingMode.Staging:begin
 
-        end;
+ {        for Index:=0 to fCountInFlightFrames-1 do begin
 
-        TBufferStreamingMode.Staging:begin
+           fVulkanLightItemsStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                          MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
+                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                          [],
+                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          0,
+                                                                          [TpvVulkanBufferFlag.PersistentMapped]
+                                                                         );
 
-         for Index:=0 to fCountInFlightFrames-1 do begin
-
-          fVulkanLightItemsStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                         MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
+           fVulkanLightTreeStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                         (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
@@ -14224,266 +14710,43 @@ begin
                                                                          [TpvVulkanBufferFlag.PersistentMapped]
                                                                         );
 
-          fVulkanLightTreeStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                        (MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TSkipListNode),
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
-                                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                        [],
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        [TpvVulkanBufferFlag.PersistentMapped]
-                                                                       );
+           fVulkanLightMetaInfoStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                             MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
+                                                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                             TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                             [],
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             [TpvVulkanBufferFlag.PersistentMapped]
+                                                                            );
 
-          fVulkanLightMetaInfoStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                            MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
-                                                                            TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
-                                                                            TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
-                                                                            TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                            [],
-                                                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            [TpvVulkanBufferFlag.PersistentMapped]
-                                                                           );
+           fGlobalVulkanViewUniformStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                                 SizeOf(TGlobalViewUniformBuffer),
+                                                                                 TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                                                                 TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                 [],
+                                                                                 TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                                 TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                 0,
+                                                                                 0,
+                                                                                 0,
+                                                                                 0,
+                                                                                 0,
+                                                                                 0,
+                                                                                 [TpvVulkanBufferFlag.PersistentMapped]);
 
-          fGlobalVulkanViewUniformStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                                SizeOf(TGlobalViewUniformBuffer),
-                                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
-                                                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                                [],
-                                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                                0,
-                                                                                0,
-                                                                                0,
-                                                                                0,
-                                                                                0,
-                                                                                0,
-                                                                                [TpvVulkanBufferFlag.PersistentMapped]);
+          end;}
 
-         end;
-
-         for Index:=0 to fCountInFlightFrames-1 do begin
-          fGlobalVulkanViewUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                         SizeOf(TGlobalViewUniformBuffer),
-                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
-                                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                         [],
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                                         0,
-                                                                         0,
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         0,
-                                                                         []);
-         end;
-
-        end;
-
-        else begin
-         Assert(false);
-        end;
-
-       end;
-
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fLightBuffers[Index].Upload;
-       end;
-
-       fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) or TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT),length(fImageInfos)*length(fGlobalVulkanDescriptorSets));
-       fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,length(fGlobalVulkanDescriptorSets)*3);
-       fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fGlobalVulkanDescriptorSets)*4);
-       fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,length(fGlobalVulkanDescriptorSets)*length(fImageInfos));
-       fGlobalVulkanDescriptorPool.Initialize;
-
-       for Group in fGroups do begin
-        if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
-         Group.Upload;
-        end;
-       end;
-
-       for Index:=0 to length(fMaterialBufferData)-1 do begin
-        fMaterialBufferData[Index]:=TMaterial.DefaultShaderData;
-       end;
-
-       FillChar(fMaterialDataMaterialGenerations,SizeOf(fMaterialDataMaterialGenerations),#$ff);
-
-       MaxMaterialID:=0;
-
-       fMaterialDataGeneration:=1;
-
-       fMaterialDataProcessedGeneration:=0;
-
-       for Index:=0 to fMaterials.Count-1 do begin
-        Material:=fMaterials[Index];
-        if (Material.ID>0) and (Material.ID<length(fMaterialBufferData)) then begin
-         fMaterialBufferData[Material.ID]:=Material.fShaderData;
-         fMaterialDataMaterialGenerations[Material.ID]:=Material.fGeneration;
-         if MaxMaterialID<Material.ID then begin
-          MaxMaterialID:=Material.ID;
-         end;
-        end;
-       end;
-
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fInFlightFrameMaterialBufferData[Index]:=fMaterialBufferData;
-        fInFlightFrameMaterialBufferDataOffsets[Index]:=0;
-        fInFlightFrameMaterialBufferDataSizes[Index]:=0;
-        fInFlightFrameMaterialBufferDataMinMaterialID[Index]:=0;
-        fInFlightFrameMaterialBufferDataGeneration[Index]:=0;
-        fInFlightFrameMaterialBufferDataUploadedGeneration[Index]:=0;
-       end;
-
-  //   MaterialBufferDataSize:=Min(RoundUpToPowerOfTwo((MaxMaterialID+1)*SizeOf(TMaterial.TShaderData)),SizeOf(TMaterialBufferData));
-
-       MaterialBufferDataSize:=SizeOf(TMaterialBufferData);
-
-       UniversalQueue:=fVulkanDevice.UniversalQueue;
-       try
-        UniversalCommandPool:=TpvVulkanCommandPool.Create(fVulkanDevice,
-                                                          fVulkanDevice.UniversalQueueFamilyIndex,
-                                                          TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
-        try
-         UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
-                                                               VK_COMMAND_BUFFER_LEVEL_PRIMARY);
-         try
-          UniversalFence:=TpvVulkanFence.Create(fVulkanDevice);
-          try
-
-           case fBufferStreamingMode of
-
-            TBufferStreamingMode.Direct:begin
-
-             for Index:=0 to fCountInFlightFrames-1 do begin
-              fVulkanMaterialDataStagingBuffers[Index]:=nil;
-             end;
-
-            end;
-
-            TBufferStreamingMode.Staging:begin
-
-             for Index:=0 to fCountInFlightFrames-1 do begin
-
-              fVulkanMaterialDataStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                               MaterialBufferDataSize,
-                                                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
-                                                                               TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
-                                                                               TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                               [],
-                                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                               0,
-                                                                               0,
-                                                                               0,
-                                                                               0,
-                                                                               0,
-                                                                               0,
-                                                                               []);
-
-              fVulkanMaterialDataStagingBuffers[Index].UploadData(UniversalQueue,
-                                                                  UniversalCommandBuffer,
-                                                                  UniversalFence,
-                                                                  fMaterialBufferData,
-                                                                  0,
-                                                                  MaterialBufferDataSize,
-                                                                  TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
-
-             end;
-
-            end;
-
-            else begin
-             Assert(false);
-            end;
-
-           end;
-
-           for Index:=0 to fCountInFlightFrames-1 do begin
-
-            case fBufferStreamingMode of
-
-             TBufferStreamingMode.Direct:begin
-
-              fVulkanMaterialDataBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                        MaterialBufferDataSize,
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR),
-                                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                        [],
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        [TpvVulkanBufferFlag.PersistentMapped]);
-
-              fVulkanMaterialDataBuffers[Index].UploadData(UniversalQueue,
-                                                           UniversalCommandBuffer,
-                                                           UniversalFence,
-                                                           fMaterialBufferData,
-                                                           0,
-                                                           MaterialBufferDataSize,
-                                                           TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
-
-             end;
-
-             TBufferStreamingMode.Staging:begin
-
-              fVulkanMaterialDataBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                        MaterialBufferDataSize,
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or
-                                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR),
-                                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
-                                                                        [],
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                                        0,
-                                                                        0,
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        0,
-                                                                        []);
-
-              fVulkanMaterialDataBuffers[Index].CopyFrom(fVulkanBufferCopyBatchItemArrays[Index],
-                                                         fVulkanMaterialDataStagingBuffers[Index],
-                                                         0,
-                                                         0,
-                                                         MaterialBufferDataSize);
-
-             end;
-
-             else begin
-              Assert(false);
-             end;
-
-            end;
-
-            if fUseBufferDeviceAddress then begin
-
-             DeviceAddress:=fVulkanMaterialDataBuffers[Index].DeviceAddress;
-
-             fVulkanMaterialUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                          SizeOf(TVkDeviceAddress),
+          for Index:=0 to fCountInFlightFrames-1 do begin
+           fGlobalVulkanViewUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                          SizeOf(TGlobalViewUniformBuffer),
                                                                           TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
                                                                           TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                                           [],
@@ -14496,124 +14759,392 @@ begin
                                                                           0,
                                                                           0,
                                                                           []);
-             fVulkanMaterialUniformBuffers[Index].UploadData(UniversalQueue,
-                                                             UniversalCommandBuffer,
-                                                             UniversalFence,
-                                                             DeviceAddress,
-                                                             0,
-                                                             SizeOf(TVkDeviceAddress),
-                                                             TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
+           fVulkanDebugPrimitiveVertexBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                             SizeOf(TpvScene3D.TDebugPrimitiveVertex)*MaxDebugPrimitiveVertices,
+                                                                             TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+                                                                             TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                             [],
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                             0,
+                                                                             0,
+                                                                             TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             0,
+                                                                             []);
+           fVulkanParticleVertexBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                       SizeOf(TpvScene3D.TParticleVertex)*MaxParticleVertices,
+                                                                       TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT),
+                                                                       TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                       [],
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       0,
+                                                                       []);
+          end;
 
-            end else begin
+         end;
 
-             fVulkanMaterialUniformBuffers[Index]:=nil;
+         else begin
+          Assert(false);
+         end;
+
+        end;
+
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fLightBuffers[Index].Upload;
+        end;
+
+        fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) or TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT),length(fImageInfos)*length(fGlobalVulkanDescriptorSets));
+        fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,length(fGlobalVulkanDescriptorSets)*3);
+        fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fGlobalVulkanDescriptorSets)*4);
+        fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,length(fGlobalVulkanDescriptorSets)*length(fImageInfos));
+        fGlobalVulkanDescriptorPool.Initialize;
+
+        for Group in fGroups do begin
+         if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
+          Group.Upload;
+         end;
+        end;
+
+        for Index:=0 to length(fMaterialBufferData)-1 do begin
+         fMaterialBufferData[Index]:=TMaterial.DefaultShaderData;
+        end;
+
+        FillChar(fMaterialDataMaterialGenerations,SizeOf(fMaterialDataMaterialGenerations),#$ff);
+
+        MaxMaterialID:=0;
+
+        fMaterialDataGeneration:=1;
+
+        fMaterialDataProcessedGeneration:=0;
+
+        for Index:=0 to fMaterials.Count-1 do begin
+         Material:=fMaterials[Index];
+         if (Material.ID>0) and (Material.ID<length(fMaterialBufferData)) then begin
+          fMaterialBufferData[Material.ID]:=Material.fShaderData;
+          fMaterialDataMaterialGenerations[Material.ID]:=Material.fGeneration;
+          if MaxMaterialID<Material.ID then begin
+           MaxMaterialID:=Material.ID;
+          end;
+         end;
+        end;
+
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fInFlightFrameMaterialBufferData[Index]:=fMaterialBufferData;
+         fInFlightFrameMaterialBufferDataOffsets[Index]:=0;
+         fInFlightFrameMaterialBufferDataSizes[Index]:=0;
+         fInFlightFrameMaterialBufferDataMinMaterialID[Index]:=0;
+         fInFlightFrameMaterialBufferDataGeneration[Index]:=0;
+         fInFlightFrameMaterialBufferDataUploadedGeneration[Index]:=0;
+        end;
+
+   //   MaterialBufferDataSize:=Min(RoundUpToPowerOfTwo((MaxMaterialID+1)*SizeOf(TMaterial.TShaderData)),SizeOf(TMaterialBufferData));
+
+        MaterialBufferDataSize:=SizeOf(TMaterialBufferData);
+
+        UniversalQueue:=fVulkanDevice.UniversalQueue;
+        try
+         UniversalCommandPool:=TpvVulkanCommandPool.Create(fVulkanDevice,
+                                                           fVulkanDevice.UniversalQueueFamilyIndex,
+                                                           TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+         try
+          UniversalCommandBuffer:=TpvVulkanCommandBuffer.Create(UniversalCommandPool,
+                                                                VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+          try
+           UniversalFence:=TpvVulkanFence.Create(fVulkanDevice);
+           try
+
+            case fBufferStreamingMode of
+
+             TBufferStreamingMode.Direct:begin
+
+ {            for Index:=0 to fCountInFlightFrames-1 do begin
+               fVulkanMaterialDataStagingBuffers[Index]:=nil;
+              end;}
+
+             end;
+
+             TBufferStreamingMode.Staging:begin
+
+ {            for Index:=0 to fCountInFlightFrames-1 do begin
+
+               fVulkanMaterialDataStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                                MaterialBufferDataSize,
+                                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
+                                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                [],
+                                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                0,
+                                                                                0,
+                                                                                0,
+                                                                                0,
+                                                                                0,
+                                                                                0,
+                                                                                []);
+
+                fVulkanMemoryStaging.Upload(UniversalQueue,
+                                            UniversalCommandBuffer,
+                                            UniversalFence,
+                                            fMaterialBufferData,
+                                            fVulkanMaterialDataStagingBuffers[Index],
+                                            0,
+                                            MaterialBufferDataSize);
+
+ (*            fVulkanMaterialDataStagingBuffers[Index].UploadData(UniversalQueue,
+                                                                   UniversalCommandBuffer,
+                                                                   UniversalFence,
+                                                                   fMaterialBufferData,
+                                                                   0,
+                                                                   MaterialBufferDataSize,
+                                                                   TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);//*)
+
+              end; }
+
+             end;
+
+             else begin
+              Assert(false);
+             end;
 
             end;
 
-           end;
+            for Index:=0 to fCountInFlightFrames-1 do begin
 
+             case fBufferStreamingMode of
+
+              TBufferStreamingMode.Direct:begin
+
+               fVulkanMaterialDataBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                         MaterialBufferDataSize,
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR),
+                                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                         [],
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         [TpvVulkanBufferFlag.PersistentMapped]);
+
+                fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                   UniversalCommandBuffer,
+                                                   UniversalFence,
+                                                   fMaterialBufferData,
+                                                   fVulkanMaterialDataBuffers[Index],
+                                                   0,
+                                                   MaterialBufferDataSize);
+
+ {             fVulkanMaterialDataBuffers[Index].UploadData(UniversalQueue,
+                                                            UniversalCommandBuffer,
+                                                            UniversalFence,
+                                                            fMaterialBufferData,
+                                                            0,
+                                                            MaterialBufferDataSize,
+                                                            TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);}
+
+              end;
+
+              TBufferStreamingMode.Staging:begin
+
+               fVulkanMaterialDataBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                         MaterialBufferDataSize,
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or
+                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR),
+                                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                         [],
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                         0,
+                                                                         0,
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         0,
+                                                                         []);
+
+                fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                   UniversalCommandBuffer,
+                                                   UniversalFence,
+                                                   fMaterialBufferData,
+                                                   fVulkanMaterialDataBuffers[Index],
+                                                   0,
+                                                   MaterialBufferDataSize);
+
+ {             fVulkanMaterialDataBuffers[Index].CopyFrom(fVulkanBufferCopyBatchItemArrays[Index],
+                                                          fVulkanMaterialDataStagingBuffers[Index],
+                                                          0,
+                                                          0,
+                                                          MaterialBufferDataSize);}
+
+              end;
+
+              else begin
+               Assert(false);
+              end;
+
+             end;
+
+             if fUseBufferDeviceAddress then begin
+
+              DeviceAddress:=fVulkanMaterialDataBuffers[Index].DeviceAddress;
+
+              fVulkanMaterialUniformBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                           SizeOf(TVkDeviceAddress),
+                                                                           TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+                                                                           TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                           [],
+                                                                           TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                           0,
+                                                                           0,
+                                                                           TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                           0,
+                                                                           0,
+                                                                           0,
+                                                                           0,
+                                                                           []);
+              fVulkanDevice.MemoryStaging.Upload(UniversalQueue,
+                                                 UniversalCommandBuffer,
+                                                 UniversalFence,
+                                                 DeviceAddress,
+                                                 fVulkanMaterialUniformBuffers[Index],
+                                                 0,
+                                                 SizeOf(TVkDeviceAddress));
+ {            fVulkanMaterialUniformBuffers[Index].UploadData(UniversalQueue,
+                                                              UniversalCommandBuffer,
+                                                              UniversalFence,
+                                                              DeviceAddress,
+                                                              0,
+                                                              SizeOf(TVkDeviceAddress),
+                                                              TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);}
+
+             end else begin
+
+              fVulkanMaterialUniformBuffers[Index]:=nil;
+
+             end;
+
+            end;
+
+           finally
+            FreeAndNil(UniversalFence);
+           end;
           finally
-           FreeAndNil(UniversalFence);
+           FreeAndNil(UniversalCommandBuffer);
           end;
          finally
-          FreeAndNil(UniversalCommandBuffer);
+          FreeAndNil(UniversalCommandPool);
          end;
         finally
-         FreeAndNil(UniversalCommandPool);
+         UniversalQueue:=nil;
         end;
-       finally
-        UniversalQueue:=nil;
-       end;
 
-       for Index:=0 to length(fImageInfos)-1 do begin
-        fImageInfos[Index]:=fWhiteTexture.GetDescriptorImageInfo(false);
-       end;
-
-       for Index:=0 to fTextures.Count-1 do begin
-        Texture:=fTextures[Index];
-        if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
-         fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
-         fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
+        for Index:=0 to length(fImageInfos)-1 do begin
+         fImageInfos[Index]:=fWhiteTexture.GetDescriptorImageInfo(false);
         end;
-       end;
 
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fInFlightFrameImageInfos[Index]:=fImageInfos;
-        fInFlightFrameImageInfoImageDescriptorGenerations[Index]:=High(TpvUInt64)-2;
-        fInFlightFrameImageInfoImageDescriptorUploadedGenerations[Index]:=High(TpvUInt64)-4;
-       end;
+        for Index:=0 to fTextures.Count-1 do begin
+         Texture:=fTextures[Index];
+         if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
+          fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
+          fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
+         end;
+        end;
 
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fGlobalVulkanDescriptorSets[Index]:=TpvVulkanDescriptorSet.Create(fGlobalVulkanDescriptorPool,
-                                                                          fGlobalVulkanDescriptorSetLayout);
-        fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(0,
-                                                                0,
-                                                                1,
-                                                                TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
-                                                                [],
-                                                                [fGlobalVulkanViewUniformBuffers[Index].DescriptorBufferInfo],
-                                                                [],
-                                                                false);
-        fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(1,
-                                                                0,
-                                                                1,
-                                                                TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                                                [],
-                                                                [fLightBuffers[Index].fLightItemsVulkanBuffer.DescriptorBufferInfo],
-                                                                [],
-                                                                false);
-        fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(2,
-                                                                0,
-                                                                1,
-                                                                TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-                                                                [],
-                                                                [fLightBuffers[Index].fLightTreeVulkanBuffer.DescriptorBufferInfo],
-                                                                [],
-                                                                false);
-        if fUseBufferDeviceAddress then begin
-         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(3,
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fInFlightFrameImageInfos[Index]:=fImageInfos;
+         fInFlightFrameImageInfoImageDescriptorGenerations[Index]:=High(TpvUInt64)-2;
+         fInFlightFrameImageInfoImageDescriptorUploadedGenerations[Index]:=High(TpvUInt64)-4;
+        end;
+
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fGlobalVulkanDescriptorSets[Index]:=TpvVulkanDescriptorSet.Create(fGlobalVulkanDescriptorPool,
+                                                                           fGlobalVulkanDescriptorSetLayout);
+         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(0,
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
                                                                  [],
-                                                                 [fVulkanMaterialUniformBuffers[Index].DescriptorBufferInfo],
+                                                                 [fGlobalVulkanViewUniformBuffers[Index].DescriptorBufferInfo],
                                                                  [],
                                                                  false);
-        end else begin
-         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(3,
+         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(1,
+                                                                 0,
+
+                                                                 1,
+                                                                 TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                                                 [],
+                                                                 [fLightBuffers[Index].fLightItemsVulkanBuffer.DescriptorBufferInfo],
+                                                                 [],
+                                                                 false);
+         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(2,
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
                                                                  [],
-                                                                 [fVulkanMaterialDataBuffers[Index].DescriptorBufferInfo],
+                                                                 [fLightBuffers[Index].fLightTreeVulkanBuffer.DescriptorBufferInfo],
                                                                  [],
                                                                  false);
+         if fUseBufferDeviceAddress then begin
+          fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(3,
+                                                                  0,
+                                                                  1,
+                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                                  [],
+                                                                  [fVulkanMaterialUniformBuffers[Index].DescriptorBufferInfo],
+                                                                  [],
+                                                                  false);
+         end else begin
+          fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(3,
+                                                                  0,
+                                                                  1,
+                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                                                  [],
+                                                                  [fVulkanMaterialDataBuffers[Index].DescriptorBufferInfo],
+                                                                  [],
+                                                                  false);
+         end;
+         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(4,
+                                                                 0,
+                                                                 length(fImageInfos),
+                                                                 TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                 fImageInfos,
+                                                                 [],
+                                                                 [],
+                                                                 false);
+         fGlobalVulkanDescriptorSets[Index].Flush;
         end;
-        fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(4,
-                                                                0,
-                                                                length(fImageInfos),
-                                                                TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-                                                                fImageInfos,
-                                                                [],
-                                                                [],
-                                                                false);
-        fGlobalVulkanDescriptorSets[Index].Flush;
+
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fImageDescriptorProcessedGenerations[Index]:=0;
+        end;
+
+        fImageDescriptorGeneration:=0;
+        fImageDescriptorProcessedGeneration:=0;
+
+        for Index:=0 to fCountInFlightFrames-1 do begin
+         fMaterialDataProcessedGenerations[Index]:=0;
+         fMaterialDataProcessedMaxChangedID[Index]:=$ffff;
+         fMaterialDataProcessedMinChangedID[Index]:=0;
+        end;
+
+        fMaterialDataGeneration:=1;
+
        end;
-
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fImageDescriptorProcessedGenerations[Index]:=0;
-       end;
-
-       fImageDescriptorGeneration:=0;
-       fImageDescriptorProcessedGeneration:=0;
-
-       for Index:=0 to fCountInFlightFrames-1 do begin
-        fMaterialDataProcessedGenerations[Index]:=0;
-        fMaterialDataProcessedMaxChangedID[Index]:=$ffff;
-        fMaterialDataProcessedMinChangedID[Index]:=0;
-       end;
-
-       fMaterialDataGeneration:=1;
 
       finally
        fUploaded:=true;
@@ -14657,21 +15188,23 @@ begin
 
      for Index:=0 to fCountInFlightFrames-1 do begin
       FreeAndNil(fGlobalVulkanViewUniformBuffers[Index]);
+      FreeAndNil(fVulkanDebugPrimitiveVertexBuffers[Index]);
+      FreeAndNil(fVulkanParticleVertexBuffers[Index]);
      end;
 
-     for Index:=0 to fCountInFlightFrames-1 do begin
+{    for Index:=0 to fCountInFlightFrames-1 do begin
       FreeAndNil(fGlobalVulkanViewUniformStagingBuffers[Index]);
-     end;
+     end;}
 
      for Index:=0 to fCountInFlightFrames-1 do begin
       fLightBuffers[Index].Unload;
      end;
 
-     for Index:=0 to fCountInFlightFrames-1 do begin
+{    for Index:=0 to fCountInFlightFrames-1 do begin
       FreeAndNil(fVulkanLightItemsStagingBuffers[Index]);
       FreeAndNil(fVulkanLightTreeStagingBuffers[Index]);
       FreeAndNil(fVulkanLightMetaInfoStagingBuffers[Index]);
-     end;
+     end;}
 
      for Group in fGroups do begin
       if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
@@ -14685,7 +15218,7 @@ begin
 
       FreeAndNil(fVulkanMaterialDataBuffers[Index]);
 
-      FreeAndNil(fVulkanMaterialDataStagingBuffers[Index]);
+//    FreeAndNil(fVulkanMaterialDataStagingBuffers[Index]);
 
      end;
 
@@ -14799,6 +15332,8 @@ begin
   fBoundingBox.Max:=TpvVector3.InlineableCreate(1.0,1.0,-1.0);
  end;
 
+ fInFlightFrameBoundingBoxes[aInFlightFrameIndex]:=fBoundingBox;
+
 end;
 
 procedure TpvScene3D.PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
@@ -14815,137 +15350,141 @@ var Index,ItemID,BaseItemID,MaterialBufferDataOffset,MaterialBufferDataSize:TpvS
     Material:TpvScene3D.TMaterial;
 begin
 
- for Group in fGroups do begin
-  Group.PrepareGPUUpdate(aInFlightFrameIndex);
- end;
+ if assigned(fVulkanDevice) then begin
 
- if (fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration) or
-    (fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration) then begin
-
-  fImageDescriptorGenerationLock.Acquire;
-  try
-
-   if fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration then begin
-    fImageDescriptorProcessedGeneration:=fImageDescriptorGeneration;
-    fImageInfos[0]:=fWhiteTexture.GetDescriptorImageInfo(false);
-    for Index:=1 to length(fImageInfos)-1 do begin
-     fImageInfos[Index]:=fImageInfos[0];
-    end;
-    for Index:=0 to fTextures.Count-1 do begin
-     Texture:=fTextures[Index];
-     if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
-      fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
-      fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
-     end;
-    end;
-   end;
-
-   if fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration then begin
-    fImageDescriptorProcessedGenerations[aInFlightFrameIndex]:=fImageDescriptorProcessedGeneration;
-    fInFlightFrameImageInfos[aInFlightFrameIndex]:=fImageInfos;
-    inc(fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex]);
-   end;
-
-  finally
-   fImageDescriptorGenerationLock.Release;
+  for Group in fGroups do begin
+   Group.PrepareGPUUpdate(aInFlightFrameIndex);
   end;
 
- end;
+  if (fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration) or
+     (fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration) then begin
 
- if (fMaterialDataProcessedGeneration<>fMaterialDataGeneration) or
-    (fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration) then begin
+   fImageDescriptorGenerationLock.Acquire;
+   try
 
-  fMaterialDataGenerationLock.Acquire;
-  try
-
-   if fMaterialDataProcessedGeneration<>fMaterialDataGeneration then begin
-    fMaterialDataProcessedGeneration:=fMaterialDataGeneration;
-    MinMaterialID:=$ffff;
-    MaxMaterialID:=0;
-    BaseItemID:=0;
-    for Index:=0 to length(fMaterialIDDirtyMap)-1 do begin
-     DirtyBits:=TPasMPInterlocked.Exchange(fMaterialIDDirtyMap[Index],0);
-     while DirtyBits<>0 do begin
-      ItemID:=BaseItemID+TPasMPMath.FindFirstSetBit32(DirtyBits);
-      if (ItemID>=0) and (ItemID<length(fMaterialIDMap)) then begin
-       Material:=fMaterialIDMap[ItemID];
-       if assigned(Material) then begin
-        fMaterialBufferData[ItemID]:=Material.fShaderData;
-        fMaterialDataMaterialGenerations[ItemID]:=Material.fGeneration;
-       end else begin
-        fMaterialBufferData[ItemID]:=TMaterial.DefaultShaderData;
-        fMaterialDataMaterialGenerations[ItemID]:=High(TpvUInt64);
-       end;
-       if MinMaterialID>ItemID then begin
-        MinMaterialID:=ItemID;
-       end;
-       if MaxMaterialID<ItemID then begin
-        MaxMaterialID:=ItemID;
-       end;
-      end;
-      DirtyBits:=DirtyBits and (DirtyBits-1);
+    if fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration then begin
+     fImageDescriptorProcessedGeneration:=fImageDescriptorGeneration;
+     fImageInfos[0]:=fWhiteTexture.GetDescriptorImageInfo(false);
+     for Index:=1 to length(fImageInfos)-1 do begin
+      fImageInfos[Index]:=fImageInfos[0];
      end;
-     inc(BaseItemID,32);
-    end;
-    if MinMaterialID<=MaxMaterialID then begin
-     for Index:=0 to CountInFlightFrames-1 do begin
-      if fMaterialDataProcessedMinChangedID[Index]>MinMaterialID then begin
-       fMaterialDataProcessedMinChangedID[Index]:=MinMaterialID;
-      end;
-      if fMaterialDataProcessedMaxChangedID[Index]<MaxMaterialID then begin
-       fMaterialDataProcessedMaxChangedID[Index]:=MaxMaterialID;
+     for Index:=0 to fTextures.Count-1 do begin
+      Texture:=fTextures[Index];
+      if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
+       fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
+       fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
       end;
      end;
     end;
-   end;
 
-   if fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration then begin
-    fMaterialDataProcessedGenerations[aInFlightFrameIndex]:=fMaterialDataProcessedGeneration;
-    MinMaterialID:=fMaterialDataProcessedMinChangedID[aInFlightFrameIndex];
-    MaxMaterialID:=fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex];
-    if MinMaterialID<=MaxMaterialID then begin
-     fMaterialDataProcessedMinChangedID[aInFlightFrameIndex]:=$ffff;
-     fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex]:=$0000;
-     MaterialBufferDataOffset:=SizeOf(TMaterial.TShaderData)*MinMaterialID;
-     MaterialBufferDataSize:=SizeOf(TMaterial.TShaderData)*(MaxMaterialID+1);
-     fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]:=MaterialBufferDataOffset;
-     fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]:=MaterialBufferDataSize;
-     fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]:=MinMaterialID;
-     inc(fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex]);
-     Move(fMaterialBufferData[fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
-          fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
-          MaterialBufferDataSize-MaterialBufferDataOffset);
+    if fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration then begin
+     fImageDescriptorProcessedGenerations[aInFlightFrameIndex]:=fImageDescriptorProcessedGeneration;
+     fInFlightFrameImageInfos[aInFlightFrameIndex]:=fImageInfos;
+     inc(fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex]);
     end;
+
+   finally
+    fImageDescriptorGenerationLock.Release;
    end;
 
-  finally
-   fMaterialDataGenerationLock.Release;
   end;
 
- end;
+  if (fMaterialDataProcessedGeneration<>fMaterialDataGeneration) or
+     (fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration) then begin
 
- OldGeneration:=fLightAABBTreeStateGenerations[aInFlightFrameIndex];
- NewGeneration:=fLightAABBTreeGeneration;
- if (OldGeneration<>NewGeneration) and
-    (TPasMPInterlocked.CompareExchange(fLightAABBTreeStateGenerations[aInFlightFrameIndex],NewGeneration,OldGeneration)=OldGeneration) then begin
+   fMaterialDataGenerationLock.Acquire;
+   try
 
-  LightAABBTreeState:=@fLightAABBTreeStates[aInFlightFrameIndex];
+    if fMaterialDataProcessedGeneration<>fMaterialDataGeneration then begin
+     fMaterialDataProcessedGeneration:=fMaterialDataGeneration;
+     MinMaterialID:=$ffff;
+     MaxMaterialID:=0;
+     BaseItemID:=0;
+     for Index:=0 to length(fMaterialIDDirtyMap)-1 do begin
+      DirtyBits:=TPasMPInterlocked.Exchange(fMaterialIDDirtyMap[Index],0);
+      while DirtyBits<>0 do begin
+       ItemID:=BaseItemID+TPasMPMath.FindFirstSetBit32(DirtyBits);
+       if (ItemID>=0) and (ItemID<length(fMaterialIDMap)) then begin
+        Material:=fMaterialIDMap[ItemID];
+        if assigned(Material) then begin
+         fMaterialBufferData[ItemID]:=Material.fShaderData;
+         fMaterialDataMaterialGenerations[ItemID]:=Material.fGeneration;
+        end else begin
+         fMaterialBufferData[ItemID]:=TMaterial.DefaultShaderData;
+         fMaterialDataMaterialGenerations[ItemID]:=High(TpvUInt64);
+        end;
+        if MinMaterialID>ItemID then begin
+         MinMaterialID:=ItemID;
+        end;
+        if MaxMaterialID<ItemID then begin
+         MaxMaterialID:=ItemID;
+        end;
+       end;
+       DirtyBits:=DirtyBits and (DirtyBits-1);
+      end;
+      inc(BaseItemID,32);
+     end;
+     if MinMaterialID<=MaxMaterialID then begin
+      for Index:=0 to CountInFlightFrames-1 do begin
+       if fMaterialDataProcessedMinChangedID[Index]>MinMaterialID then begin
+        fMaterialDataProcessedMinChangedID[Index]:=MinMaterialID;
+       end;
+       if fMaterialDataProcessedMaxChangedID[Index]<MaxMaterialID then begin
+        fMaterialDataProcessedMaxChangedID[Index]:=MaxMaterialID;
+       end;
+      end;
+     end;
+    end;
 
-  if (length(fLightAABBTree.Nodes)>0) and (fLightAABBTree.Root>=0) then begin
-   if length(LightAABBTreeState^.TreeNodes)<length(fLightAABBTree.Nodes) then begin
-    LightAABBTreeState^.TreeNodes:=copy(fLightAABBTree.Nodes);
+    if fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration then begin
+     fMaterialDataProcessedGenerations[aInFlightFrameIndex]:=fMaterialDataProcessedGeneration;
+     MinMaterialID:=fMaterialDataProcessedMinChangedID[aInFlightFrameIndex];
+     MaxMaterialID:=fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex];
+     if MinMaterialID<=MaxMaterialID then begin
+      fMaterialDataProcessedMinChangedID[aInFlightFrameIndex]:=$ffff;
+      fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex]:=$0000;
+      MaterialBufferDataOffset:=SizeOf(TMaterial.TShaderData)*MinMaterialID;
+      MaterialBufferDataSize:=SizeOf(TMaterial.TShaderData)*(MaxMaterialID+1);
+      fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]:=MaterialBufferDataOffset;
+      fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]:=MaterialBufferDataSize;
+      fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]:=MinMaterialID;
+      inc(fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex]);
+      Move(fMaterialBufferData[fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+           fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+           MaterialBufferDataSize-MaterialBufferDataOffset);
+     end;
+    end;
+
+   finally
+    fMaterialDataGenerationLock.Release;
+   end;
+
+  end;
+
+  OldGeneration:=fLightAABBTreeStateGenerations[aInFlightFrameIndex];
+  NewGeneration:=fLightAABBTreeGeneration;
+  if (OldGeneration<>NewGeneration) and
+     (TPasMPInterlocked.CompareExchange(fLightAABBTreeStateGenerations[aInFlightFrameIndex],NewGeneration,OldGeneration)=OldGeneration) then begin
+
+   LightAABBTreeState:=@fLightAABBTreeStates[aInFlightFrameIndex];
+
+   if (length(fLightAABBTree.Nodes)>0) and (fLightAABBTree.Root>=0) then begin
+    if length(LightAABBTreeState^.TreeNodes)<length(fLightAABBTree.Nodes) then begin
+     LightAABBTreeState^.TreeNodes:=copy(fLightAABBTree.Nodes);
+    end else begin
+     Move(fLightAABBTree.Nodes[0],LightAABBTreeState^.TreeNodes[0],length(fLightAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
+    end;
+    LightAABBTreeState^.Root:=fLightAABBTree.Root;
    end else begin
-    Move(fLightAABBTree.Nodes[0],LightAABBTreeState^.TreeNodes[0],length(fLightAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
+    LightAABBTreeState^.Root:=-1;
    end;
-   LightAABBTreeState^.Root:=fLightAABBTree.Root;
-  end else begin
-   LightAABBTreeState^.Root:=-1;
-  end;
 
-  LightBuffer:=fLightBuffers[aInFlightFrameIndex];
-  CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems,LightBuffer.fLightMetaInfos);
-  fLightAABBTree.GetSkipListNodes(LightBuffer.fLightTree,GetLightUserDataIndex);
-  LightBuffer.fNewLightAABBTreeGeneration:=fLightAABBTreeGeneration;
+   LightBuffer:=fLightBuffers[aInFlightFrameIndex];
+   CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems,LightBuffer.fLightMetaInfos);
+   fLightAABBTree.GetSkipListNodes(LightBuffer.fLightTree,GetLightUserDataIndex);
+   LightBuffer.fNewLightAABBTreeGeneration:=fLightAABBTreeGeneration;
+
+  end;
 
  end;
 
@@ -14955,81 +15494,93 @@ procedure TpvScene3D.ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
 var Group:TpvScene3D.TGroup;
 begin
 
- for Group in fGroups do begin
-  Group.ExecuteGPUUpdate(aInFlightFrameIndex);
- end;
+ if assigned(fVulkanDevice) then begin
 
- if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
-  fImageDescriptorGenerationLock.Acquire;
-  try
-   if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
-    fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]:=fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex];
-    fGlobalVulkanDescriptorSets[aInFlightFrameIndex].WriteToDescriptorSet(4,
-                                                                          0,
-                                                                          length(fInFlightFrameImageInfos[aInFlightFrameIndex]),
-                                                                          TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-                                                                          fInFlightFrameImageInfos[aInFlightFrameIndex][0],
-                                                                          [],
-                                                                          [],
-                                                                          true);
-   end;
-  finally
-   fImageDescriptorGenerationLock.Release;
+  for Group in fGroups do begin
+   Group.ExecuteGPUUpdate(aInFlightFrameIndex);
   end;
- end;
 
- if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
+  if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
+   fImageDescriptorGenerationLock.Acquire;
+   try
+    if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
+     fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]:=fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex];
+     fGlobalVulkanDescriptorSets[aInFlightFrameIndex].WriteToDescriptorSet(4,
+                                                                           0,
+                                                                           length(fInFlightFrameImageInfos[aInFlightFrameIndex]),
+                                                                           TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                           fInFlightFrameImageInfos[aInFlightFrameIndex][0],
+                                                                           [],
+                                                                           [],
+                                                                           true);
+    end;
+   finally
+    fImageDescriptorGenerationLock.Release;
+   end;
+  end;
 
-  fMaterialDataGenerationLock.Acquire;
-  try
+  if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
 
-   if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
+   fMaterialDataGenerationLock.Acquire;
+   try
 
-    fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]:=fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex];
+    if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
 
-    if fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]<fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex] then begin
+     fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]:=fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex];
 
-     case fBufferStreamingMode of
+     if fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]<fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex] then begin
 
-      TBufferStreamingMode.Direct:begin
+      case fBufferStreamingMode of
 
-       fVulkanMaterialDataBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
-                                                                  fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
-                                                                  fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
+       TBufferStreamingMode.Direct:begin
 
-      end;
+        fVulkanMaterialDataBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+                                                                   fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
+                                                                   fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
 
-      TBufferStreamingMode.Staging:begin
+       end;
 
-       fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
-                                                                         fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
-                                                                         fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
+       TBufferStreamingMode.Staging:begin
 
-       fVulkanMaterialDataBuffers[aInFlightFrameIndex].CopyFrom(fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
-                                                                fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex],
-                                                                0,
-                                                                0,
-                                                                fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]);
+        fVulkanDevice.MemoryStaging.Upload(fVulkanStagingQueue,
+                                           fVulkanStagingCommandBuffer,
+                                           fVulkanStagingFence,
+                                           fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+                                           fVulkanMaterialDataBuffers[aInFlightFrameIndex],
+                                           fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
+                                           fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
 
-      end;
+ {      fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+                                                                          fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
+                                                                          fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
 
-      else begin
-       Assert(false);
+        fVulkanMaterialDataBuffers[aInFlightFrameIndex].CopyFrom(fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
+                                                                 fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex],
+                                                                 0,
+                                                                 0,
+                                                                 fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]);}
+
+       end;
+
+       else begin
+        Assert(false);
+       end;
+
       end;
 
      end;
 
     end;
 
+   finally
+    fMaterialDataGenerationLock.Release;
    end;
 
-  finally
-   fMaterialDataGenerationLock.Release;
   end;
 
- end;
+  LightBuffers[aInFlightFrameIndex].ExecuteGPUUpdate;
 
- LightBuffers[aInFlightFrameIndex].ExecuteGPUUpdate;
+ end;
 
 end;
 
@@ -15150,11 +15701,11 @@ end;
 
 function TpvScene3DCompareIndirectLights(const a,b:pointer):TpvInt32;
 begin
- result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TType.PrimaryDirectional) and 1)-
-              (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TType.PrimaryDirectional) and 1));
+ result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TLightType.PrimaryDirectional) and 1)-
+              (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TLightType.PrimaryDirectional) and 1));
  if result=0 then begin
-  result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1)-
-               (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1));
+  result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TLightType.Directional) and 1)-
+               (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TLightType.Directional) and 1));
   if result=0 then begin
    result:=Sign(TpvScene3D.TLight(b).fViewSpacePosition.z-TpvScene3D.TLight(a).fViewSpacePosition.z);
    if result=0 then begin
@@ -15438,7 +15989,14 @@ begin
                                                                     );
     end;
     TBufferStreamingMode.Staging:begin
-     fGlobalVulkanViewUniformStagingBuffers[aInFlightFrameIndex].UpdateData(fGlobalVulkanViews[aInFlightFrameIndex].Items[0],
+     fVulkanDevice.MemoryStaging.Upload(fVulkanStagingQueue,
+                                        fVulkanStagingCommandBuffer,
+                                        fVulkanStagingFence,
+                                        fGlobalVulkanViews[aInFlightFrameIndex].Items[0],
+                                        fGlobalVulkanViewUniformBuffers[aInFlightFrameIndex],
+                                        0,
+                                        (fViews.Count+fPreviousViews.Count)*SizeOf(TpvScene3D.TView));
+{    fGlobalVulkanViewUniformStagingBuffers[aInFlightFrameIndex].UpdateData(fGlobalVulkanViews[aInFlightFrameIndex].Items[0],
                                                                             0,
                                                                             (fViews.Count+fPreviousViews.Count)*SizeOf(TpvScene3D.TView),
                                                                             FlushUpdateData
@@ -15447,7 +16005,7 @@ begin
                                                                    fGlobalVulkanViewUniformStagingBuffers[aInFlightFrameIndex],
                                                                    0,
                                                                    0,
-                                                                   (fViews.Count+fPreviousViews.Count)*SizeOf(TpvScene3D.TView));
+                                                                   (fViews.Count+fPreviousViews.Count)*SizeOf(TpvScene3D.TView));}
     end;
     else begin
      Assert(false);
@@ -15630,6 +16188,98 @@ begin
  end;
 end;
 
+procedure TpvScene3D.UpdateDebugPrimitives(const aInFlightFrameIndex:TpvSizeInt);
+begin
+ if fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count>0 then begin
+  fVulkanDevice.MemoryStaging.Upload(fVulkanStagingQueue,
+                                     fVulkanStagingCommandBuffer,
+                                     fVulkanStagingFence,
+                                     fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].ItemArray[0],
+                                     fVulkanDebugPrimitiveVertexBuffers[aInFlightFrameIndex],
+                                     0,
+                                     SizeOf(TpvScene3D.TDebugPrimitiveVertex)*Min(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,TpvScene3D.MaxDebugPrimitiveVertices));
+ end;
+end;
+
+procedure TpvScene3D.DrawDebugPrimitives(const aGraphicsPipeline:TpvVulkanGraphicsPipeline;
+                                         const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                         const aInFlightFrameIndex:TpvSizeInt;
+                                         const aRenderPassIndex:TpvSizeInt;
+                                         const aViewBaseIndex:TpvSizeInt;
+                                         const aCountViews:TpvSizeInt;
+                                         const aFrameIndex:TpvSizeInt;
+                                         const aCommandBuffer:TpvVulkanCommandBuffer;
+                                         const aPipelineLayout:TpvVulkanPipelineLayout;
+                                         const aOnSetRenderPassResources:TOnSetRenderPassResources);
+const Offsets:TVkDeviceSize=0;
+//var VertexStagePushConstants:TpvScene3D.PVertexStagePushConstants;
+begin
+ if (aViewBaseIndex>=0) and (aCountViews>0) and (fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count>0) then begin
+
+{ VertexStagePushConstants:=@fVertexStagePushConstants[aRenderPassIndex];
+  VertexStagePushConstants^.ViewBaseIndex:=aViewBaseIndex;
+  VertexStagePushConstants^.CountViews:=aCountViews;
+  VertexStagePushConstants^.CountAllViews:=fViews.Count;
+  VertexStagePushConstants^.FrameIndex:=aFrameIndex;
+  VertexStagePushConstants^.Jitter:=TpvVector4.Null;
+
+  fSetGlobalResourcesDone[aRenderPassIndex]:=false;}
+  SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
+
+  aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,aGraphicsPipeline.Handle);
+  aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanDebugPrimitiveVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
+  aCommandBuffer.CmdDraw(Min(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,TpvScene3D.MaxDebugPrimitiveVertices),1,0,0);
+
+ end;
+end;
+
+procedure TpvScene3D.UpdateParticles(const aInFlightFrameIndex:TpvSizeInt);
+begin
+ if fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count>0 then begin
+  fVulkanDevice.MemoryStaging.Upload(fVulkanStagingQueue,
+                                     fVulkanStagingCommandBuffer,
+                                     fVulkanStagingFence,
+                                     fInFlightFrameParticleVertices[aInFlightFrameIndex][0],
+                                     fVulkanParticleVertexBuffers[aInFlightFrameIndex],
+                                     0,
+                                     SizeOf(TpvScene3D.TParticleVertex)*Min(fCountInFlightFrameParticleVertices[aInFlightFrameIndex],TpvScene3D.MaxParticleVertices));
+ end;
+end;
+
+procedure TpvScene3D.DrawParticles(const aGraphicsPipeline:TpvVulkanGraphicsPipeline;
+                                   const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                   const aInFlightFrameIndex:TpvSizeInt;
+                                   const aRenderPassIndex:TpvSizeInt;
+                                   const aViewBaseIndex:TpvSizeInt;
+                                   const aCountViews:TpvSizeInt;
+                                   const aFrameIndex:TpvSizeInt;
+                                   const aCommandBuffer:TpvVulkanCommandBuffer;
+                                   const aPipelineLayout:TpvVulkanPipelineLayout;
+                                   const aOnSetRenderPassResources:TOnSetRenderPassResources);
+const Offsets:TVkDeviceSize=0;
+//var VertexStagePushConstants:TpvScene3D.PVertexStagePushConstants;
+begin
+
+ if (aViewBaseIndex>=0) and (aCountViews>0) and (fCountInFlightFrameParticleVertices[aInFlightFrameIndex]>0) then begin
+
+{ VertexStagePushConstants:=@fVertexStagePushConstants[aRenderPassIndex];
+  VertexStagePushConstants^.ViewBaseIndex:=aViewBaseIndex;
+  VertexStagePushConstants^.CountViews:=aCountViews;
+  VertexStagePushConstants^.CountAllViews:=fViews.Count;
+  VertexStagePushConstants^.FrameIndex:=aFrameIndex;
+  VertexStagePushConstants^.Jitter:=TpvVector4.Null;
+
+  fSetGlobalResourcesDone[aRenderPassIndex]:=false;}
+  SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
+
+  aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,aGraphicsPipeline.Handle);
+  aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanParticleVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
+  aCommandBuffer.CmdDraw(Min(fCountInFlightFrameParticleVertices[aInFlightFrameIndex],TpvScene3D.MaxParticleVertices),1,0,0);
+
+ end;
+
+end;
+
 procedure TpvScene3D.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                           const aPreviousInFlightFrameIndex:TpvSizeInt;
                           const aInFlightFrameIndex:TpvSizeInt;
@@ -15754,6 +16404,297 @@ begin
  end;
 end;
 
+procedure TpvScene3D.InitializeDebugPrimitiveGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline);
+begin
+ aPipeline.VertexInputState.AddVertexInputBindingDescription(0,SizeOf(TpvScene3D.TDebugPrimitiveVertex),VK_VERTEX_INPUT_RATE_VERTEX);
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(0,0,VK_FORMAT_R32G32B32_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PDebugPrimitiveVertex(nil)^.Position)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(1,0,VK_FORMAT_R16G16B16A16_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PDebugPrimitiveVertex(nil)^.Color)));
+end;
+
+procedure TpvScene3D.InitializeParticleGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline);
+begin
+ aPipeline.VertexInputState.AddVertexInputBindingDescription(0,SizeOf(TpvScene3D.TParticleVertex),VK_VERTEX_INPUT_RATE_VERTEX);
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(0,0,VK_FORMAT_R32G32B32_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.Position)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(1,0,VK_FORMAT_R32_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.Rotation)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(2,0,VK_FORMAT_R16G16_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.QuadCoord)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(3,0,VK_FORMAT_R32_UINT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.TextureID)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(4,0,VK_FORMAT_R32G32_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.Size)));
+ aPipeline.VertexInputState.AddVertexInputAttributeDescription(5,0,VK_FORMAT_R16G16B16A16_SFLOAT,TVkPtrUInt(pointer(@TpvScene3D.PParticleVertex(nil)^.Color)));
+end;
+
+procedure InitializeAnimationChannelTargetOverwriteGroupMap;
+var Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
+    Index:TpvUInt64;
+begin
+ for Target:=Low(TpvScene3D.TGroup.TAnimation.TChannel.TTarget) to High(TpvScene3D.TGroup.TAnimation.TChannel.TTarget) do begin
+
+  case Target of
+
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
+    Index:=1;
+   end;
+
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightIntensity,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
+    Index:=2;
+   end;
+
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
+    Index:=3;
+   end;
+
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+    Index:=4;
+   end;
+
+   else begin
+    Index:=0;
+   end;
+
+  end;
+
+  AnimationChannelTargetOverwriteGroupMap[Target]:=Index;
+
+ end;
+
+end;
+
+procedure TpvScene3D.StoreParticleStates;
+var ParticleAliveBitmapIndex,ParticleAliveBitmapValue,
+    ParticleBaseIndex,ParticleBitIndex,ParticleIndex:TpvUInt32;
+    Particle:PParticle;
+begin
+ for ParticleAliveBitmapIndex:=0 to length(fParticleAliveBitmap)-1 do begin
+  ParticleAliveBitmapValue:=fParticleAliveBitmap[ParticleAliveBitmapIndex];
+  if ParticleAliveBitmapValue<>0 then begin
+   ParticleBaseIndex:=ParticleAliveBitmapIndex shl 5;
+   repeat
+    ParticleBitIndex:=TPasMPMath.BitScanForward32(ParticleAliveBitmapValue);
+    ParticleIndex:=ParticleBaseIndex+ParticleBitIndex;
+    Particle:=@fParticles[ParticleIndex];
+    Particle^.LastGeneration:=Particle^.Generation;
+    Particle^.LastPosition:=Particle^.Position;
+    Particle^.LastTime:=Particle^.Age/Particle^.LifeTime;
+    ParticleAliveBitmapValue:=ParticleAliveBitmapValue and (ParticleAliveBitmapValue-1);
+   until ParticleAliveBitmapValue=0;
+  end;
+ end;
+end;
+
+procedure TpvScene3D.UpdateParticleStates(const aDeltaTime:TpvDouble);
+var ParticleAliveBitmapIndex,ParticleAliveBitmapValue,
+    ParticleBaseIndex,ParticleBitIndex,ParticleIndex:TpvUInt32;
+    Particle:PParticle;
+begin
+ for ParticleAliveBitmapIndex:=0 to length(fParticleAliveBitmap)-1 do begin
+  ParticleAliveBitmapValue:=fParticleAliveBitmap[ParticleAliveBitmapIndex];
+  if ParticleAliveBitmapValue<>0 then begin
+   ParticleBaseIndex:=ParticleAliveBitmapIndex shl 5;
+   repeat
+    ParticleBitIndex:=TPasMPMath.BitScanForward32(ParticleAliveBitmapValue);
+    ParticleIndex:=ParticleBaseIndex+ParticleBitIndex;
+    Particle:=@fParticles[ParticleIndex];
+    if (Particle^.Age>=Particle^.LifeTime) or IsZero(Particle^.LifeTime) then begin
+     fParticleAliveBitmap[ParticleAliveBitmapIndex]:=fParticleAliveBitmap[ParticleAliveBitmapIndex] and not (TpvUInt32(1) shl ParticleBitIndex);
+    end else begin
+     Particle^.Position:=Particle^.Position+(Particle^.Velocity*aDeltaTime);
+     Particle^.Velocity:=Particle^.Velocity+(Particle^.Gravity*aDeltaTime);
+     Particle^.Time:=Particle^.Age/Particle^.LifeTime;
+     Particle^.Age:=Particle^.Age+aDeltaTime;
+    end;
+    ParticleAliveBitmapValue:=ParticleAliveBitmapValue and (ParticleAliveBitmapValue-1);
+   until ParticleAliveBitmapValue=0;
+  end;
+ end;
+end;
+
+procedure TpvScene3D.InterpolateParticleStates(const aInFlightFrameIndex:TpvSizeInt;const aAlpha:TpvDouble);
+var ParticleAliveBitmapIndex,ParticleAliveBitmapValue,
+    ParticleBaseIndex,ParticleBitIndex,ParticleIndex,
+    CountVertices,TextureID:TpvUInt32;
+    Particle:PParticle;
+    Time,Rotation:TpvFloat;
+    Position:TpvVector3;
+    Size:TpvVector2;
+    HalfFloatColor:TpvHalfFloatVector4;
+    ParticleVertices:TpvScene3D.PParticleVertices;
+    ParticleVertex:PParticleVertex;
+begin
+
+ CountVertices:=0;
+
+ ParticleVertices:=@fInFlightFrameParticleVertices[aInFlightFrameIndex];
+
+ for ParticleAliveBitmapIndex:=0 to length(fParticleAliveBitmap)-1 do begin
+
+  ParticleAliveBitmapValue:=fParticleAliveBitmap[ParticleAliveBitmapIndex];
+
+  if ParticleAliveBitmapValue<>0 then begin
+
+   ParticleBaseIndex:=ParticleAliveBitmapIndex shl 5;
+
+   repeat
+
+    ParticleBitIndex:=TPasMPMath.BitScanForward32(ParticleAliveBitmapValue);
+
+    ParticleIndex:=ParticleBaseIndex+ParticleBitIndex;
+
+    Particle:=@fParticles[ParticleIndex];
+
+    if Particle^.LastGeneration=Particle^.Generation then begin
+     // Same generation, so interpolate for an already existing particle
+     Position:=Particle^.LastPosition.Lerp(Particle^.Position,aAlpha);
+     Time:=FloatLerp(Particle^.LastTime,Particle^.Time,aAlpha);
+    end else begin
+     // Different generation, so it is a fresh new particle => consider it as a particle without previous state
+     Position:=Particle^.Position;
+     Time:=0.0;
+    end;
+
+    Rotation:=FloatLerp(Particle^.RotationStart,Particle^.RotationEnd,Time);
+
+    Size:=Particle^.SizeStart.Lerp(Particle^.SizeEnd,Time);
+
+    HalfFloatColor.x:=FloatLerp(Particle^.ColorStart.x,Particle^.ColorEnd.x,Time);
+    HalfFloatColor.y:=FloatLerp(Particle^.ColorStart.y,Particle^.ColorEnd.y,Time);
+    HalfFloatColor.z:=FloatLerp(Particle^.ColorStart.z,Particle^.ColorEnd.z,Time);
+    HalfFloatColor.w:=FloatLerp(Particle^.ColorStart.w,Particle^.ColorEnd.w,Time);
+
+    TextureID:=Particle^.TextureID;
+
+    // Each particle has an oversized triangle that contains the actual particle quad.
+    // This might increase overdraw, but it reduces the number of vertices used.
+
+    ParticleVertex:=@ParticleVertices^[CountVertices+0];
+    ParticleVertex^.Position:=Position;
+    ParticleVertex^.Rotation:=Rotation;
+    ParticleVertex^.QuadCoord.x:=0.0;
+    ParticleVertex^.QuadCoord.y:=0.0;
+    ParticleVertex^.TextureID:=TextureID;
+    ParticleVertex^.Size:=Size;
+    ParticleVertex^.Color:=HalfFloatColor;
+
+    ParticleVertex:=@ParticleVertices^[CountVertices+1];
+    ParticleVertex^.Position:=Position;
+    ParticleVertex^.Rotation:=Rotation;
+    ParticleVertex^.QuadCoord.x:=2.0;
+    ParticleVertex^.QuadCoord.y:=0.0;
+    ParticleVertex^.TextureID:=TextureID;
+    ParticleVertex^.Size:=Size;
+    ParticleVertex^.Color:=HalfFloatColor;
+
+    ParticleVertex:=@ParticleVertices^[CountVertices+2];
+    ParticleVertex^.Position:=Position;
+    ParticleVertex^.Rotation:=Rotation;
+    ParticleVertex^.QuadCoord.x:=0.0;
+    ParticleVertex^.QuadCoord.y:=2.0;
+    ParticleVertex^.TextureID:=TextureID;
+    ParticleVertex^.Size:=Size;
+    ParticleVertex^.Color:=HalfFloatColor;
+
+    inc(CountVertices,3);
+
+    ParticleAliveBitmapValue:=ParticleAliveBitmapValue and (ParticleAliveBitmapValue-1);
+
+   until ParticleAliveBitmapValue=0;
+
+  end;
+
+ end;
+
+ fCountInFlightFrameParticleVertices[aInFlightFrameIndex]:=CountVertices;
+
+end;
+
+procedure TpvScene3D.DeleteAllParticles;
+begin
+ FillChar(fParticleAliveBitmap,SizeOf(TParticleAliveBitmap),#0); // really so simple as that 
+end;
+
+function TpvScene3D.AddParticle(const aPosition:TpvVector3;
+                                const aVelocity:TpvVector3;
+                                const aGravity:TpvVector3;
+                                const aRotationStart:TpvFloat;
+                                const aRotationEnd:TpvFloat;
+                                const aSizeStart:TpvVector2;
+                                const aSizeEnd:TpvVector2;
+                                const aColorStart:TpvVector4;
+                                const aColorEnd:TpvVector4;
+                                const aLifeTime:TpvScalar;
+                                const aTextureID:TpvUInt32;
+                                const aAdditiveBlending:boolean):TpvSizeInt;
+var Particle:PParticle;
+begin
+ // No free list, because of simple wraparound-based ring buffer style allocation, so we don't also check for the agest particle as performance optimization
+ result:=fParticleIndexCounter and ParticleIndexMask;
+ fParticleIndexCounter:=(fParticleIndexCounter+1) and ParticleIndexMask;
+ fParticleAliveBitmap[result shr 5]:=fParticleAliveBitmap[result shr 5] or (TpvUInt32(1) shl (result and 31));
+ Particle:=@fParticles[result];
+ Particle^.Generation:=Particle^.Generation+1;
+ Particle^.Position:=aPosition;
+ Particle^.Velocity:=aVelocity;
+ Particle^.Gravity:=aGravity;
+ Particle^.RotationStart:=aRotationStart;
+ Particle^.RotationEnd:=aRotationEnd;
+ Particle^.SizeStart:=aSizeStart;
+ Particle^.SizeEnd:=aSizeEnd;
+ Particle^.ColorStart:=aColorStart;
+ Particle^.ColorEnd:=aColorEnd;
+ Particle^.LastTime:=0.0;
+ Particle^.Time:=0.0;
+ Particle^.Age:=0.0;
+ Particle^.LifeTime:=aLifeTime;
+ if aAdditiveBlending then begin
+  Particle^.TextureID:=aTextureID or TpvUInt32($80000000);
+ end else begin
+  Particle^.TextureID:=aTextureID;
+ end;
+end;
+
 initialization
+ InitializeAnimationChannelTargetOverwriteGroupMap;
 end.
+
 

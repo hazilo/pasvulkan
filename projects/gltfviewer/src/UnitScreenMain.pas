@@ -53,7 +53,7 @@ type { TScreenMain }
             TInFlightFrameState=record
              Ready:TPasMPBool32;
              UseView:TPasMPBool32;
-             CameraMatrix:TpvMatrix4x4;
+             CameraViewMatrix:TpvMatrix4x4;
              View:TpvScene3D.TView;
             end;
             PInFlightFrameState=^TInFlightFrameState;
@@ -178,7 +178,7 @@ begin
 
  fUpdateLock:=TPasMPCriticalSection.Create;
 
- fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice),fCountInFlightFrames);
+ fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice),fCountInFlightFrames);
 
  fPrimaryDirectionalLight:=TpvScene3D.TLight.Create(fScene3D);
  fPrimaryDirectionalLight.Type_:=TpvScene3D.TLightData.TType.PrimaryDirectional;
@@ -400,7 +400,7 @@ begin
   end else begin
    FrameTime:=0.0;
   end;
-  Str(FrameTime:1:5,fFrameTimeString);
+  Str(FrameTime*1000.0:1:5,fFrameTimeString);
  end;
 
  if abs(fOldFPS-FPS)>=100 then begin
@@ -491,7 +491,7 @@ begin
                                nil,
                                nil,
                                -(fRendererInstance.Width/fRendererInstance.Height)) then begin
-    InFlightFrameState^.CameraMatrix:=CameraMatrix;
+    InFlightFrameState^.CameraViewMatrix:=CameraMatrix.SimpleInverse;
     if not assigned(UnitApplication.Application.VirtualReality) then begin
      View.ViewMatrix:=ViewMatrix;
      View.ProjectionMatrix:=ProjectionMatrix;
@@ -501,10 +501,10 @@ begin
      InFlightFrameState^.View:=View;
     end;
    end else begin
-    InFlightFrameState^.CameraMatrix:=fCameraMatrix;
+    InFlightFrameState^.CameraViewMatrix:=fCameraMatrix.SimpleInverse;
    end;
   end else begin
-   InFlightFrameState^.CameraMatrix:=fCameraMatrix;
+   InFlightFrameState^.CameraViewMatrix:=fCameraMatrix.SimpleInverse;
   end;
 
   fTime:=fTime+pvApplication.DeltaTime;
@@ -547,7 +547,7 @@ begin
 
  fRendererInstance.Reset;
 
- fRendererInstance.CameraMatrix:=InFlightFrameState^.CameraMatrix;
+ fRendererInstance.CameraViewMatrix:=InFlightFrameState^.CameraViewMatrix;
 
  if InFlightFrameState^.UseView then begin
   fRendererInstance.AddView(InFlightFrameState^.View);
@@ -590,7 +590,7 @@ begin
      end;
      for Result_ in fRendererInstance.FrameGraph.LastTimerQueryResults do begin
       if Result_.Valid then begin
-       writeln(Result_.Name:MaxLen,': ',Result_.Duration:1:5,' ms');
+       writeln(Result_.Name:MaxLen,': ',Result_.Duration*1000.0:1:5,' ms');
       end;
      end;
     end;
@@ -609,6 +609,8 @@ begin
    end;
    KEYCODE_L:begin
     pvApplication.CatchMouse:=not pvApplication.CatchMouse;
+    pvApplication.VisibleMouseCursor:=not pvApplication.CatchMouse;
+    pvApplication.RelativeMouse:=pvApplication.CatchMouse;
    end;
    KEYCODE_V,KEYCODE_B:begin
     if assigned(fGroupInstance) then begin

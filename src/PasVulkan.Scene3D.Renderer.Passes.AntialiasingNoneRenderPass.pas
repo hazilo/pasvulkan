@@ -148,6 +148,8 @@ begin
                                   [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                  );
 
+ fInstance.LastOutputResource:=fResourceSurface;
+
 end;
 
 destructor TpvScene3DRendererPassesAntialiasingNoneRenderPass.Destroy;
@@ -258,7 +260,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT),
-                                                                 [TVkDescriptorImageInfo.Create(VK_NULL_HANDLE,
+                                                                 [TVkDescriptorImageInfo.Create(VK_NULL_HANDLE,//fVulkanSampler.Handle,
                                                                                                 fResourceColor.VulkanImageViews[InFlightFrameIndex].Handle,
                                                                                                 fResourceColor.ResourceTransition.Layout)],// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
