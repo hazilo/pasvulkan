@@ -477,12 +477,15 @@ type PpvScalar=^TpvScalar;
        constructor Create(const aX:TpvScalar); overload;
        constructor Create(const aX,aY,aZ,aW:TpvScalar); overload;
        constructor Create(const aVector:TpvVector4); overload;
+       constructor CreateFromScaledAngleAxis(const aScaledAngleAxis:TpvVector3);
        constructor CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
        constructor CreateFromAngleAxis(const aAngle:TpvScalar;const aAxis:TpvVector3);
        constructor CreateFromEuler(const aPitch,aYaw,aRoll:TpvScalar); overload;
        constructor CreateFromEuler(const aAngles:TpvVector3); overload;
        constructor CreateFromNormalizedSphericalCoordinates(const aNormalizedSphericalCoordinates:TpvNormalizedSphericalCoordinates);
        constructor CreateFromToRotation(const aFromDirection,aToDirection:TpvVector3);
+       constructor CreateFromCols(const aC0,aC1,aC2:TpvVector3);
+       constructor CreateFromXY(const aX,aY:TpvVector3);
        class operator Implicit(const a:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Explicit(const a:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Equal(const a,b:TpvQuaternion):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -524,6 +527,7 @@ type PpvScalar=^TpvScalar;
        function ToRoll:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function ToAngularVelocity:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        procedure ToAngleAxis(out aAngle:TpvScalar;out aAxis:TpvVector3); {$ifdef CAN_INLINE}inline;{$endif}
+       function ToScaledAngleAxis:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Generator:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Flip:TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Perpendicular:TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -540,10 +544,16 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function ApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function Sqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function UnflippedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function UnflippedApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function AngleBetween(const aP:TpvQuaternion):TpvScalar;
+       function Between(const aP:TpvQuaternion):TpvQuaternion;
+       class procedure Hermite(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1:TpvQuaternion;const aV0,aV1:TpvVector3); static;
+       class procedure CatmullRom(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1,aR2,aR3:TpvQuaternion); static;
        function RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Integrate(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Spin(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1481,6 +1491,7 @@ function QuadraticPolynomialRoot(const a,b,c:TpvScalar):TpvScalar; {$ifdef CAN_I
 function CubicPolynomialRoot(const a,b,c,d:TpvScalar):TpvScalar;
 
 function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function DoubleLerp(const aV1,aV2,aTime:TpvDouble):TpvDouble; {$ifdef CAN_INLINE}inline;{$endif}
 
 function Cross(const a,b:TpvVector2):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
 function Cross(const a,b:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1602,6 +1613,7 @@ function GetOverlap(const MinA,MaxA,MinB,MaxB:TpvScalar):TpvScalar; {$ifdef CAN_
 function OldTriangleTriangleIntersection(const a0,a1,a2,b0,b1,b2:TpvVector3):boolean;
 function TriangleTriangleIntersection(const v0,v1,v2,u0,u1,u2:TpvVector3):boolean;
 
+function UnclampedClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
 function ClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
 function ClosestPointToAABB(const AABB:TpvAABB;const Point:TpvVector3;const ClosestPointOnAABB:PpvVector3=nil):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function ClosestPointToOBB(const OBB:TpvOBB;const Point:TpvVector3;out ClosestPoint:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
@@ -2050,7 +2062,18 @@ begin
  end;
 end;
 
-function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar;
+begin
+ if aTime<0.0 then begin
+  result:=aV1;
+ end else if aTime>1.0 then begin
+  result:=aV2;
+ end else begin
+  result:=(aV1*(1.0-aTime))+(aV2*aTime);
+ end;
+end;
+
+function DoubleLerp(const aV1,aV2,aTime:TpvDouble):TpvDouble;
 begin
  if aTime<0.0 then begin
   result:=aV1;
@@ -4544,6 +4567,26 @@ begin
  Vector:=aVector;
 end;
 
+constructor TpvQuaternion.CreateFromScaledAngleAxis(const aScaledAngleAxis:TpvVector3);
+var Angle,Sinus,Coefficent:TpvScalar;
+    t:TpvVector3;
+begin
+ t:=aScaledAngleAxis*0.5;
+ Angle:=sqrt(sqr(t.x)+sqr(t.y)+sqr(t.z));
+ Sinus:=sin(Angle);
+ w:=cos(Angle);
+ if System.Abs(Sinus)>1e-6 then begin
+  Coefficent:=Sinus/Angle;
+  x:=t.x*Coefficent;
+  y:=t.y*Coefficent;
+  z:=t.z*Coefficent;
+ end else begin
+  x:=t.x;
+  y:=t.y;
+  z:=t.z;
+ end;
+end;
+
 constructor TpvQuaternion.CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
 var Magnitude,Sinus,Cosinus,SinusGain:TpvScalar;
 begin
@@ -4589,10 +4632,10 @@ begin
  cy:=cos(aYaw*0.5);
  cr:=cos(aRoll*0.5);}
  Vector:=TpvVector4.Create((sp*cy*cr)+(cp*sy*sr),
-                              (cp*sy*cr)-(sp*cy*sr),
-                              (cp*cy*sr)-(sp*sy*cr),
-                              (cp*cy*cr)+(sp*sy*sr)
-                             ).Normalize;
+                           (cp*sy*cr)-(sp*cy*sr),
+                           (cp*cy*sr)-(sp*sy*cr),
+                           (cp*cy*cr)+(sp*sy*sr)
+                          ).Normalize;
 end;
 
 constructor TpvQuaternion.CreateFromEuler(const aAngles:TpvVector3);
@@ -4609,10 +4652,10 @@ begin
  cy:=cos(aAngles.Yaw*0.5);
  cr:=cos(aAngles.Roll*0.5);//}
  Vector:=TpvVector4.Create((sp*cy*cr)+(cp*sy*sr),
-                              (cp*sy*cr)-(sp*cy*sr),
-                              (cp*cy*sr)-(sp*sy*cr),
-                              (cp*cy*cr)+(sp*sy*sr)
-                             ).Normalize;
+                           (cp*sy*cr)-(sp*cy*sr),
+                           (cp*cy*sr)-(sp*sy*cr),
+                           (cp*cy*cr)+(sp*sy*sr)
+                          ).Normalize;
 end;
 
 constructor TpvQuaternion.CreateFromNormalizedSphericalCoordinates(const aNormalizedSphericalCoordinates:TpvNormalizedSphericalCoordinates);
@@ -4629,6 +4672,32 @@ begin
  Vector.w:=sqrt((sqr(aFromDirection.x)+sqr(aFromDirection.y)+sqr(aFromDirection.z))*
                 (sqr(aToDirection.x)+sqr(aToDirection.y)+sqr(aToDirection.z)))+
                 ((aFromDirection.x*aToDirection.x)+(aFromDirection.y*aToDirection.y)+(aFromDirection.z*aToDirection.z));
+end;
+
+constructor TpvQuaternion.CreateFromCols(const aC0,aC1,aC2:TpvVector3);
+begin
+ if aC2.z<0.0 then begin
+  if aC0.x>aC1.y then begin
+   self:=TpvQuaternion.Create(((1.0+aC0.x)-aC1.y)-aC2.z,aC0.y+aC1.x,aC2.x+aC0.Z,aC1.z-aC2.y).Normalize;
+  end else begin
+   self:=TpvQuaternion.Create(aC0.y+aC1.x,((1.0-aC0.x)+aC1.y)-aC2.z,aC1.z+aC2.y,aC2.x-aC0.z).Normalize;
+  end;
+ end else begin
+  if aC0.x<-aC1.y then begin
+   self:=TpvQuaternion.Create(aC2.x+aC0.z,aC1.z+aC2.y,((1.0-aC0.x)-aC1.y)+aC2.z,aC0.y-aC1.x).Normalize;
+  end else begin
+   self:=TpvQuaternion.Create(aC1.z-aC2.y,aC2.x-aC0.z,aC0.y-aC1.x,((1.0+aC0.x)+aC1.y)+aC2.z).Normalize;
+  end;
+ end;
+end;
+
+constructor TpvQuaternion.CreateFromXY(const aX,aY:TpvVector3);
+var c0,c1,c2:TpvVector3;
+begin
+ c2:=(aX.Cross(aY)).Normalize;
+ c1:=(c2.Cross(aX)).Normalize;
+ c0:=aX.Normalize;
+ self:=TpvQuaternion.CreateFromCols(c0,c1,c2);
 end;
 
 class operator TpvQuaternion.Implicit(const a:TpvScalar):TpvQuaternion;
@@ -5290,6 +5359,11 @@ begin
  aAxis.z:=Quaternion.z/SinAngle;
 end;
 
+function TpvQuaternion.ToScaledAngleAxis:TpvVector3;
+begin
+ result:=Log.Vector.xyz*2.0;
+end;
+
 function TpvQuaternion.Generator:TpvVector3;
 var s:TpvScalar;
 begin
@@ -5769,6 +5843,23 @@ begin
  result:=(s0*self)+(aToQuaternion*(s1*s2));
 end;
 
+function TpvQuaternion.ApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+var ca,d,a,b,k,o:TpvScalar;
+begin
+ // Idea from https://zeux.io/2015/07/23/approximating-slerp/
+ ca:=Dot(aToQuaternion);
+ d:=System.abs(ca);
+ a:=1.0904+(d*(-3.2452+(d*(3.55645-(d*1.43519)))));
+ b:=0.848013+(d*(-1.06021+(d*0.215638)));
+ k:=(a*sqr(aTime-0.5))+b;
+ o:=aTime+(((aTime*(aTime-0.5))*(aTime-1.0))*k);
+ if ca<0.0 then begin
+  result:=Nlerp(-aToQuaternion,o);
+ end else begin
+  result:=Nlerp(aToQuaternion,o);
+ end;
+end;
+
 function TpvQuaternion.Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
 var SignFactor:TpvScalar;
 begin
@@ -5807,9 +5898,63 @@ begin
  result:=(s0*self)+(aToQuaternion*s1);
 end;
 
+function TpvQuaternion.UnflippedApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+var d,a,b,k,o:TpvScalar;
+begin
+ // Idea from https://zeux.io/2015/07/23/approximating-slerp/
+ d:=System.abs(Dot(aToQuaternion));
+ a:=1.0904+(d*(-3.2452+(d*(3.55645-(d*1.43519)))));
+ b:=0.848013+(d*(-1.06021+(d*0.215638)));
+ k:=(a*sqr(aTime-0.5))+b;
+ o:=aTime+(((aTime*(aTime-0.5))*(aTime-1.0))*k);
+ result:=Nlerp(aToQuaternion,o);
+end;
+
 function TpvQuaternion.UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
 begin
  result:=UnflippedSlerp(aD,aTime).UnflippedSlerp(aB.UnflippedSlerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
+function TpvQuaternion.AngleBetween(const aP:TpvQuaternion):TpvScalar;
+var Difference:TpvQuaternion;
+begin
+ Difference:=(self*aP.Inverse).Abs;
+ result:=ArcCos(Clamp(Difference.w,-1.0,1.0))*2.0;
+end;
+
+function TpvQuaternion.Between(const aP:TpvQuaternion):TpvQuaternion;
+var c:TpvVector3;
+begin
+ c:=aP.Vector.xyz.Cross(self.Vector.xyz);
+ result:=TpvQuaternion.Create(c.x,c.y,c.z,sqrt(aP.Vector.xyz.SquaredLength*self.Vector.xyz.SquaredLength)+aP.Vector.xyz.Dot(self.Vector.xyz)).Normalize;
+end;
+
+class procedure TpvQuaternion.Hermite(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1:TpvQuaternion;const aV0,aV1:TpvVector3);
+var t2,t3,w1,w2,w3,q1,q2,q3:TpvScalar;
+    r1r0:TpvVector3;
+begin
+ t2:=sqr(aTime);
+ t3:=t2*aTime;
+ w1:=(3.0*t2)-(2.0*t3);
+ w2:=(t3-(2.0*t2))+aTime;
+ w3:=t3-t2;
+ q1:=(6.0*aTime)-(6.0*t2);
+ q2:=((3.0*t2)-(4.0*aTime))+1.0;
+ q3:=(3.0*t2)-(2.0*aTime);
+ r1r0:=((aR1*aR0.Inverse).Abs).ToScaledAngleAxis;
+ aRotation:=TpvQuaternion.CreateFromScaledAngleAxis((r1r0*w1)+(aV0*w2)+(aV1*w3))*aR0;
+ aVelocity:=(q1*r1r0)+(aV0*q2)+(aV1*q3);
+end;
+
+class procedure TpvQuaternion.CatmullRom(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1,aR2,aR3:TpvQuaternion); static;
+var r1r0,r2r1,r3r2,v1,v2:TpvVector3;
+begin
+ r1r0:=((aR1*aR0.Inverse).Abs).ToScaledAngleAxis;
+ r2r1:=((aR2*aR1.Inverse).Abs).ToScaledAngleAxis;
+ r3r2:=((aR3*aR2.Inverse).Abs).ToScaledAngleAxis;
+ v1:=(r1r0+r2r1)*0.5;
+ v2:=(r2r1+r3r2)*0.5;
+ TpvQuaternion.Hermite(aRotation,aVelocity,aTime,aR1,aR2,v1,v2);
 end;
 
 function TpvQuaternion.RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion;
@@ -16356,6 +16501,28 @@ begin
  SORT(isect2[0],isect2[1]);
 
  result:=not ((isect1[1]<isect2[0]) or (isect2[1]<isect1[0]));
+end;
+
+function UnclampedClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
+var LineSegmentPointsDifference,ClosestPoint:TpvVector3;
+    LineSegmentLengthSquared,PointOnLineSegmentTime:TpvScalar;
+begin
+ LineSegmentPointsDifference:=LineEndPoint-LineStartPoint;
+ LineSegmentLengthSquared:=LineSegmentPointsDifference.SquaredLength;
+ if LineSegmentLengthSquared<EPSILON then begin
+  PointOnLineSegmentTime:=0.0;
+  ClosestPoint:=LineStartPoint;
+ end else begin
+  PointOnLineSegmentTime:=(Point-LineStartPoint).Dot(LineSegmentPointsDifference)/LineSegmentLengthSquared;
+  ClosestPoint:=LineStartPoint+(LineSegmentPointsDifference*PointOnLineSegmentTime);
+ end;
+ if assigned(ClosestPointOnLine) then begin
+  ClosestPointOnLine^:=ClosestPoint;
+ end;
+ if assigned(Time) then begin
+  Time^:=PointOnLineSegmentTime;
+ end;
+ result:=Point.DistanceTo(ClosestPoint);
 end;
 
 function ClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;

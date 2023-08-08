@@ -635,7 +635,8 @@ type EpvScene3D=class(Exception);
                     (
                      WhiteTexture=0,
                      DefaultNormalMapTexture=1,
-                     ResourceTexture=2
+                     DefaultParticleTexture=2,
+                     ResourceTexture=3
                     );
                    THashData=packed record
                     MessageDigest:TpvHashXXHash64.TMessageDigest;
@@ -662,6 +663,7 @@ type EpvScene3D=class(Exception);
               function GetHashData:THashData;
               procedure AssignFromWhiteTexture;
               procedure AssignFromDefaultNormalMapTexture;
+              procedure AssignFromDefaultParticleTexture;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
             end;
             TImageClass=class of TImage;
@@ -724,6 +726,7 @@ type EpvScene3D=class(Exception);
               function GetHashData:THashData;
               procedure AssignFromWhiteTexture;
               procedure AssignFromDefaultNormalMapTexture;
+              procedure AssignFromDefaultParticleTexture;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceTexture:TPasGLTF.TTexture;const aImageMap:TImages;const aSamplerMap:TSamplers);
               function GetDescriptorImageInfo(const aSRGB:boolean):TVkDescriptorImageInfo;
              published
@@ -2191,6 +2194,8 @@ type EpvScene3D=class(Exception);
        fWhiteTexture:TTexture;
        fDefaultNormalMapImage:TImage;
        fDefaultNormalMapTexture:TTexture;
+       fDefaultParticleImage:TImage;
+       fDefaultParticleTexture:TTexture;
        fMeshComputeVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fVulkanStagingQueue:TpvVulkanQueue;
        fVulkanStagingCommandPool:TpvVulkanCommandPool;
@@ -2419,6 +2424,9 @@ type EpvScene3D=class(Exception);
        property LightBuffers:TpvScene3D.TLightBuffers read fLightBuffers;
        property DebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays read fDebugPrimitiveVertexDynamicArrays;
        property Particles:PParticles read fPointerToParticles;
+      public
+       property DefaultParticleImage:TImage read fDefaultParticleImage;
+       property DefaultParticleTexture:TTexture read fDefaultParticleTexture;
       published
        property PotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet read fPotentiallyVisibleSet;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
@@ -3678,6 +3686,8 @@ const WhiteTexturePixels:array[0..63] of TpvUInt32=(TpvUInt32($ffffffff),TpvUInt
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),
                                                               TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080),TpvUInt32($80808080));
+var TemporaryPixels:array of TpvUInt32;
+    x,y,w,h:TpvInt32;
 begin
  if (not fDataLoaded) and not fInLoadData then begin
   fInLoadData:=true;
@@ -3733,6 +3743,54 @@ begin
                                   0,
                                   true,
                                   false);
+         end;
+         TpvScene3D.TImage.TKind.DefaultParticleTexture:begin
+          w:=64;
+          h:=64;
+          TemporaryPixels:=nil;
+          SetLength(TemporaryPixels,w*h);
+          try
+           for y:=0 to h-1 do begin
+            for x:=0 to w-1 do begin
+             TemporaryPixels[(y*w)+x]:=$00ffffff or
+                            (TpvUInt32(
+                             Min(
+                              Max(
+                               round(
+                                SmoothStep(1.0,
+                                           0.25,
+                                           TpvVector2.InlineableCreate(
+                                            ((x/w)-0.5)*2.0,
+                                            ((y/h)-0.5)*2.0
+                                           ).Length)*255.0
+                                          ),
+                                0),
+                               255
+                              )) shl 24);
+            end;
+           end;
+           fTexture.LoadFromMemory(VK_FORMAT_R8G8B8A8_UNORM,
+                                   VK_SAMPLE_COUNT_1_BIT,
+                                   w,
+                                   h,
+                                   0,
+                                   0,
+                                   1,
+                                   0,
+                                   [TpvVulkanTextureUsageFlag.General,
+                                    TpvVulkanTextureUsageFlag.TransferDst,
+                                    TpvVulkanTextureUsageFlag.TransferSrc,
+                                    TpvVulkanTextureUsageFlag.Sampled],
+                                   @TemporaryPixels[0],
+                                   SizeOf(TpvUInt32)*length(TemporaryPixels),
+                                   false,
+                                   false,
+                                   0,
+                                   true,
+                                   false);
+          finally
+           TemporaryPixels:=nil;
+          end;
          end;
          else begin
           fTexture.LoadFromImage(fResourceDataStream,
@@ -3881,6 +3939,13 @@ procedure TpvScene3D.TImage.AssignFromDefaultNormalMapTexture;
 begin
  fName:=#0+'DefaultNormalMapTexture';
  fKind:=TpvScene3D.TImage.TKind.DefaultNormalMapTexture;
+ fResourceDataStream.Clear;
+end;
+
+procedure TpvScene3D.TImage.AssignFromDefaultParticleTexture;
+begin
+ fName:=#0+'DefaultParticleTexture';
+ fKind:=TpvScene3D.TImage.TKind.DefaultParticleTexture;
  fResourceDataStream.Clear;
 end;
 
@@ -4354,6 +4419,36 @@ begin
   fSceneInstance.fImageListLock.Acquire;
   try
    fImage:=fSceneInstance.fDefaultNormalMapImage;
+   fImage.IncRef;
+  finally
+   fSceneInstance.fImageListLock.Release;
+  end;
+
+  fSceneInstance.fSamplerListLock.Acquire;
+  try
+   fSampler:=fSceneInstance.fDefaultSampler;
+   fSampler.IncRef;
+  finally
+   fSceneInstance.fSamplerListLock.Release;
+  end;
+
+ finally
+  fSceneInstance.fTextureListLock.Release;
+ end;
+
+end;
+
+procedure TpvScene3D.TTexture.AssignFromDefaultParticleTexture;
+begin
+
+ fName:=#0+'DefaultParticleTexture';
+
+ fSceneInstance.fTextureListLock.Acquire;
+ try
+
+  fSceneInstance.fImageListLock.Acquire;
+  try
+   fImage:=fSceneInstance.fDefaultParticleImage;
    fImage.IncRef;
   finally
    fSceneInstance.fImageListLock.Release;
@@ -14184,6 +14279,15 @@ begin
  fDefaultNormalMapTexture.AssignFromDefaultNormalMapTexture;
  fDefaultNormalMapTexture.IncRef;
 
+ fDefaultParticleImage:=TpvScene3D.TImage.Create(ResourceManager,self);
+ fDefaultParticleImage.AssignFromDefaultParticleTexture;
+ fDefaultParticleImage.IncRef;
+ fDefaultParticleImage.LoadData;
+
+ fDefaultParticleTexture:=TpvScene3D.TTexture.Create(ResourceManager,self);
+ fDefaultParticleTexture.AssignFromDefaultParticleTexture;
+ fDefaultParticleTexture.IncRef;
+
  fEmptyMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,self);
  fEmptyMaterial.AssignFromEmpty;
  fEmptyMaterial.IncRef;
@@ -14425,6 +14529,8 @@ begin
 
  FreeAndNil(fDefaultNormalMapTexture);
 
+ FreeAndNil(fDefaultParticleTexture);
+
  while fTextures.Count>0 do begin
   fTextures[fTextures.Count-1].Free;
  end;
@@ -14448,6 +14554,8 @@ begin
  FreeAndNil(fWhiteImage);
 
  FreeAndNil(fDefaultNormalMapImage);
+
+ FreeAndNil(fDefaultParticleImage);
 
  while fImages.Count>0 do begin
   fImages[fImages.Count-1].Free;
@@ -14591,6 +14699,8 @@ begin
         fDefaultSampler.Upload;
 
         fWhiteTexture.Upload;
+
+        fDefaultParticleTexture.Upload;
 
         fVulkanStagingQueue:=fVulkanDevice.UniversalQueue;
 
@@ -16226,6 +16336,10 @@ begin
   fSetGlobalResourcesDone[aRenderPassIndex]:=false;}
   SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
 
+  if assigned(aOnSetRenderPassResources) then begin
+   aOnSetRenderPassResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+  end;
+
   aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,aGraphicsPipeline.Handle);
   aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanDebugPrimitiveVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
   aCommandBuffer.CmdDraw(Min(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,TpvScene3D.MaxDebugPrimitiveVertices),1,0,0);
@@ -16235,7 +16349,7 @@ end;
 
 procedure TpvScene3D.UpdateParticles(const aInFlightFrameIndex:TpvSizeInt);
 begin
- if fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count>0 then begin
+ if fCountInFlightFrameParticleVertices[aInFlightFrameIndex]>0 then begin
   fVulkanDevice.MemoryStaging.Upload(fVulkanStagingQueue,
                                      fVulkanStagingCommandBuffer,
                                      fVulkanStagingFence,
@@ -16271,6 +16385,10 @@ begin
 
   fSetGlobalResourcesDone[aRenderPassIndex]:=false;}
   SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aInFlightFrameIndex);
+
+  if assigned(aOnSetRenderPassResources) then begin
+   aOnSetRenderPassResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aPreviousInFlightFrameIndex,aInFlightFrameIndex);
+  end;
 
   aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,aGraphicsPipeline.Handle);
   aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanParticleVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
