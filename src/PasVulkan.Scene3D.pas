@@ -70,6 +70,7 @@ uses {$ifdef Windows}
      Math,
      Vulkan,
      Kraft,
+     PUCU,
      PasMP,
      PasJSON,
      PasGLTF,
@@ -87,7 +88,8 @@ uses {$ifdef Windows}
      PasVulkan.BVH.DynamicAABBTree,
      PasVulkan.BVH.Triangles,
      PasVulkan.PooledObject,
-     PasVulkan.Frustum;
+     PasVulkan.Frustum,
+     POCA;
 
 type EpvScene3D=class(Exception);
 
@@ -1227,6 +1229,7 @@ type EpvScene3D=class(Exception);
                    PNodeMeshPrimitiveShaderStorageBufferObject=^TNodeShaderStorageBufferObject;
                    TMaterialMap=array of TpvUInt32;
                    TMaterialIDMapArrayIndexHashMap=TpvHashMap<TID,TpvSizeInt>;
+                   TMaterialNameMapArrayIndexHashMap=TpvStringHashMap<TpvSizeInt>;
                    TMaterialIDMapArray=TpvGenericList<TpvSizeInt>;
                    TMaterialIDMapArrays=TpvObjectGenericList<TMaterialIDMapArray>;
                    TGroupObject=class
@@ -1243,7 +1246,8 @@ type EpvScene3D=class(Exception);
                    { TAnimation }
                    TAnimation=class(TGroupObject)
                     public
-                     type TChannel=record
+                     type { TChannel }
+                          TChannel=record
                            public
                             type TTarget=
                                   (
@@ -1353,6 +1357,8 @@ type EpvScene3D=class(Exception);
                             OutputVector2Array:TpvVector2Array;
                             OutputVector3Array:TpvVector3Array;
                             OutputVector4Array:TpvVector4Array;
+                            procedure SetTarget(const aTargetPath:TpvUTF8String;const aTargetNode:TpvSizeInt);
+                            procedure SetInterpolation(const aInterpolation:TpvUTF8String);
                           end;
                           PChannel=^TChannel;
                           TChannels=array of TChannel;
@@ -2039,6 +2045,8 @@ type EpvScene3D=class(Exception);
                    TMaterialsToDuplicate=TpvObjectGenericList<TpvScene3D.TMaterial>;
                    TNodeNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
                    TCameraNodeIndices=TpvGenericList<TpvSizeInt>;
+                   TCameraNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
+                   TMeshNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
              private
               fCulling:boolean;
               fObjects:TBaseObjects;
@@ -2046,11 +2054,14 @@ type EpvScene3D=class(Exception);
               fMaterials:TpvScene3D.TMaterials;
               fMaterialMap:TpvScene3D.TGroup.TMaterialMap;
               fMaterialIDMapArrayIndexHashMap:TpvScene3D.TGroup.TMaterialIDMapArrayIndexHashMap;
+              fMaterialNameMapArrayIndexHashMap:TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap;
               fMaterialIDMapArrays:TpvScene3D.TGroup.TMaterialIDMapArrays;
               fAnimations:TpvScene3D.TGroup.TAnimations;
               fCountInstanceAnimationChannels:TpvSizeInt;
               fCameras:TpvScene3D.TGroup.TCameras;
+              fCameraNameIndexHashMap:TCameraNameIndexHashMap;
               fMeshes:TpvScene3D.TGroup.TMeshes;
+              fMeshNameIndexHashMap:TMeshNameIndexHashMap;
               fSkins:TpvScene3D.TGroup.TSkins;
               fLights:TpvScene3D.TGroup.TLights;
               fNodes:TpvScene3D.TGroup.TNodes;
@@ -2121,6 +2132,7 @@ type EpvScene3D=class(Exception);
                              const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
               function GetNodeIndexByName(const aNodeName:TpvUTF8String):TpvSizeInt;
               function GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
+              function AssetGetURI(const aURI:TPasGLTFUTF8String):TStream;
              public
               constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
@@ -2542,6 +2554,458 @@ begin
   BestDot:=Dot;
  end;
 
+end;
+
+type { TPOCAScene3DGroupAnimationChannel }
+     TPOCAScene3DGroupAnimationChannel=class(TPOCANativeObject)
+      private
+       fAnimation:TpvScene3D.TGroup.TAnimation;
+       fChannelIndex:TpvSizeInt;
+       fElementSize:TpvSizeInt;
+       fCount:TpvSizeInt;
+      public
+       constructor Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean); override;
+       destructor Destroy; override;
+      published
+       function createKeyFrame(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function finish(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+     end;
+
+{ TPOCAScene3DGroupAnimation }
+
+constructor TPOCAScene3DGroupAnimationChannel.Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean);
+begin
+ inherited Create(aInstance,aContext,aPrototype,aConstructor,aExpandable);
+end;
+
+destructor TPOCAScene3DGroupAnimationChannel.Destroy;
+begin
+ inherited Destroy;
+end;
+
+function TPOCAScene3DGroupAnimationChannel.createKeyFrame(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+var Index,SubIndex:TpvSizeInt;
+    Time:TpvDouble;
+    ArrayValue,SubArrayValue:TPOCAValue;
+    Elements:array[0..2] of TpvVector4;
+    Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+    OK:boolean;
+begin
+ OK:=false;
+ if (aCountArguments>=1) and ((fElementSize>=0) and (fElementSize<=4)) then begin
+  Channel:=@fAnimation.fChannels[fChannelIndex];
+  FillChar(Elements,SizeOf(Elements),#0);
+  Time:=POCAGetNumberValue(aContext,aArguments^[0]);
+  if (aCountArguments>=2) and (POCAGetValueType(aArguments^[1])=pvtARRAY) then begin
+   ArrayValue:=aArguments^[1];
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    if POCAArraySize(ArrayValue)=3 then begin
+     OK:=true;
+     for Index:=0 to 2 do begin
+      SubArrayValue:=POCAArrayGet(ArrayValue,Index);
+      if (POCAGetValueType(SubArrayValue)=pvtARRAY) and (POCAArraySize(SubArrayValue)>0) then begin
+       for SubIndex:=0 to Min(Min(POCAArraySize(SubArrayValue),fElementSize),4)-1 do begin
+        Elements[Index].Components[SubIndex]:=POCAGetNumberValue(aContext,POCAArrayGet(SubArrayValue,SubIndex));
+       end;
+      end else begin
+       OK:=false;
+       break;
+      end;
+     end;
+    end;
+   end else begin
+    if POCAArraySize(ArrayValue)>0 then begin
+     for Index:=0 to Min(Min(POCAArraySize(ArrayValue),fElementSize),4)-1 do begin
+      Elements[0].Components[Index]:=POCAGetNumberValue(aContext,POCAArrayGet(ArrayValue,Index));
+     end;
+     OK:=true;
+    end;
+   end;
+  end else begin
+   if Channel^.Interpolation<>TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    for Index:=0 to Min(Min(aCountArguments-1,fElementSize),4)-1 do begin
+     Elements[0].Components[Index]:=POCAGetNumberValue(aContext,aArguments^[1+Index]);
+    end;
+    OK:=true;
+   end;
+  end;
+  if OK then begin
+   Index:=fCount;
+   inc(fCount);
+   if length(Channel^.InputTimeArray)<=fCount then begin
+    SetLength(Channel^.InputTimeArray,fCount*2);
+    if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+     case fElementSize of
+      2:begin
+       SetLength(Channel^.OutputVector2Array,fCount*6);
+      end;
+      3:begin
+       SetLength(Channel^.OutputVector3Array,fCount*6);
+      end;
+      4:begin
+       SetLength(Channel^.OutputVector4Array,fCount*6);
+      end;
+      else begin
+       SetLength(Channel^.OutputScalarArray,fCount*6);
+      end;
+     end;
+    end else begin
+     case fElementSize of
+      2:begin
+       SetLength(Channel^.OutputVector2Array,fCount*2);
+      end;
+      3:begin
+       SetLength(Channel^.OutputVector3Array,fCount*2);
+      end;
+      4:begin
+       SetLength(Channel^.OutputVector4Array,fCount*2);
+      end;
+      else begin
+       SetLength(Channel^.OutputScalarArray,fCount*2);
+      end;
+     end;
+    end;
+   end;
+   Channel^.InputTimeArray[Index]:=Time;
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    case fElementSize of
+     2:begin
+      Channel^.OutputVector2Array[(Index*3)+0]:=Elements[0].xy;
+      Channel^.OutputVector2Array[(Index*3)+1]:=Elements[1].xy;
+      Channel^.OutputVector2Array[(Index*3)+2]:=Elements[2].xy;
+     end;
+     3:begin
+      Channel^.OutputVector3Array[(Index*3)+0]:=Elements[0].xyz;
+      Channel^.OutputVector3Array[(Index*3)+1]:=Elements[1].xyz;
+      Channel^.OutputVector3Array[(Index*3)+2]:=Elements[2].xyz;
+     end;
+     4:begin
+      Channel^.OutputVector4Array[(Index*3)+0]:=Elements[0].xyzw;
+      Channel^.OutputVector4Array[(Index*3)+1]:=Elements[1].xyzw;
+      Channel^.OutputVector4Array[(Index*3)+2]:=Elements[2].xyzw;
+     end;
+     else begin
+      Channel^.OutputScalarArray[(Index*3)+0]:=Elements[0].x;
+      Channel^.OutputScalarArray[(Index*3)+1]:=Elements[1].x;
+      Channel^.OutputScalarArray[(Index*3)+2]:=Elements[2].x;
+     end;
+    end;
+   end else begin
+    case fElementSize of
+     2:begin
+      Channel^.OutputVector2Array[Index]:=Elements[0].xy;
+     end;
+     3:begin
+      Channel^.OutputVector3Array[Index]:=Elements[0].xyz;
+     end;
+     4:begin
+      Channel^.OutputVector4Array[Index]:=Elements[0].xyzw;
+     end;
+     else begin
+      Channel^.OutputScalarArray[Index]:=Elements[0].x;
+     end;
+    end;
+   end;
+  end;
+ end;
+ if OK then begin
+  result.Num:=1;
+ end else begin
+  result.Num:=0;
+ end;
+end;
+
+function TPOCAScene3DGroupAnimationChannel.finish(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+var Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+    Index:TpvSizeInt;
+begin
+ Channel:=@fAnimation.fChannels[fChannelIndex];
+ SetLength(Channel^.InputTimeArray,fCount);
+ case fElementSize of
+  2:begin
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel^.OutputVector2Array,fCount*3);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+0],Channel^.OutputVector2Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+1],Channel^.OutputVector2Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+2],Channel^.OutputVector2Array[((Index+1)*3)+2]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end else begin
+    SetLength(Channel^.OutputVector2Array,fCount);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[Index],Channel^.OutputVector2Array[Index+1]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end;
+  end;
+  3:begin
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel^.OutputVector3Array,fCount*3);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+0],Channel^.OutputVector3Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+1],Channel^.OutputVector3Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+2],Channel^.OutputVector3Array[((Index+1)*3)+2]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end else begin
+    SetLength(Channel^.OutputVector3Array,fCount);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[Index],Channel^.OutputVector3Array[Index+1]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end;
+  end;
+  4:begin
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel^.OutputVector4Array,fCount*3);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+0],Channel^.OutputVector4Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+1],Channel^.OutputVector4Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+2],Channel^.OutputVector4Array[((Index+1)*3)+2]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end else begin
+    SetLength(Channel^.OutputVector4Array,fCount);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[Index],Channel^.OutputVector4Array[Index+1]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end;
+  end;
+  else begin
+   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel^.OutputScalarArray,fCount*3);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+0],Channel^.OutputScalarArray[((Index+1)*3)+0]);
+      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+1],Channel^.OutputScalarArray[((Index+1)*3)+1]);
+      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+2],Channel^.OutputScalarArray[((Index+1)*3)+2]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end else begin
+    SetLength(Channel^.OutputScalarArray,fCount);
+    Index:=0;
+    while Index<(fCount-1) do begin
+     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
+      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[Index],Channel^.OutputScalarArray[Index+1]);
+      if Index>0 then begin
+       dec(Index);
+      end else begin
+       inc(Index);
+      end;
+     end else begin
+      inc(Index);
+     end;
+    end;
+   end;
+  end;
+ end;
+ result:=POCAValueNull;
+end;
+
+type { TPOCAScene3DGroupAnimation }
+     TPOCAScene3DGroupAnimation=class(TPOCANativeObject)
+      private
+       fAnimation:TpvScene3D.TGroup.TAnimation;
+      public
+       constructor Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean); override;
+       destructor Destroy; override;
+      published
+       function createChannel(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+     end;
+
+{ TPOCAScene3DGroupAnimation }
+
+constructor TPOCAScene3DGroupAnimation.Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean);
+begin
+ inherited Create(aInstance,aContext,aPrototype,aConstructor,aExpandable);
+end;
+
+destructor TPOCAScene3DGroupAnimation.Destroy;
+begin
+ inherited Destroy;
+end;
+
+function TPOCAScene3DGroupAnimation.createChannel(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+var Index,ElementSize:TpvSizeInt;
+    Path:TpvUTF8String;
+    Interpolation:TpvUTF8String;
+    Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+    POCAScene3DGroupAnimationChannel:TPOCAScene3DGroupAnimationChannel;
+begin
+ if aCountArguments=3 then begin
+  Path:=POCAGetStringValue(aContext,aArguments^[0]);
+  Interpolation:=POCAGetStringValue(aContext,aArguments^[1]);
+  ElementSize:=trunc(POCAGetNumberValue(aContext,aArguments^[2]));
+  if ElementSize>0 then begin
+   Index:=length(fAnimation.fChannels);
+   SetLength(fAnimation.fChannels,Index+1);
+   Channel:=@fAnimation.fChannels[Index];
+   Channel^.SetTarget('pointer/'+Path,-1);
+   Channel^.SetInterpolation(Interpolation);
+   POCAScene3DGroupAnimationChannel:=TPOCAScene3DGroupAnimationChannel.Create(aContext^.Instance,aContext,nil,nil,false);
+   POCAScene3DGroupAnimationChannel.fAnimation:=fAnimation;
+   POCAScene3DGroupAnimationChannel.fChannelIndex:=Index;
+   POCAScene3DGroupAnimationChannel.fElementSize:=ElementSize;
+   POCAScene3DGroupAnimationChannel.fCount:=0;
+   result:=POCANewNativeObject(aContext,POCAScene3DGroupAnimationChannel);
+  end else begin
+   result:=POCAValueNull;
+  end;
+ end else begin
+  result:=POCAValueNull;
+ end;
+end;
+
+type { TPOCAScene3DGroup }
+     TPOCAScene3DGroup=class(TPOCANativeObject)
+      private
+       fGroup:TpvScene3D.TGroup;
+      public
+       constructor Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean); override;
+       destructor Destroy; override;
+      published
+       function getMaterialID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getCameraID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getMeshID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getNodeID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function createAnimation(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+     end;
+
+{ TPOCAScene3DGroup }
+
+constructor TPOCAScene3DGroup.Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean);
+begin
+ inherited Create(aInstance,aContext,aPrototype,aConstructor,aExpandable);
+end;
+
+destructor TPOCAScene3DGroup.Destroy;
+begin
+ inherited Destroy;
+end;
+
+function TPOCAScene3DGroup.getMaterialID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  result.Num:=fGroup.fMaterialNameMapArrayIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getCameraID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  result.Num:=fGroup.fCameraNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getMeshID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  result.Num:=fGroup.fMeshNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getNodeID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  result.Num:=fGroup.fNodeNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.createAnimation(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+var Animation:TpvScene3D.TGroup.TAnimation;
+    POCAScene3DGroupAnimation:TPOCAScene3DGroupAnimation;
+begin
+ Animation:=TpvScene3D.TGroup.TAnimation.Create(fGroup,fGroup.fAnimations.Count);
+ try
+  if aCountArguments>0 then begin
+   Animation.fName:=POCAGetStringValue(aContext,aArguments^[0]);
+  end;
+ finally
+  fGroup.fAnimations.Add(Animation);
+ end;
+ POCAScene3DGroupAnimation:=TPOCAScene3DGroupAnimation.Create(aContext^.Instance,aContext,nil,nil,false);
+ POCAScene3DGroupAnimation.fAnimation:=Animation;
+ result:=POCANewNativeObject(aContext,POCAScene3DGroupAnimation);
 end;
 
 { TpvScene3D.TScalarSum }
@@ -6269,6 +6733,328 @@ begin
  inherited Destroy;
 end;
 
+{ TpvScene3D.TGroup.TAnimation.TChannel }
+
+procedure TpvScene3D.TGroup.TAnimation.TChannel.SetTarget(const aTargetPath:TpvUTF8String;const aTargetNode:TpvSizeInt);
+var StringPosition,StartStringPosition:TpvSizeInt;
+    TargetPointerString,TargetPointerSubString:TpvUTF8String;
+    TargetPointerStrings:array of TpvUTF8String;
+    ChannelTarget:TAnimation.TChannel.TTarget;
+    TextureRawIndex:TpvScene3D.TTextureIndex;
+begin
+
+ TargetIndex:=-1;
+
+ TargetSubIndex:=-1;
+
+ if aTargetPath='translation' then begin
+  Target:=TAnimation.TChannel.TTarget.Translation;
+  TargetIndex:=aTargetNode;
+ end else if aTargetPath='rotation' then begin
+  Target:=TAnimation.TChannel.TTarget.Rotation;
+  TargetIndex:=aTargetNode;
+ end else if aTargetPath='scale' then begin
+  Target:=TAnimation.TChannel.TTarget.Scale;
+  TargetIndex:=aTargetNode;
+ end else if aTargetPath='weights' then begin
+  Target:=TAnimation.TChannel.TTarget.Weights;
+  TargetIndex:=aTargetNode;
+ end else if (length(aTargetPath)>=8) and
+             (aTargetPath[1]='p') and
+             (aTargetPath[2]='o') and
+             (aTargetPath[3]='i') and
+             (aTargetPath[4]='n') and
+             (aTargetPath[5]='t') and
+             (aTargetPath[6]='e') and
+             (aTargetPath[7]='r') and
+             (aTargetPath[8]='/') then begin
+  if (length(aTargetPath)>=9) and (aTargetPath[9]='/') then begin
+   TargetPointer:=copy(aTargetPath,9,length(aTargetPath)-8);
+  end else begin
+   TargetPointer:=copy(aTargetPath,8,length(aTargetPath)-7);
+  end;
+  TargetPointerString:=TargetPointer;
+  TargetPointerStrings:=nil;
+  try
+   StringPosition:=1;
+   while StringPosition<=length(TargetPointerString) do begin
+    while (StringPosition<=length(TargetPointerString)) and (TargetPointerString[StringPosition]='/') do begin
+     inc(StringPosition);
+    end;
+    StartStringPosition:=StringPosition;
+    while (StringPosition<=length(TargetPointerString)) and (TargetPointerString[StringPosition]<>'/') do begin
+     inc(StringPosition);
+    end;
+    if StartStringPosition<StringPosition then begin
+     TargetPointerSubString:=copy(TargetPointerString,StartStringPosition,StringPosition-StartStringPosition);
+     TargetPointerStrings:=TargetPointerStrings+[TargetPointerSubString];
+    end;
+   end;
+   if length(TargetPointerStrings)>0 then begin
+    if TargetPointerStrings[0]='nodes' then begin
+     if length(TargetPointerStrings)>2 then begin
+      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      if TargetPointerStrings[2]='rotation' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerNodeRotation;
+      end else if TargetPointerStrings[2]='scale' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerNodeScale;
+      end else if TargetPointerStrings[2]='translation' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerNodeTranslation;
+      end else if TargetPointerStrings[2]='weights' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerNodeWeights;
+      end;
+     end;
+    end else if TargetPointerStrings[0]='meshes' then begin
+     if length(TargetPointerStrings)>2 then begin
+      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      if TargetPointerStrings[2]='weights' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerMeshWeights;
+      end;
+     end;
+    end else if TargetPointerStrings[0]='cameras' then begin
+     if length(TargetPointerStrings)>3 then begin
+      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      if TargetPointerStrings[2]='orthographic' then begin
+       if TargetPointerStrings[3]='xmag' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag;
+       end else if TargetPointerStrings[3]='ymag' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag;
+       end else if TargetPointerStrings[3]='zfar' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar;
+       end else if TargetPointerStrings[3]='znear' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
+       end;
+      end else if TargetPointerStrings[2]='perspective' then begin
+       if TargetPointerStrings[3]='aspectRatio' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio;
+       end else if TargetPointerStrings[3]='yfov' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov;
+       end else if TargetPointerStrings[3]='zfar' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar;
+       end else if TargetPointerStrings[3]='znear' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear;
+       end;
+      end;
+     end;
+    end else if TargetPointerStrings[0]='materials' then begin
+     if length(TargetPointerStrings)>2 then begin
+      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      if (length(TargetPointerStrings)>4) and
+         ((TargetPointerStrings[length(TargetPointerStrings)-3]='extensions') and
+          (TargetPointerStrings[length(TargetPointerStrings)-2]='KHR_texture_transform') and
+          ((TargetPointerStrings[length(TargetPointerStrings)-1]='offset') or
+           (TargetPointerStrings[length(TargetPointerStrings)-1]='scale') or
+           (TargetPointerStrings[length(TargetPointerStrings)-1]='rotation'))) then begin
+       if TargetPointerStrings[length(TargetPointerStrings)-1]='offset' then begin
+        ChannelTarget:=TAnimation.TChannel.TTarget.PointerTextureOffset;
+       end else if TargetPointerStrings[length(TargetPointerStrings)-1]='scale' then begin
+        ChannelTarget:=TAnimation.TChannel.TTarget.PointerTextureScale;
+       end else{if TargetPointerStrings[length(TargetPointerStrings)-1]='rotation' then}begin
+        ChannelTarget:=TAnimation.TChannel.TTarget.PointerTextureRotation;
+       end;
+       TextureRawIndex:=TpvScene3D.TTextureIndex.None;
+       case length(TargetPointerStrings) of
+        6:begin
+         if TargetPointerStrings[2]='emissiveTexture' then begin
+          TextureRawIndex:=TpvScene3D.TTextureIndex.EmissiveTexture;
+         end else if TargetPointerStrings[2]='normalTexture' then begin
+          TextureRawIndex:=TpvScene3D.TTextureIndex.NormalTexture;
+         end else if TargetPointerStrings[2]='occlusionTexture' then begin
+          TextureRawIndex:=TpvScene3D.TTextureIndex.OcclusionTexture;
+         end;
+        end;
+        7:begin
+         if TargetPointerStrings[2]='pbrMetallicRoughness' then begin
+          if TargetPointerStrings[3]='baseColorTexture' then begin
+           TextureRawIndex:=TpvScene3D.TTextureIndex.PBRMetallicRoughnessBaseColorTexture;
+          end else if TargetPointerStrings[3]='metallicRoughnessTexture' then begin
+           TextureRawIndex:=TpvScene3D.TTextureIndex.PBRMetallicRoughnessMetallicRoughnessTexture;
+          end;
+         end;
+        end;
+        8:begin
+         if TargetPointerStrings[2]='extensions' then begin
+          if TargetPointerStrings[3]='pbrSpecularGlossiness' then begin
+           if TargetPointerStrings[4]='diffuseTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularGlossinessDiffuseTexture;
+           end else if TargetPointerStrings[4]='specularGlossinessTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularGlossinessSpecularGlossinessTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrClearCoat' then begin
+           if TargetPointerStrings[4]='clearcoatTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatTexture;
+           end else if TargetPointerStrings[4]='clearcoatRoughnessTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatRoughnessTexture;
+           end else if TargetPointerStrings[4]='clearcoatNormalTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatNormalTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrSheen' then begin
+           if TargetPointerStrings[4]='sheenColorTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSheenColorTexture;
+           end else if TargetPointerStrings[4]='sheenRoughnessTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSheenRoughnessTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrSpecular' then begin
+           if TargetPointerStrings[4]='specularTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularSpecularTexture;
+           end else if TargetPointerStrings[4]='specularColorTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularSpecularColorTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrIridescence' then begin
+           if TargetPointerStrings[4]='iridesceneTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRIridescenceTexture;
+           end else if TargetPointerStrings[4]='iridescenceThicknessTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRIridescenceThicknessTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrTransmission' then begin
+           if TargetPointerStrings[4]='transmissionTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRTransmissionTexture;
+           end;
+          end else if TargetPointerStrings[3]='pbrVolume' then begin
+           if TargetPointerStrings[4]='thicknessTexture' then begin
+            TextureRawIndex:=TpvScene3D.TTextureIndex.PBRVolumeThicknessTexture;
+           end;
+          end;
+         end;
+        end;
+       end;
+       if TextureRawIndex<>TpvScene3D.TTextureIndex.None then begin
+        Target:=ChannelTarget;
+        TargetSubIndex:=TpvSizeInt(TextureRawIndex);
+       end;
+      end else if TargetPointerStrings[2]='pbrMetallicRoughness' then begin
+       if length(TargetPointerStrings)>3 then begin
+        if TargetPointerStrings[3]='baseColorFactor' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor;
+        end else if TargetPointerStrings[3]='metallicFactor' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor;
+        end else if TargetPointerStrings[3]='roughnessFactor' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor;
+        end else if TargetPointerStrings[3]='znear' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
+        end;
+       end;
+      end else if TargetPointerStrings[2]='alphaCutoff' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff;
+      end else if TargetPointerStrings[2]='emissiveFactor' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor;
+      end else if TargetPointerStrings[2]='normalTexture' then begin
+       if length(TargetPointerStrings)>3 then begin
+        if TargetPointerStrings[3]='scale' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale;
+        end;
+       end;
+      end else if TargetPointerStrings[2]='occlusionTexture' then begin
+       if length(TargetPointerStrings)>3 then begin
+        if TargetPointerStrings[3]='strength' then begin
+         Target:=TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength;
+        end;
+       end;
+      end else if TargetPointerStrings[2]='extensions' then begin
+       if length(TargetPointerStrings)>3 then begin
+        if TargetPointerStrings[3]='KHR_materials_emissive_strength' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='emissiveStrength' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_ior' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='ior' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialIOR;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_transmission' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='transmissionFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_iridescence' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='iridescenceFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor;
+          end else if TargetPointerStrings[4]='iridescenceIor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor;
+          end else if TargetPointerStrings[4]='iridescenceThicknessMinimum' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum;
+          end else if TargetPointerStrings[4]='iridescenceThicknessMaximum' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_volume' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='attenuationColor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor;
+          end else if TargetPointerStrings[4]='attenuationDistance' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance;
+          end else if TargetPointerStrings[4]='thicknessFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_sheen' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='sheenColorFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor;
+          end else if TargetPointerStrings[4]='sheenRoughnessFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_specular' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='specularFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor;
+          end else if TargetPointerStrings[4]='specularColorFactor' then begin
+           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_transform' then begin
+         // TODO
+        end;
+       end;
+      end;
+     end;
+    end else if TargetPointerStrings[0]='extensions' then begin
+     if (length(TargetPointerStrings)>4) and
+        (TargetPointerStrings[1]='KHR_lights_punctual') and
+        (TargetPointerStrings[2]='lights') then begin
+      TargetIndex:=StrToIntDef(TargetPointerStrings[3],0);
+      if TargetPointerStrings[4]='color' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightColor;
+      end else if TargetPointerStrings[4]='intensity' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightIntensity;
+      end else if TargetPointerStrings[4]='range' then begin
+       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightRange;
+      end else if (TargetPointerStrings[4]='spot') and (length(TargetPointerStrings)>5) then begin
+       if TargetPointerStrings[5]='innerConeAngle' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle;
+       end else if TargetPointerStrings[5]='outerConeAngle' then begin
+        Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle;
+       end;
+      end;
+     end;
+    end;
+   end;
+  finally
+   TargetPointerStrings:=nil;
+  end;
+ end else begin
+  raise EpvScene3D.Create('Non-supported animation channel target path "'+String(aTargetPath)+'"');
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TAnimation.TChannel.SetInterpolation(const aInterpolation:TpvUTF8String);
+begin
+ if aInterpolation='cubicspline' then begin
+  Interpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
+ end else if aInterpolation='step' then begin
+  Interpolation:=TAnimation.TChannel.TInterpolation.Step;
+ end else{if aInterpolation='linear' then}begin
+  Interpolation:=TAnimation.TChannel.TInterpolation.Linear;
+ end;
+end;
+
 { TpvScene3D.TGroup.TAnimation }
 
 constructor TpvScene3D.TGroup.TAnimation.Create(const aGroup:TGroup;const aIndex:TpvSizeInt);
@@ -6287,7 +7073,7 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.TAnimation.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceAnimation:TPasGLTF.TAnimation);
-var Index,ChannelIndex,ValueIndex,StringPosition,StartStringPosition:TPasGLTFSizeInt;
+var ChannelIndex,ValueIndex:TPasGLTFSizeInt;
     SourceAnimationChannel:TPasGLTF.TAnimation.TChannel;
     SourceAnimationSampler:TPasGLTF.TAnimation.TSampler;
     DestinationAnimationChannel:TAnimation.PChannel;
@@ -6297,10 +7083,6 @@ var Index,ChannelIndex,ValueIndex,StringPosition,StartStringPosition:TPasGLTFSiz
     OutputScalarArray:TPasGLTFFloatDynamicArray;
     OutputScalar64Array:TPasGLTFDoubleDynamicArray;
     JSONItem:TPasJSONItem;
-    TargetPointerString,TargetPointerSubString:TpvUTF8String;
-    TargetPointerStrings:array of TpvUTF8String;
-    Target:TAnimation.TChannel.TTarget;
-    TextureRawIndex:TpvScene3D.TTextureIndex;
 begin
 
  fName:=aSourceAnimation.Name;
@@ -6317,293 +7099,21 @@ begin
 
   DestinationAnimationChannel^.TargetSubIndex:=-1;
 
-  if SourceAnimationChannel.Target.Path='translation' then begin
-   DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Translation;
-   DestinationAnimationChannel^.TargetIndex:=SourceAnimationChannel.Target.Node;
-  end else if SourceAnimationChannel.Target.Path='rotation' then begin
-   DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Rotation;
-   DestinationAnimationChannel^.TargetIndex:=SourceAnimationChannel.Target.Node;
-  end else if SourceAnimationChannel.Target.Path='scale' then begin
-   DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Scale;
-   DestinationAnimationChannel^.TargetIndex:=SourceAnimationChannel.Target.Node;
-  end else if SourceAnimationChannel.Target.Path='weights' then begin
-   DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Weights;
-   DestinationAnimationChannel^.TargetIndex:=SourceAnimationChannel.Target.Node;
+  if (SourceAnimationChannel.Target.Path='translation') or
+     (SourceAnimationChannel.Target.Path='rotation') or
+     (SourceAnimationChannel.Target.Path='scale') or
+     (SourceAnimationChannel.Target.Path='weights') then begin
+   DestinationAnimationChannel^.SetTarget(SourceAnimationChannel.Target.Path,SourceAnimationChannel.Target.Node);
   end else if SourceAnimationChannel.Target.Path='pointer' then begin
    DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Pointer_;
    if assigned(SourceAnimationChannel.Target.Extensions) then begin
     JSONItem:=SourceAnimationChannel.Target.Extensions.Properties['KHR_animation_pointer'];
     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-     DestinationAnimationChannel^.TargetPointer:=TPasJSON.GetString(TPasJSONItemObject(JSONItem).Properties['pointer'],'');
-     TargetPointerString:=DestinationAnimationChannel^.TargetPointer;
-     TargetPointerStrings:=nil;
-     try
-      StringPosition:=1;
-      while StringPosition<=length(TargetPointerString) do begin
-       while (StringPosition<=length(TargetPointerString)) and (TargetPointerString[StringPosition]='/') do begin
-        inc(StringPosition);
-       end;
-       StartStringPosition:=StringPosition;
-       while (StringPosition<=length(TargetPointerString)) and (TargetPointerString[StringPosition]<>'/') do begin
-        inc(StringPosition);
-       end;
-       if StartStringPosition<StringPosition then begin
-        TargetPointerSubString:=copy(TargetPointerString,StartStringPosition,StringPosition-StartStringPosition);
-        TargetPointerStrings:=TargetPointerStrings+[TargetPointerSubString];
-       end;
-      end;
-      if length(TargetPointerStrings)>0 then begin
-       if TargetPointerStrings[0]='nodes' then begin
-        if length(TargetPointerStrings)>2 then begin
-         DestinationAnimationChannel^.TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
-         if TargetPointerStrings[2]='rotation' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerNodeRotation;
-         end else if TargetPointerStrings[2]='scale' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerNodeScale;
-         end else if TargetPointerStrings[2]='translation' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerNodeTranslation;
-         end else if TargetPointerStrings[2]='weights' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerNodeWeights;
-         end;
-        end;
-       end else if TargetPointerStrings[0]='meshes' then begin
-        if length(TargetPointerStrings)>2 then begin
-         DestinationAnimationChannel^.TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
-         if TargetPointerStrings[2]='weights' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMeshWeights;
-         end;
-        end;
-       end else if TargetPointerStrings[0]='cameras' then begin
-        if length(TargetPointerStrings)>3 then begin
-         DestinationAnimationChannel^.TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
-         if TargetPointerStrings[2]='orthographic' then begin
-          if TargetPointerStrings[3]='xmag' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag;
-          end else if TargetPointerStrings[3]='ymag' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag;
-          end else if TargetPointerStrings[3]='zfar' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar;
-          end else if TargetPointerStrings[3]='znear' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
-          end;
-         end else if TargetPointerStrings[2]='perspective' then begin
-          if TargetPointerStrings[3]='aspectRatio' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio;
-          end else if TargetPointerStrings[3]='yfov' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov;
-          end else if TargetPointerStrings[3]='zfar' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar;
-          end else if TargetPointerStrings[3]='znear' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear;
-          end;
-         end;
-        end;
-       end else if TargetPointerStrings[0]='materials' then begin
-        if length(TargetPointerStrings)>2 then begin
-         DestinationAnimationChannel.TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
-         if (length(TargetPointerStrings)>4) and
-            ((TargetPointerStrings[length(TargetPointerStrings)-3]='extensions') and
-             (TargetPointerStrings[length(TargetPointerStrings)-2]='KHR_texture_transform') and
-             ((TargetPointerStrings[length(TargetPointerStrings)-1]='offset') or
-              (TargetPointerStrings[length(TargetPointerStrings)-1]='scale') or
-              (TargetPointerStrings[length(TargetPointerStrings)-1]='rotation'))) then begin
-          if TargetPointerStrings[length(TargetPointerStrings)-1]='offset' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerTextureOffset;
-          end else if TargetPointerStrings[length(TargetPointerStrings)-1]='scale' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerTextureScale;
-          end else{if TargetPointerStrings[length(TargetPointerStrings)-1]='rotation' then}begin
-           Target:=TAnimation.TChannel.TTarget.PointerTextureRotation;
-          end;
-          TextureRawIndex:=TpvScene3D.TTextureIndex.None;
-          case length(TargetPointerStrings) of
-           6:begin
-            if TargetPointerStrings[2]='emissiveTexture' then begin
-             TextureRawIndex:=TpvScene3D.TTextureIndex.EmissiveTexture;
-            end else if TargetPointerStrings[2]='normalTexture' then begin
-             TextureRawIndex:=TpvScene3D.TTextureIndex.NormalTexture;
-            end else if TargetPointerStrings[2]='occlusionTexture' then begin
-             TextureRawIndex:=TpvScene3D.TTextureIndex.OcclusionTexture;
-            end;
-           end;
-           7:begin
-            if TargetPointerStrings[2]='pbrMetallicRoughness' then begin
-             if TargetPointerStrings[3]='baseColorTexture' then begin
-              TextureRawIndex:=TpvScene3D.TTextureIndex.PBRMetallicRoughnessBaseColorTexture;
-             end else if TargetPointerStrings[3]='metallicRoughnessTexture' then begin
-              TextureRawIndex:=TpvScene3D.TTextureIndex.PBRMetallicRoughnessMetallicRoughnessTexture;
-             end;
-            end;
-           end;
-           8:begin
-            if TargetPointerStrings[2]='extensions' then begin
-             if TargetPointerStrings[3]='pbrSpecularGlossiness' then begin
-              if TargetPointerStrings[4]='diffuseTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularGlossinessDiffuseTexture;
-              end else if TargetPointerStrings[4]='specularGlossinessTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularGlossinessSpecularGlossinessTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrClearCoat' then begin
-              if TargetPointerStrings[4]='clearcoatTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatTexture;
-              end else if TargetPointerStrings[4]='clearcoatRoughnessTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatRoughnessTexture;
-              end else if TargetPointerStrings[4]='clearcoatNormalTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRClearCoatNormalTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrSheen' then begin
-              if TargetPointerStrings[4]='sheenColorTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSheenColorTexture;
-              end else if TargetPointerStrings[4]='sheenRoughnessTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSheenRoughnessTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrSpecular' then begin
-              if TargetPointerStrings[4]='specularTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularSpecularTexture;
-              end else if TargetPointerStrings[4]='specularColorTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRSpecularSpecularColorTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrIridescence' then begin
-              if TargetPointerStrings[4]='iridesceneTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRIridescenceTexture;
-              end else if TargetPointerStrings[4]='iridescenceThicknessTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRIridescenceThicknessTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrTransmission' then begin
-              if TargetPointerStrings[4]='transmissionTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRTransmissionTexture;
-              end;
-             end else if TargetPointerStrings[3]='pbrVolume' then begin
-              if TargetPointerStrings[4]='thicknessTexture' then begin
-               TextureRawIndex:=TpvScene3D.TTextureIndex.PBRVolumeThicknessTexture;
-              end;
-             end;
-            end;
-           end;
-          end;
-          if TextureRawIndex<>TpvScene3D.TTextureIndex.None then begin
-           DestinationAnimationChannel.Target:=Target;
-           DestinationAnimationChannel.TargetSubIndex:=TpvSizeInt(TextureRawIndex);
-          end;
-         end else if TargetPointerStrings[2]='pbrMetallicRoughness' then begin
-          if length(TargetPointerStrings)>3 then begin
-           if TargetPointerStrings[3]='baseColorFactor' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor;
-           end else if TargetPointerStrings[3]='metallicFactor' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor;
-           end else if TargetPointerStrings[3]='roughnessFactor' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor;
-           end else if TargetPointerStrings[3]='znear' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
-           end;
-          end;
-         end else if TargetPointerStrings[2]='alphaCutoff' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff;
-         end else if TargetPointerStrings[2]='emissiveFactor' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor;
-         end else if TargetPointerStrings[2]='normalTexture' then begin
-          if length(TargetPointerStrings)>3 then begin
-           if TargetPointerStrings[3]='scale' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale;
-           end;
-          end;
-         end else if TargetPointerStrings[2]='occlusionTexture' then begin
-          if length(TargetPointerStrings)>3 then begin
-           if TargetPointerStrings[3]='strength' then begin
-            DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength;
-           end;
-          end;
-         end else if TargetPointerStrings[2]='extensions' then begin
-          if length(TargetPointerStrings)>3 then begin
-           if TargetPointerStrings[3]='KHR_materials_emissive_strength' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='emissiveStrength' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_ior' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='ior' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialIOR;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_transmission' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='transmissionFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_iridescence' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='iridescenceFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor;
-             end else if TargetPointerStrings[4]='iridescenceIor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor;
-             end else if TargetPointerStrings[4]='iridescenceThicknessMinimum' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum;
-             end else if TargetPointerStrings[4]='iridescenceThicknessMaximum' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_volume' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='attenuationColor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor;
-             end else if TargetPointerStrings[4]='attenuationDistance' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance;
-             end else if TargetPointerStrings[4]='thicknessFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_sheen' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='sheenColorFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor;
-             end else if TargetPointerStrings[4]='sheenRoughnessFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_specular' then begin
-            if length(TargetPointerStrings)>4 then begin
-             if TargetPointerStrings[4]='specularFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor;
-             end else if TargetPointerStrings[4]='specularColorFactor' then begin
-              DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor;
-             end;
-            end;
-           end else if TargetPointerStrings[3]='KHR_materials_transform' then begin
-            // TODO
-           end;
-          end;
-         end;
-        end;
-       end else if TargetPointerStrings[0]='extensions' then begin
-        if (length(TargetPointerStrings)>4) and
-           (TargetPointerStrings[1]='KHR_lights_punctual') and
-           (TargetPointerStrings[2]='lights') then begin
-         DestinationAnimationChannel.TargetIndex:=StrToIntDef(TargetPointerStrings[3],0);
-         if TargetPointerStrings[4]='color' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerPunctualLightColor;
-         end else if TargetPointerStrings[4]='intensity' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerPunctualLightIntensity;
-         end else if TargetPointerStrings[4]='range' then begin
-          DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerPunctualLightRange;
-         end else if (TargetPointerStrings[4]='spot') and (length(TargetPointerStrings)>5) then begin
-          if TargetPointerStrings[5]='innerConeAngle' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle;
-          end else if TargetPointerStrings[5]='outerConeAngle' then begin
-           DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle;
-          end;
-         end;
-        end;
-       end;
-      end;
-     finally
-      TargetPointerStrings:=nil;
-     end;
+     DestinationAnimationChannel^.SetTarget('pointer/'+TPasJSON.GetString(TPasJSONItemObject(JSONItem).Properties['pointer'],''),-1);
     end;
    end;
   end else begin
-   raise EPasGLTF.Create('Non-supported animation channel target path "'+String(SourceAnimationChannel.Target.Path)+'"');
+   raise EpvScene3D.Create('Non-supported animation channel target path "'+String(SourceAnimationChannel.Target.Path)+'"');
   end;
 
   if (SourceAnimationChannel.Sampler>=0) and (SourceAnimationChannel.Sampler<aSourceAnimation.Samplers.Count) then begin
@@ -8287,6 +8797,8 @@ begin
 
  fMaterialIDMapArrayIndexHashMap:=TpvScene3D.TGroup.TMaterialIDMapArrayIndexHashMap.Create(-1);
 
+ fMaterialNameMapArrayIndexHashMap:=TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap.Create(-1);
+
  fMaterialIDMapArrays:=TpvScene3D.TGroup.TMaterialIDMapArrays.Create;
  fMaterialIDMapArrays.OwnsObjects:=true;
 
@@ -8296,8 +8808,12 @@ begin
  fCameras:=TCameras.Create;
  fCameras.OwnsObjects:=true;
 
+ fCameraNameIndexHashMap:=TCameraNameIndexHashMap.Create(-1);
+
  fMeshes:=TMeshes.Create;
  fMeshes.OwnsObjects:=true;
+
+ fMeshNameIndexHashMap:=TMeshNameIndexHashMap.Create(-1);
 
  fSkins:=TSkins.Create;
  fSkins.OwnsObjects:=true;
@@ -8389,6 +8905,10 @@ begin
 
  FreeAndNil(fObjects);
 
+ FreeAndNil(fCameraNameIndexHashMap);
+
+ FreeAndNil(fMeshNameIndexHashMap);
+
  if not (assigned(fSceneInstance) and ((not assigned(fSceneInstance.fMaterials)) or (fSceneInstance.fMaterials.Count=0))) then begin
   if assigned(fSceneInstance) then begin
    fSceneInstance.fMaterialListLock.Acquire;
@@ -8406,6 +8926,8 @@ begin
  FreeAndNil(fMaterials);
 
  FreeAndNil(fMaterialsToDuplicate);
+
+ FreeAndNil(fMaterialNameMapArrayIndexHashMap);
 
  FreeAndNil(fMaterialIDMapArrayIndexHashMap);
 
@@ -9100,6 +9622,17 @@ begin
 
 end;
 
+function TpvScene3D.TGroup.AssetGetURI(const aURI:TPasGLTFUTF8String):TStream;
+var FileName:TPasGLTFUTF8String;
+begin
+ FileName:=ExpandRelativePath(aURI,AssetBasePath);
+ if pvApplication.Assets.ExistAsset(FileName) then begin
+  result:=pvApplication.Assets.GetAssetStream(FileName);
+ end else begin
+  result:=nil;
+ end;
+end;
+
 procedure TpvScene3D.TGroup.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
 var LightMap:TpvScene3D.TGroup.TLights;
     ImageMap:TpvScene3D.TImages;
@@ -9110,6 +9643,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
     NewTextures:TpvScene3D.TTextures;
     //MaterialMap:TpvScene3D.TMaterials;
     HasLights:boolean;
+    POCACodeString:TpvUTF8String;
  procedure ProcessImages;
  var Index:TpvSizeInt;
      SourceImage:TPasGLTF.TImage;
@@ -9271,6 +9805,10 @@ var LightMap:TpvScene3D.TGroup.TLights;
 
      fMaterialMap[Index+1]:=Material.fID;
 
+     if length(trim(Material.fName))>0 then begin
+      fMaterialNameMapArrayIndexHashMap.Add(Material.fName,Index);
+     end;
+
      MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
      if MaterialIDMapArrayIndex<0 then begin
       MaterialIDMapArray:=TMaterialIDMapArray.Create;
@@ -9293,6 +9831,67 @@ var LightMap:TpvScene3D.TGroup.TLights;
 
  end;
  procedure ProcessAnimations;
+ var Index:TpvSizeInt;
+     SourceAnimation:TPasGLTF.TAnimation;
+     Animation:TpvScene3D.TGroup.TAnimation;
+ begin
+  for Index:=0 to aSourceDocument.Animations.Count-1 do begin
+   SourceAnimation:=aSourceDocument.Animations[Index];
+   Animation:=TAnimation.Create(self,Index);
+   try
+    Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
+   finally
+    fAnimations.Add(Animation);
+   end;
+  end;
+ end;
+ procedure ExecuteCode;
+ var POCAInstance:PPOCAInstance;
+     POCAContext:PPOCAContext;
+     POCACode:TPOCAValue;
+     Code:TpvUTF8String;
+     POCAScene3DGroup:TPOCAScene3DGroup;
+ begin
+  if length(POCACodeString)>0 then begin
+   Code:=PUCUUTF8Trim(PUCUUTF8Correct(POCACodeString));
+   if length(Code)>0 then begin
+    POCAInstance:=POCAInstanceCreate;
+    try
+     POCAContext:=POCAContextCreate(POCAInstance);
+     try
+      try
+       POCAScene3DGroup:=TPOCAScene3DGroup.Create(POCAInstance,POCAContext,nil,nil,false);
+       POCAScene3DGroup.fGroup:=self;
+       POCAHashSet(POCAContext,
+                   POCAInstance.Globals.Namespace,
+                   POCANewUniqueString(POCAContext,'Group'),
+                   POCANewNativeObject(POCAContext,POCAScene3DGroup));
+       POCACode:=POCACompile(POCAInstance,POCAContext,Code,'<CODE>');
+       POCACall(POCAContext,POCACode,nil,0,POCAValueNull,POCAInstance^.Globals.Namespace);
+      except
+       on e:EPOCASyntaxError do begin
+        // Ignore
+       end;
+       on e:EPOCARuntimeError do begin
+        // Ignore
+       end;
+       on e:EPOCAScriptError do begin
+        // Ignore
+       end;
+       on e:Exception do begin
+        raise;
+       end;
+      end;
+     finally
+      POCAContextDestroy(POCAContext);
+     end;
+    finally
+     POCAInstanceDestroy(POCAInstance);
+    end;
+   end;
+  end;
+ end;
+ procedure PostProcessAnimations;
  type TMaterialHashMap=TpvHashMap<TpvSizeInt,TpvSizeInt>;
       TMaterialArrayList=TpvDynamicArrayList<TpvSizeInt>;
       TTargetHashMap=TpvHashMap<TpvUInt64,TpvSizeInt>;
@@ -9327,130 +9926,124 @@ var LightMap:TpvScene3D.TGroup.TLights;
      try
       TargetArrayList:=TTargetArrayList.Create;
       try
-       for Index:=0 to aSourceDocument.Animations.Count-1 do begin
-        SourceAnimation:=aSourceDocument.Animations[Index];
-        Animation:=TAnimation.Create(self,Index);
-        try
-         Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
-         for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-          Channel:=@Animation.fChannels[ChannelIndex];
-          Channel^.TargetInstanceIndex:=-1;
-          case Channel^.Target of
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
-           TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-            OK:=false;
-            if (Channel^.TargetIndex>=0) and (Channel^.TargetIndex<fMaterials.Count) then begin
-             MaterialIndex:=Channel^.TargetIndex;
-             Material:=fMaterials[MaterialIndex];
-             MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
-             if MaterialIDMapArrayIndex>=0 then begin
-              MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
-              if MaterialIDMapArray.Count>0 then begin
-               if MaterialIDMapArray.Count>=2 then begin
-                fSceneInstance.fMaterialListLock.Acquire;
+       for Index:=0 to fAnimations.Count-1 do begin
+        Animation:=fAnimations[Index];
+        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+         Channel:=@Animation.fChannels[ChannelIndex];
+         Channel^.TargetInstanceIndex:=-1;
+         case Channel^.Target of
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+           OK:=false;
+           if (Channel^.TargetIndex>=0) and (Channel^.TargetIndex<fMaterials.Count) then begin
+            MaterialIndex:=Channel^.TargetIndex;
+            Material:=fMaterials[MaterialIndex];
+            MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
+            if MaterialIDMapArrayIndex>=0 then begin
+             MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
+             if MaterialIDMapArray.Count>0 then begin
+              if MaterialIDMapArray.Count>=2 then begin
+               fSceneInstance.fMaterialListLock.Acquire;
+               try
+                DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
                 try
-                 DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
-                 try
-                  DuplicatedMaterial.Assign(Material);
-                  Material.DecRef;
-                  Material:=DuplicatedMaterial;
-                  Material.IncRef;
-                  MaterialIDMapArray.Remove(MaterialIndex);
-                  MaterialIDMapArray:=TMaterialIDMapArray.Create;
-                  fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
-                  MaterialIDMapArray.Add(MaterialIndex);
-                 finally
-                  fMaterials[MaterialIndex]:=Material;
-                  fMaterialMap[Index+1]:=Material.fID;
-                 end;
+                 DuplicatedMaterial.Assign(Material);
+                 Material.DecRef;
+                 Material:=DuplicatedMaterial;
+                 Material.IncRef;
+                 MaterialIDMapArray.Remove(MaterialIndex);
+                 MaterialIDMapArray:=TMaterialIDMapArray.Create;
+                 fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
+                 MaterialIDMapArray.Add(MaterialIndex);
                 finally
-                 fSceneInstance.fMaterialListLock.Release;
+                 fMaterials[MaterialIndex]:=Material;
+                 fMaterialMap[Index+1]:=Material.fID;
                 end;
+               finally
+                fSceneInstance.fMaterialListLock.Release;
                end;
-               //Channel^.TargetIndex:=Material.fID;
-               MaterialArrayIndex:=MaterialHashMap[Material.fID];
-               if MaterialArrayIndex<0 then begin
-                MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
-                MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
-                fMaterialsToDuplicate.Add(Material);
-               end;
-               OK:=true;
               end;
+              //Channel^.TargetIndex:=Material.fID;
+              MaterialArrayIndex:=MaterialHashMap[Material.fID];
+              if MaterialArrayIndex<0 then begin
+               MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
+               MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
+               fMaterialsToDuplicate.Add(Material);
+              end;
+              OK:=true;
              end;
-             if assigned(Material) and (Channel^.TargetSubIndex>=0) then begin
-              case Channel^.Target of
-               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
-               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
-               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-                Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
-               end;
-              end;
-{             if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
-                 (Channel^.TargetSubIndex>=0) then begin
+            end;
+            if assigned(Material) and (Channel^.TargetSubIndex>=0) then begin
+             case Channel^.Target of
+              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
                Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
-              end;}
+              end;
              end;
-            end;
-            if not OK then begin
-             Channel^.TargetIndex:=-1;
+{             if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
+                (Channel^.TargetSubIndex>=0) then begin
+              Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
+             end;}
             end;
            end;
+           if not OK then begin
+            Channel^.TargetIndex:=-1;
+           end;
           end;
+         end;
 {         if Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.MaterialTargets then begin
-          end;}
-         end;
-         for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-          Channel:=@Animation.fChannels[ChannelIndex];
-          if Channel^.TargetIndex>=0 then begin
-           begin
-            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-            TargetIndex:=TargetHashMap[CompactCode];
-            if TargetIndex<0 then begin
-             TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
-            end;
-           end;
-           begin
-            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[Channel^.Target])) and TpvUInt64($ffff)) shl 48) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-            InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
-            if InstanceChannelTargetIndex<0 then begin
-             InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
-             inc(fCountInstanceAnimationChannels);
-             InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
-            end;
-            Channel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
+         end;}
+        end;
+        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+         Channel:=@Animation.fChannels[ChannelIndex];
+         if Channel^.TargetIndex>=0 then begin
+          begin
+           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+           TargetIndex:=TargetHashMap[CompactCode];
+           if TargetIndex<0 then begin
+            TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
            end;
           end;
+          begin
+           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[Channel^.Target])) and TpvUInt64($ffff)) shl 48) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+           InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
+           if InstanceChannelTargetIndex<0 then begin
+            InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
+            inc(fCountInstanceAnimationChannels);
+            InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
+           end;
+           Channel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
+          end;
          end;
-        finally
-         fAnimations.Add(Animation);
         end;
        end;
        if TargetArrayList.Count>0 then begin
@@ -9536,6 +10129,9 @@ var LightMap:TpvScene3D.TGroup.TLights;
    SourceCamera:=aSourceDocument.Cameras[Index];
    Camera:=TCamera.Create(self,Index);
    try
+    if length(trim(Camera.fName))>0 then begin
+     fCameraNameIndexHashMap.Add(Camera.fName,Index);
+    end;
     Camera.AssignFromGLTF(aSourceDocument,SourceCamera);
    finally
     fCameras.Add(Camera);
@@ -9553,6 +10149,9 @@ var LightMap:TpvScene3D.TGroup.TLights;
    SourceMesh:=aSourceDocument.Meshes[Index];
    Mesh:=TMesh.Create(self,Index);
    try
+    if length(trim(Mesh.fName))>0 then begin
+     fMeshNameIndexHashMap.Add(Mesh.fName,Index);
+    end;
     Mesh.AssignFromGLTF(aSourceDocument,SourceMesh,fMaterials);
    finally
     fMeshes.Add(Mesh);
@@ -9625,6 +10224,8 @@ var LightMap:TpvScene3D.TGroup.TLights;
  var Index,Offset:TpvSizeInt;
      SourceNode:TPasGLTF.TNode;
      Node:TNode;
+     TemporaryString:TPasJSONUTF8String;
+     TemporaryStream:TStream;
  begin
   fCountNodeWeights:=0;
   fNodes.Clear;
@@ -9633,6 +10234,40 @@ var LightMap:TpvScene3D.TGroup.TLights;
    Node:=TNode.Create(self,Index);
    try
     Node.AssignFromGLTF(aSourceDocument,SourceNode,LightMap);
+    if assigned(SourceNode.Extras) then begin
+     begin
+      TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocacode'],'');
+      if length(TemporaryString)>0 then begin
+       TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
+       POCACodeString:=POCACodeString+TemporaryString;
+      end else begin
+       TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocafile'],'');
+       if length(TemporaryString)>0 then begin
+        if pvApplication.Assets.ExistAsset(TemporaryString) then begin
+         TemporaryStream:=pvApplication.Assets.GetAssetStream(TemporaryString);
+        end else begin
+         TemporaryStream:=nil;
+        end;
+        if not assigned(TemporaryStream) then begin
+         TemporaryStream:=aSourceDocument.GetURI(TemporaryString);
+        end;
+        if assigned(TemporaryStream) then begin
+         try
+          TemporaryString:='';
+          if TemporaryStream.Size>0 then begin
+           SetLength(TemporaryString,TemporaryStream.Size);
+           TemporaryStream.ReadBuffer(TemporaryString[1],TemporaryStream.Size);
+           TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
+           POCACodeString:=POCACodeString+TemporaryString;
+          end;
+         finally
+          FreeAndNil(TemporaryStream);
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
    finally
     fNodes.Add(Node);
    end;
@@ -9748,6 +10383,8 @@ var Image:TpvScene3D.TImage;
     Texture:TpvScene3D.TTexture;
 begin
 
+ POCACodeString:='';
+
  HasLights:=aSourceDocument.ExtensionsUsed.IndexOf('KHR_lights_punctual')>=0;
 
  LightMap:=TpvScene3D.TGroup.TLights.Create;
@@ -9792,8 +10429,6 @@ begin
 
          ProcessMaterials;
 
-         ProcessAnimations;
-
          ProcessCameras;
 
          ProcessMeshes;
@@ -9803,6 +10438,12 @@ begin
          ProcessNodes;
 
          ProcessScenes;
+
+         ProcessAnimations;
+
+         ExecuteCode;
+
+         PostProcessAnimations;
 
          if (aSourceDocument.Scene>=0) and (aSourceDocument.Scene<fScenes.Count) then begin
           fScene:=fScenes[aSourceDocument.Scene];
@@ -9899,6 +10540,9 @@ begin
    try
     if (length(FileName)>0) and (FileExists(FileName)) then begin
      GLTF.RootPath:=ExtractFilePath(ExpandFileName(FileName));
+    end;
+    if IsAsset then begin
+     GLTF.GetURI:=AssetGetURI;
     end;
     GLTF.LoadFromStream(aStream);
     AssignFromGLTF(GLTF);
@@ -11782,6 +12426,7 @@ var CullFace,Blend:TPasGLTFInt32;
                 (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
                  (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
                   (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
+     aVector4:=TpvQuaternion.Create(aVector4).Normalize.Vector;
     end;
     else begin
      Assert(false);

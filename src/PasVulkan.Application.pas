@@ -6875,7 +6875,7 @@ begin
 {$elseif defined(Windows)}
  fDebugging:={$ifdef fpc}IsDebuggerPresent{$else}DebugHook<>0{$endif};
 {$else}
- fDebugging:=true;
+ fDebugging:=false;
 {$ifend}
 
  fLoadWasCalled:=false;

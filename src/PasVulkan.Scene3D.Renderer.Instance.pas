@@ -941,6 +941,8 @@ begin
 
  fFrameGraph:=TpvFrameGraph.Create(Renderer.VulkanDevice,Renderer.CountInFlightFrames);
 
+ fFrameGraph.CanDoParallelProcessing:=false;
+
  fFrameGraph.SurfaceIsSwapchain:=(fExternalImageFormat=VK_FORMAT_UNDEFINED) and not assigned(fVirtualReality);
 
  if fFrameGraph.SurfaceIsSwapchain then begin
@@ -1870,6 +1872,7 @@ begin
 end;
 
 procedure TpvScene3DRendererInstance.AcquireVolatileResources;
+const NaNVector4:TpvVector4=(x:NaN;y:NaN;z:NaN;w:NaN);
 var InFlightFrameIndex,Index:TpvSizeInt;
     UniversalQueue:TpvVulkanQueue;
     UniversalCommandPool:TpvVulkanCommandPool;
@@ -1984,6 +1987,16 @@ begin
                                                                                           0,
                                                                                           0,
                                                                                           []);
+     end;
+
+     for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
+      pvApplication.VulkanDevice.MemoryStaging.Upload(pvApplication.VulkanDevice.UniversalQueue,
+                                                      UniversalCommandBuffer,
+                                                      UniversalFence,
+                                                      NaNVector4,
+                                                      fDepthOfFieldAutoFocusVulkanBuffers[InFlightFrameIndex],
+                                                      0,
+                                                      SizeOf(TpvVector4));
      end;
 
      fFrustumClusterGridTileSizeX:=(fWidth+(fFrustumClusterGridSizeX-1)) div fFrustumClusterGridSizeX;
@@ -2250,7 +2263,7 @@ begin
                                                             UniversalFence,
                                                             0,
                                                             SizeOf(TpvFloat),
-                                                           TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
+                                                            TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic);
 
       fLuminanceEvents[InFlightFrameIndex]:=TpvVulkanEvent.Create(Renderer.VulkanDevice);
       fLuminanceEventReady[InFlightFrameIndex]:=false;

@@ -74,6 +74,7 @@ uses SysUtils,
      PasVulkan.Framework,
      PasVulkan.Application,
      PasVulkan.Utils,
+     PasVulkan.HighResolutionTimer,
      PasVulkan.TimerQuery,
      PasVulkan.NVIDIA.AfterMath;
 
@@ -996,6 +997,7 @@ type EpvFrameGraph=class(Exception);
                      property VulkanBuffers[const aSwapChainBufferIndex:TpvSizeInt]:TpvVulkanBuffer read GetVulkanBuffer;
                    end;
                    TTimerQueryIndices=array[0..MaxInFlightFrames-1] of TpvSizeInt;
+                   TCPUTimeValues=array[0..MaxInFlightFrames-1] of TpvHighResolutionTime;
              private
               fFrameGraph:TpvFrameGraph;
               fName:TpvRawByteString;
@@ -1013,6 +1015,7 @@ type EpvFrameGraph=class(Exception);
               fPhysicalPass:TPhysicalPass;
               fTopologicalSortIndex:TpvSizeInt;
               fTimerQueryIndices:TTimerQueryIndices;
+              fCPUTimeValues:TCPUTimeValues;
               fDoubleBufferedEnabledState:array[0..1] of longbool;
               function GetSeparatePhysicalPass:boolean; inline;
               procedure SetSeparatePhysicalPass(const aSeparatePhysicalPass:boolean);
@@ -1123,6 +1126,7 @@ type EpvFrameGraph=class(Exception);
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt); virtual;
              public
               property TimerQueryIndices:TTimerQueryIndices read fTimerQueryIndices;
+              property CPUTimeValues:TCPUTimeValues read fCPUTimeValues;
              published
               property FrameGraph:TpvFrameGraph read fFrameGraph;
               property Name:TpvRawByteString read fName write SetName;
@@ -1170,6 +1174,7 @@ type EpvFrameGraph=class(Exception);
               property VulkanRenderPassSubpassIndex:TpvSizeInt read GetVulkanRenderPassSubpassIndex;
             end;
             TRenderPassClass=class of TRenderPass;
+            TPassCPUTimeValues=array of TpvHighResolutionTime;
       private
        fVulkanDevice:TpvVulkanDevice;
        fMultiviewEnabled:boolean;
@@ -1227,6 +1232,8 @@ type EpvFrameGraph=class(Exception);
        fDrawWaitFence:TpvVulkanFence;
        fTimerQueries:TpvTimerQueries;
        fLastTimerQueryResults:TpvTimerQuery.TResults;
+       fCPUTimeValues:TPassCPUTimeValues;
+       fLastCPUTimeValues:TPassCPUTimeValues;
       public
        constructor Create(const aVulkanDevice:TpvVulkanDevice;const aCountInFlightFrames:TpvSizeInt=MaxInFlightFrames);
        destructor Destroy; override;
@@ -1327,6 +1334,8 @@ type EpvFrameGraph=class(Exception);
        property DrawFrameIndex:TpvSizeInt read fDrawFrameIndex;
        property TimerQueries:TpvTimerQueries read fTimerQueries;
        property LastTimerQueryResults:TpvTimerQuery.TResults read fLastTimerQueryResults;
+       property CPUTimeValues:TPassCPUTimeValues read fCPUTimeValues;
+       property LastCPUTimeValues:TPassCPUTimeValues read fLastCPUTimeValues;
      end;
 
 implementation
@@ -2786,6 +2795,10 @@ begin
   fTimerQueryIndices[Index]:=-1;
  end;
 
+ for Index:=0 to length(fCPUTimeValues)-1 do begin
+  fCPUTimeValues[Index]:=0;
+ end;
+
 end;
 
 destructor TpvFrameGraph.TPass.Destroy;
@@ -3076,6 +3089,7 @@ const LabelInfoColors:array[0..15,0..3] of TVkFloat=
        );
 var LabelInfo:TVkDebugUtilsLabelEXT;
 begin
+ fCPUTimeValues[fFrameGraph.fDrawInFlightFrameIndex]:=pvApplication.HighResolutionTimer.GetTime;
  if assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
     assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
   FillChar(LabelInfo,SizeOf(TVkDebugUtilsLabelEXT),#0);
@@ -3104,6 +3118,7 @@ begin
     assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
   aCommandBuffer.Device.Commands.CmdEndDebugUtilsLabelEXT(aCommandBuffer.Handle);
  end;
+ fCPUTimeValues[fFrameGraph.fDrawInFlightFrameIndex]:=pvApplication.HighResolutionTimer.GetTime-fCPUTimeValues[fFrameGraph.fDrawInFlightFrameIndex];
 end;
 
 function TpvFrameGraph.TPass.AddImageInput(const aResourceTypeName:TpvRawByteString;
@@ -4385,11 +4400,19 @@ begin
 
  fTimerQueries:=nil;
 
+ fCPUTimeValues:=nil;
+
+ fLastCPUTimeValues:=nil;
+
 end;
 
 destructor TpvFrameGraph.Destroy;
 var InFlightFrameIndex,Index:TpvSizeInt;
 begin
+
+ fCPUTimeValues:=nil;
+
+ fLastCPUTimeValues:=nil;
 
  FreeAndNil(fTimerQueries);
 
@@ -6699,6 +6722,16 @@ type TEventBeforeAfter=(Event,Before,After);
    fTimerQueries.Add(TpvTimerQuery.Create(fVulkanDevice,Passes.Count));
   end;
  end;
+ procedure CreateCPUTimeValues;
+ var Index:TpvSizeInt;
+ begin
+  SetLength(fCPUTimeValues,fPasses.Count+2);
+  SetLength(fLastCPUTimeValues,fPasses.Count+2);
+  for Index:=0 to fPasses.Count-1 do begin
+   fCPUTimeValues[Index]:=0;
+   fLastCPUTimeValues[Index]:=0;
+  end;
+ end;
 begin
 
  fQueueFamilyIndices.Finish;
@@ -6752,6 +6785,8 @@ begin
  FinishPassUsedResources;
 
  CreateTimerQuery;
+
+ CreateCPUTimeValues;
 
 end;
 
@@ -7065,10 +7100,12 @@ begin
     (fDrawToWaitOnSemaphoreHandles[fDrawInFlightFrameIndex].Count>0) then begin
   fUniversalQueue.fSubmitInfos[0]:=fDrawToWaitSubmitInfos[fDrawInFlightFrameIndex];
  end;
- if fCanDoParallelProcessing and assigned(pvApplication) then begin
-  pvApplication.PasMPInstance.Invoke(pvApplication.PasMPInstance.ParallelFor(aQueue,0,aQueue.fCommandBuffers.Count-1,ExecuteQueueCommandBufferParallelForJobMethod,1,16,aJob,0));
- end else begin
-  ExecuteQueueCommandBufferParallelForJobMethod(nil,0,aQueue,0,aQueue.fCommandBuffers.Count-1);
+ if aQueue.fCommandBuffers.Count>0 then begin
+  if fCanDoParallelProcessing and assigned(pvApplication) and (aQueue.fCommandBuffers.Count>1) then begin
+   pvApplication.PasMPInstance.Invoke(pvApplication.PasMPInstance.ParallelFor(aQueue,0,aQueue.fCommandBuffers.Count-1,ExecuteQueueCommandBufferParallelForJobMethod,1,16,aJob,0));
+  end else begin
+   ExecuteQueueCommandBufferParallelForJobMethod(nil,0,aQueue,0,aQueue.fCommandBuffers.Count-1);
+  end;
  end;
  if (aQueue=fUniversalQueue) and
     (fDrawToSignalSemaphoreHandles[fDrawInFlightFrameIndex].Count>0) then begin
@@ -7097,7 +7134,7 @@ procedure TpvFrameGraph.Draw(const aDrawSwapChainImageIndex:TpvSizeInt;
                              const aToWaitOnSemaphore:TpvVulkanSemaphore=nil;
                              const aToSignalSemaphore:TpvVulkanSemaphore=nil;
                              const aWaitFence:TpvVulkanFence=nil);
-var SemaphoreIndex:TpvSizeInt;
+var SemaphoreIndex,PassIndex:TpvSizeInt;
     SubmitInfo:TVkSubmitInfo;
 begin
  fDrawSwapChainImageIndex:=aDrawSwapChainImageIndex;
@@ -7138,10 +7175,28 @@ begin
   end;
   fTimerQueries[fDrawInFlightFrameIndex].Reset;
  end;
- if fCanDoParallelProcessing and assigned(pvApplication) then begin
+ if length(fLastCPUTimeValues)=length(fCPUTimeValues) then begin
+  if length(fCPUTimeValues)>0 then begin
+   Move(fCPUTimeValues[0],fLastCPUTimeValues[0],length(fCPUTimeValues)*SizeOf(TpvHighResolutionTime));
+  end;
+ end else begin
+  fLastCPUTimeValues:=copy(fCPUTimeValues);
+ end;
+ if length(fCPUTimeValues)>=2 then begin
+  fCPUTimeValues[length(fCPUTimeValues)-1]:=pvApplication.HighResolutionTimer.GetTime;
+ end;
+ if fCanDoParallelProcessing and assigned(pvApplication) and (fQueues.Count>1) then begin
   pvApplication.PasMPInstance.Invoke(pvApplication.PasMPInstance.ParallelFor(nil,0,fQueues.Count-1,ExecuteQueueParallelForJobMethod,1,16,nil,0));
  end else begin
   ExecuteQueueParallelForJobMethod(nil,0,nil,0,fQueues.Count-1);
+ end;
+ if length(fCPUTimeValues)>=2 then begin
+  fCPUTimeValues[length(fCPUTimeValues)-1]:=pvApplication.HighResolutionTimer.GetTime-fCPUTimeValues[length(fCPUTimeValues)-1];
+  fCPUTimeValues[length(fCPUTimeValues)-2]:=0;
+  for PassIndex:=0 to Min(fPasses.Count,length(fCPUTimeValues)-2)-1 do begin
+   fCPUTimeValues[PassIndex]:=fPasses[PassIndex].fCPUTimeValues[aDrawInFlightFrameIndex];
+   fCPUTimeValues[length(fCPUTimeValues)-2]:=fCPUTimeValues[length(fCPUTimeValues)-2]+fCPUTimeValues[PassIndex];
+  end;
  end;
 end;
 
