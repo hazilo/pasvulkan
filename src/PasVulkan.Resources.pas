@@ -250,9 +250,11 @@ type EpvResource=class(Exception);
       private
        fResourceManager:TpvResourceManager;
        fEvent:TPasMPEvent;
-       fLock:TPasMPSlimReaderWriterLock;
+       fLock:TPasMPSpinLock;
        fQueueItems:TQueueItems;
+       fQueueItemLock:TPasMPSpinLock;
        fQueueItemResourceMap:TQueueItemResourceMap;
+       fQueueItemResourceMapLock:TPasMPSpinLock;
        function QueueResource(const aResource:TpvResource;const aParent:TpvResource):boolean;
        procedure FinalizeQueueItem(const aQueueItem:TQueueItem);
        procedure WaitForResource(const aResource:TpvResource;const aWaitForMode:TpvResourceWaitForMode=TpvResourceWaitForMode.Auto);
@@ -304,16 +306,17 @@ type EpvResource=class(Exception);
        procedure FreeHandle(const aHandle:TpvResourceHandle);
        function GetResourceByHandle(const aHandle:TpvResourceHandle):IpvResource;
       private
-       fLock:TPasMPMultipleReaderSingleWriterLock;
+       fLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fLocked:TPasMPBool32;
        fActive:TPasMPBool32;
+       fLoadLock:TPasMPCriticalSection;
        fResourceClassTypeList:TResourceClassTypeList;
-       fResourceClassTypeListLock:TPasMPMultipleReaderSingleWriterLock;
+       fResourceClassTypeListLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fResourceClassTypeMap:TResourceClassTypeMap;
-       fResourceHandleLock:TPasMPMultipleReaderSingleWriterLock;
+       fResourceHandleLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fResourceHandleManager:TResourceHandleManager;
        fResourceHandleMap:TResourceHandleMap;
-       fMetaResourceLock:TPasMPMultipleReaderSingleWriterLock;
+       fMetaResourceLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fMetaResourceList:TMetaResourceList;
        fMetaResourceUUIDMap:TMetaResourceUUIDMap;
        fMetaResourceFileNameMap:TMetaResourceFileNameMap;
@@ -888,13 +891,18 @@ begin
    fAsyncLoadState:=TAsyncLoadState.Loading;
   end;
   LoadMetaData;
-  result:=BeginLoad(aStream);
-  if result then begin
-   result:=EndLoad;
-   fAsyncLoadState:=TAsyncLoadState.Done;
+  fResourceManager.fLoadLock.Acquire;
+  try
+   result:=BeginLoad(aStream);
    if result then begin
-    fLoaded:=true;
+    result:=EndLoad;
+    fAsyncLoadState:=TAsyncLoadState.Done;
+    if result then begin
+     fLoaded:=true;
+    end;
    end;
+  finally
+   fResourceManager.fLoadLock.Release;
   end;
  end;
 end;
@@ -939,9 +947,19 @@ begin
  fResource:=aResource;
  fDependencies.Initialize;
  fDependents.Initialize;
- fResourceBackgroundLoader.fQueueItems.Add(self);
+ fResourceBackgroundLoader.fQueueItemLock.Acquire;
+ try
+  fResourceBackgroundLoader.fQueueItems.Add(self);
+ finally
+  fResourceBackgroundLoader.fQueueItemLock.Release;
+ end;
  if assigned(fResourceBackgroundLoader) and assigned(fResource) then begin
-  fResourceBackgroundLoader.fQueueItemResourceMap.Add(fResource.GetResource,self);
+  fResourceBackgroundLoader.fQueueItemResourceMapLock.Acquire;
+  try
+   fResourceBackgroundLoader.fQueueItemResourceMap.Add(fResource.GetResource,self);
+  finally
+   fResourceBackgroundLoader.fQueueItemResourceMapLock.Release;
+  end;
  end;
 end;
 
@@ -951,14 +969,24 @@ begin
  if assigned(fResourceBackgroundLoader) then begin
   try
    if assigned(fResource) then begin
-    fResourceBackgroundLoader.fQueueItemResourceMap.Delete(fResource.GetResource);
+    fResourceBackgroundLoader.fQueueItemResourceMapLock.Acquire;
+    try
+     fResourceBackgroundLoader.fQueueItemResourceMap.Delete(fResource.GetResource);
+    finally
+     fResourceBackgroundLoader.fQueueItemResourceMapLock.Release;
+    end;
    end;
   finally
-   for Index:=0 to fResourceBackgroundLoader.fQueueItems.Count-1 do begin
-    if fResourceBackgroundLoader.fQueueItems.Items[Index]=self then begin
-     fResourceBackgroundLoader.fQueueItems.Delete(Index);
-     break;
+   fResourceBackgroundLoader.fQueueItemLock.Acquire;
+   try
+    for Index:=0 to fResourceBackgroundLoader.fQueueItems.Count-1 do begin
+     if fResourceBackgroundLoader.fQueueItems.Items[Index]=self then begin
+      fResourceBackgroundLoader.fQueueItems.Delete(Index);
+      break;
+     end;
     end;
+   finally
+    fResourceBackgroundLoader.fQueueItemLock.Release;
    end;
   end;
  end;
@@ -974,9 +1002,11 @@ constructor TpvResourceBackgroundLoader.Create(const aResourceManager:TpvResourc
 begin
  fResourceManager:=aResourceManager;
  fEvent:=TPasMPEvent.Create(nil,false,false,'');
- fLock:=TPasMPSlimReaderWriterLock.Create;
+ fLock:=TPasMPSpinLock.Create;
  fQueueItems.Initialize;
+ fQueueItemLock:=TPasMPSpinLock.Create;
  fQueueItemResourceMap:=TQueueItemResourceMap.Create(nil);
+ fQueueItemResourceMapLock:=TPasMPSpinLock.Create;
  inherited Create(false);
 end;
 
@@ -986,7 +1016,9 @@ begin
   fQueueItems.Items[0].Free;
  end;
  fQueueItems.Finalize;
+ FreeAndNil(fQueueItemLock);
  FreeAndNil(fQueueItemResourceMap);
+ FreeAndNil(fQueueItemResourceMapLock);
  FreeAndNil(fEvent);
  FreeAndNil(fLock);
  inherited Destroy;
@@ -1027,13 +1059,18 @@ begin
    try
 
     QueueItem:=nil;
-    for Index:=0 to fQueueItems.Count-1 do begin
-     TemporaryQueueItem:=fQueueItems.Items[Index];
-     if (TemporaryQueueItem.fResource.GetResource.fAsyncLoadState=TpvResource.TAsyncLoadState.Queued) and
-        (TemporaryQueueItem.fDependencies.Count=0) then begin
-      QueueItem:=TemporaryQueueItem;
-      break;
+    fQueueItemLock.Acquire;
+    try
+     for Index:=0 to fQueueItems.Count-1 do begin
+      TemporaryQueueItem:=fQueueItems.Items[Index];
+      if (TemporaryQueueItem.fResource.GetResource.fAsyncLoadState=TpvResource.TAsyncLoadState.Queued) and
+         (TemporaryQueueItem.fDependencies.Count=0) then begin
+       QueueItem:=TemporaryQueueItem;
+       break;
+      end;
      end;
+    finally
+     fQueueItemLock.Release;
     end;
 
     if assigned(QueueItem) then begin
@@ -1054,7 +1091,12 @@ begin
         try
          Resource.LoadMetaData;
         finally
-         Success:=Resource.BeginLoad(Stream);
+         fResourceManager.fLoadLock.Acquire;
+         try
+          Success:=Resource.BeginLoad(Stream);
+         finally
+          fResourceManager.fLoadLock.Release;
+         end;
         end;
        finally
         FreeAndNil(Stream);
@@ -1068,16 +1110,21 @@ begin
 
      if QueueItem.fDependents.Count>0 then begin
       try
-       for OtherIndex:=0 to QueueItem.fDependents.Count-1 do begin
-        for OtherOtherIndex:=0 to fQueueItems.Count-1 do begin
-         TemporaryQueueItem:=fQueueItems.Items[OtherOtherIndex];
-         for OtherOtherOtherIndex:=0 to TemporaryQueueItem.fDependencies.Count-1 do begin
-          if TemporaryQueueItem.fDependencies.Items[OtherOtherOtherIndex]=QueueItem.fDependents.Items[OtherIndex] then begin
-           TemporaryQueueItem.fDependencies.Delete(OtherOtherOtherIndex);
-           break;
+       fQueueItemLock.Acquire;
+       try
+        for OtherIndex:=0 to QueueItem.fDependents.Count-1 do begin
+         for OtherOtherIndex:=0 to fQueueItems.Count-1 do begin
+          TemporaryQueueItem:=fQueueItems.Items[OtherOtherIndex];
+          for OtherOtherOtherIndex:=0 to TemporaryQueueItem.fDependencies.Count-1 do begin
+           if TemporaryQueueItem.fDependencies.Items[OtherOtherOtherIndex]=QueueItem.fDependents.Items[OtherIndex] then begin
+            TemporaryQueueItem.fDependencies.Delete(OtherOtherOtherIndex);
+            break;
+           end;
           end;
          end;
         end;
+       finally
+        fQueueItemLock.Release;
        end;
       finally
        QueueItem.fDependents.Clear;
@@ -1117,7 +1164,12 @@ begin
 
   Resource:=aResource.GetResource;
 
-  QueueItem:=fQueueItemResourceMap.Values[Resource];
+  fQueueItemResourceMapLock.Acquire;
+  try
+   QueueItem:=fQueueItemResourceMap.Values[Resource];
+  finally
+   fQueueItemResourceMapLock.Release;
+  end;
 
   if not assigned(QueueItem) then begin
 
@@ -1127,7 +1179,12 @@ begin
 
    if assigned(aParent) then begin
 
-    TemporaryQueueItem:=fQueueItemResourceMap.Values[aParent.GetResource];
+    fQueueItemResourceMapLock.Acquire;
+    try
+     TemporaryQueueItem:=fQueueItemResourceMap.Values[aParent.GetResource];
+    finally
+     fQueueItemResourceMapLock.Release;
+    end;
 
     if assigned(TemporaryQueueItem) then begin
 
@@ -1186,7 +1243,12 @@ begin
   if Success then begin
    fLock.Release;
    try
-    Success:=Resource.EndLoad;
+    fResourceManager.fLoadLock.Acquire;
+    try
+     Success:=Resource.EndLoad;
+    finally
+     fResourceManager.fLoadLock.Release;
+    end;
    finally
     fLock.Acquire;
    end;
@@ -1215,7 +1277,12 @@ begin
  fLock.Acquire;
  try
 
-  QueueItem:=fQueueItemResourceMap.Values[aResource];
+  fQueueItemResourceMapLock.Acquire;
+  try
+   QueueItem:=fQueueItemResourceMap.Values[aResource];
+  finally
+   fQueueItemResourceMapLock.Release;
+  end;
   if assigned(QueueItem) then begin
 
    while (QueueItem.fDependencies.Count>0) or
@@ -1272,9 +1339,22 @@ begin
  result:=true;
 
  Index:=0;
- while Index<fQueueItems.Count do begin
+ while true do begin
 
-  QueueItem:=fQueueItems.Items[Index];
+  fQueueItemLock.Acquire;
+  try
+   if Index<fQueueItems.Count then begin
+    QueueItem:=fQueueItems.Items[Index];
+   end else begin
+    QueueItem:=nil;
+   end;
+  finally
+   fQueueItemLock.Release;
+  end;
+
+  if not assigned(QueueItem) then begin
+   break;
+  end;
 
   Resource:=QueueItem.fResource;
   try
@@ -1316,7 +1396,12 @@ begin
  fLock.Acquire;
  try
   ProcessIteration(pvApplication.HighResolutionTimer.GetTime,aTimeOut);
-  result:=fQueueItems.Count=0;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count=0;
+  finally
+   fQueueItemLock.Release;
+  end;
  finally
   fLock.Release;
  end;
@@ -1324,14 +1409,30 @@ end;
 
 function TpvResourceBackgroundLoader.WaitForResources(const aTimeout:TpvInt64=-1):boolean;
 var Start:TpvHighResolutionTime;
+    OK:boolean;
 begin
  Start:=pvApplication.HighResolutionTimer.GetTime;
  fLock.Acquire;
  try
-  while (fQueueItems.Count>0) and ProcessIteration(Start,aTimeout) do begin
-   TPasMP.Relax;
+  repeat
+   fQueueItemLock.Acquire;
+   try
+    OK:=fQueueItems.Count>0;
+   finally
+    fQueueItemLock.Release;
+   end;
+   if OK and ProcessIteration(Start,aTimeout) then begin
+    TPasMP.Relax;
+   end else begin
+    break;
+   end;
+  until false;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count=0;
+  finally
+   fQueueItemLock.Release;
   end;
-  result:=fQueueItems.Count=0;
  finally
   fLock.Release;
  end;
@@ -1341,7 +1442,12 @@ function TpvResourceBackgroundLoader.GetCountOfQueuedResources:TpvSizeInt;
 begin
  fLock.Acquire;
  try
-  result:=fQueueItems.Count;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count;
+  finally
+   fQueueItemLock.Release;
+  end;
  finally
   fLock.Release;
  end;
@@ -1398,18 +1504,20 @@ constructor TpvResourceManager.Create;
 begin
  inherited Create;
 
- fLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fLocked:=false;
+
+ fLoadLock:=TPasMPCriticalSection.Create;
 
  fResourceClassTypeList:=TResourceClassTypeList.Create;
  fResourceClassTypeList.OwnsObjects:=true;
 
- fResourceClassTypeListLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fResourceClassTypeListLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fResourceClassTypeMap:=TResourceClassTypeMap.Create(nil);
 
- fResourceHandleLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fResourceHandleLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fResourceHandleManager:=TResourceHandleManager.Create;
 
@@ -1422,7 +1530,7 @@ begin
  fDelayedToFreeResources:=TResourceList.Create;
  fDelayedToFreeResources.OwnsObjects:=true;
 
- fMetaResourceLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fMetaResourceLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
  fMetaResourceList:=TMetaResourceList.Create;
  fMetaResourceList.OwnsObjects:=false;
  fMetaResourceUUIDMap:=TMetaResourceUUIDMap.Create(nil);
@@ -1468,6 +1576,8 @@ begin
  FreeAndNil(fMetaResourceAssetNameMap);
 
  FreeAndNil(fMetaResourceLock);
+
+ FreeAndNil(fLoadLock);
 
  FreeAndNil(fLock);
 

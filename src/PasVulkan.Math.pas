@@ -757,6 +757,8 @@ type PpvScalar=^TpvScalar;
 //     constructor Create; overload;
        constructor Create(const pX:TpvScalar); overload;
        constructor Create(const pXX,pXY,pXZ,pXW,pYX,pYY,pYZ,pYW,pZX,pZY,pZZ,pZW,pWX,pWY,pWZ,pWW:TpvScalar); overload;
+       constructor Create(const pX,pY,pZ:TpvVector3); overload;
+       constructor Create(const pX,pY,pZ,pW:TpvVector3); overload;
        constructor Create(const pX,pY,pZ,pW:TpvVector4); overload;
        constructor Create(const pMatrix:TpvMatrix3x3); overload;
        constructor CreateRotateX(const Angle:TpvScalar);
@@ -869,8 +871,8 @@ type PpvScalar=^TpvScalar;
        function Transpose:TpvMatrix4x4; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function EulerAngles:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Normalize:TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
-       function OrthoNormalize:TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
-       function RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function OrthoNormalize:TpvMatrix4x4; //{$ifdef CAN_INLINE}inline;{$endif}
+       function RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4; //{$ifdef CAN_INLINE}inline;{$endif}
        function ToQuaternion:TpvQuaternion;
        function ToQTangent:TpvQuaternion;
        function ToMatrix3x3:TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1484,6 +1486,11 @@ function ModuloPos(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function IEEERemainder(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function Modulus(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 
+function CastFloatToUInt32(const v:TpvFloat):TpvUInt32; {$ifdef CAN_INLINE}inline;{$endif}
+function CastUInt32ToFloat(const v:TpvUInt32):TpvFloat; {$ifdef CAN_INLINE}inline;{$endif}
+
+function SignNonZero(const v:TpvFloat):TpvInt32; {$ifdef CAN_INLINE}inline;{$endif}
+
 function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function SolveQuadraticRoots(const a,b,c:TpvScalar;out t1,t2:TpvScalar):boolean;
 function LinearPolynomialRoot(const a,b:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1848,17 +1855,32 @@ begin
  end;
 end;
 
-function IEEERemainder(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function IEEERemainder(x,y:TpvScalar):TpvScalar;
 begin
  result:=x-(round(x/y)*y);
 end;
 
-function Modulus(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function Modulus(x,y:TpvScalar):TpvScalar;
 begin
  result:=(abs(x)-(abs(y)*(floor(abs(x)/abs(y)))))*Sign(x);
 end;
 
-function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function CastFloatToUInt32(const v:TpvFloat):TpvUInt32;
+begin
+ result:=PpvUInt32(Pointer(@v))^;
+end;
+
+function CastUInt32ToFloat(const v:TpvUInt32):TpvFloat;
+begin
+ result:=PpvFloat(Pointer(@v))^;
+end;
+
+function SignNonZero(const v:TpvFloat):TpvInt32;
+begin
+ result:=1-(TpvInt32(TpvUInt32(TpvUInt32(PpvUInt32(Pointer(@v))^) shr 31)) shl 1);
+end;
+
+function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar;
 begin
  result:=(v0.w*v1.z*v2.y*v3.x)-(v0.z*v1.w*v2.y*v3.x)-
          (v0.w*v1.y*v2.z*v3.x)+(v0.y*v1.w*v2.z*v3.x)+
@@ -7834,6 +7856,46 @@ begin
  RawComponents[3,3]:=pWW;
 end;
 
+constructor TpvMatrix4x4.Create(const pX,pY,pZ:TpvVector3);
+begin
+ RawComponents[0,0]:=pX.x;
+ RawComponents[0,1]:=pX.y;
+ RawComponents[0,2]:=pX.z;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=pY.x;
+ RawComponents[1,1]:=pY.y;
+ RawComponents[1,2]:=pY.z;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=pZ.x;
+ RawComponents[2,1]:=pZ.y;
+ RawComponents[2,2]:=pZ.z;
+ RawComponents[2,3]:=0.0;
+ RawComponents[3,0]:=0.0;
+ RawComponents[3,1]:=0.0;
+ RawComponents[3,2]:=0.0;
+ RawComponents[3,3]:=1.0;
+end;
+
+constructor TpvMatrix4x4.Create(const pX,pY,pZ,pW:TpvVector3);
+begin
+ RawComponents[0,0]:=pX.x;
+ RawComponents[0,1]:=pX.y;
+ RawComponents[0,2]:=pX.z;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=pY.x;
+ RawComponents[1,1]:=pY.y;
+ RawComponents[1,2]:=pY.z;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=pZ.x;
+ RawComponents[2,1]:=pZ.y;
+ RawComponents[2,2]:=pZ.z;
+ RawComponents[2,3]:=0.0;
+ RawComponents[3,0]:=pW.x;
+ RawComponents[3,1]:=pW.y;
+ RawComponents[3,2]:=pW.z;
+ RawComponents[3,3]:=1.0;
+end;
+
 constructor TpvMatrix4x4.Create(const pX,pY,pZ,pW:TpvVector4);
 begin
  RawComponents[0,0]:=pX.x;
@@ -7853,7 +7915,6 @@ begin
  RawComponents[3,2]:=pW.z;
  RawComponents[3,3]:=pW.w;
 end;
-
 
 constructor TpvMatrix4x4.Create(const pMatrix:TpvMatrix3x3);
 begin
@@ -11221,98 +11282,101 @@ begin
 end;
 
 function TpvMatrix4x4.OrthoNormalize:TpvMatrix4x4;
-var Backup:TpvVector3;
 begin
- Backup.x:=RawComponents[0,3];
- Backup.y:=RawComponents[1,3];
- Backup.z:=RawComponents[2,3];
- Normal.xyz:=Normal.xyz.Normalize;
- Tangent.xyz:=(Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz))).Normalize;
- Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
- Bitangent.xyz:=Bitangent.xyz-(Normal.xyz*Bitangent.xyz.Dot(Normal.xyz));
- Bitangent.xyz:=(Bitangent.xyz-(Tangent.xyz*Bitangent.xyz.Dot(Tangent.xyz))).Normalize;
- Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
- Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz).Normalize;
- result.RawComponents:=RawComponents;
- result.RawComponents[0,3]:=Backup.x;
- result.RawComponents[1,3]:=Backup.y;
- result.RawComponents[2,3]:=Backup.z;
+ result.Normal.xyz:=Normal.xyz.Normalize;
+ result.Tangent.xyz:=(Tangent.xyz-(result.Normal.xyz*Tangent.xyz.Dot(result.Normal.xyz))).Normalize;
+ result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
+ result.Bitangent.xyz:=result.Bitangent.xyz-(result.Normal.xyz*result.Bitangent.xyz.Dot(result.Normal.xyz));
+ result.Bitangent.xyz:=(result.Bitangent.xyz-(result.Tangent.xyz*result.Bitangent.xyz.Dot(result.Tangent.xyz))).Normalize;
+ result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
+ result.Normal.xyz:=result.Tangent.xyz.Cross(result.Bitangent.xyz).Normalize;
+ result.RawComponents[0,3]:=RawComponents[0,3];
+ result.RawComponents[1,3]:=RawComponents[1,3];
+ result.RawComponents[2,3]:=RawComponents[2,3];
+ result.RawComponents[3,3]:=RawComponents[3,3];
+ result.RawComponents[3,0]:=RawComponents[3,0];
+ result.RawComponents[3,1]:=RawComponents[3,1];
+ result.RawComponents[3,2]:=RawComponents[3,2];
 end;
 
 function TpvMatrix4x4.RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4;
-var Backup,Bisector,Axis:TpvVector3;
+var Bisector,Axis:TpvVector3;
 begin
- Backup.x:=RawComponents[0,3];
- Backup.y:=RawComponents[1,3];
- Backup.z:=RawComponents[2,3];
  begin
   if Normal.xyz.Length<Tolerance then begin
-   // Degenerate case, compute new normal
+   // Degenerate case, compute new Normal.xyz
    Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz);
    if Normal.xyz.Length<Tolerance then begin
-    Tangent.xyz:=TpvVector3.XAxis;
-    Bitangent.xyz:=TpvVector3.YAxis;
-    Normal.xyz:=TpvVector3.ZAxis;
-    RawComponents[0,3]:=Backup.x;
-    RawComponents[1,3]:=Backup.y;
-    RawComponents[2,3]:=Backup.z;
+    result.Tangent.xyz:=TpvVector3.XAxis;
+    result.Bitangent.xyz:=TpvVector3.YAxis;
+    result.Normal.xyz:=TpvVector3.ZAxis;
+    result.RawComponents[0,3]:=RawComponents[0,3];
+    result.RawComponents[1,3]:=RawComponents[1,3];
+    result.RawComponents[2,3]:=RawComponents[2,3];
+    result.RawComponents[3,3]:=RawComponents[3,3];
+    result.RawComponents[3,0]:=RawComponents[3,0];
+    result.RawComponents[3,1]:=RawComponents[3,1];
+    result.RawComponents[3,2]:=RawComponents[3,2];
     exit;
    end;
   end;
-  Normal.xyz:=Normal.xyz.Normalize;
+  result.Normal.xyz:=Normal.xyz.Normalize;
  end;
  begin
-  // Project tangent and bitangent onto the normal orthogonal plane
-  Tangent.xyz:=Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz));
-  Bitangent.xyz:=Bitangent.xyz-(Normal.xyz*Bitangent.xyz.Dot(Normal.xyz));
+  // Project Tangent.xyz and Bitangent.xyz onto the Normal.xyz orthogonal plane
+  result.Tangent.xyz:=Tangent.xyz-(result.Normal.xyz*Tangent.xyz.Dot(result.Normal.xyz));
+  result.Bitangent.xyz:=Bitangent.xyz-(result.Normal.xyz*Bitangent.xyz.Dot(result.Normal.xyz));
  end;
  begin
   // Check for several degenerate cases
-  if Tangent.xyz.Length<Tolerance then begin
-   if Bitangent.xyz.Length<Tolerance then begin
-    Tangent.xyz:=Normal.xyz.Normalize;
-    if (Tangent.x<=Tangent.y) and (Tangent.x<=Tangent.z) then begin
-     Tangent.xyz:=TpvVector3.XAxis;
-    end else if (Tangent.y<=Tangent.x) and (Tangent.y<=Tangent.z) then begin
-     Tangent.xyz:=TpvVector3.YAxis;
+  if result.Tangent.xyz.Length<Tolerance then begin
+   if result.Bitangent.xyz.Length<Tolerance then begin
+    result.Tangent.xyz:=result.Normal.xyz.Normalize;
+    if (result.Tangent.xyz.x<=result.Tangent.xyz.y) and (result.Tangent.xyz.x<=result.Tangent.xyz.z) then begin
+     result.Tangent.xyz:=TpvVector3.XAxis;
+    end else if (result.Tangent.xyz.y<=result.Tangent.xyz.x) and (result.Tangent.xyz.y<=result.Tangent.xyz.z) then begin
+     result.Tangent.xyz:=TpvVector3.YAxis;
     end else begin
-     Tangent.xyz:=TpvVector3.ZAxis;
+     result.Tangent.xyz:=TpvVector3.ZAxis;
     end;
-    Tangent.xyz:=Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz));
-    Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
+    result.Tangent.xyz:=result.Tangent.xyz-(result.Normal.xyz*result.Tangent.xyz.Dot(result.Normal.xyz));
+    result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
    end else begin
-    Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
+    result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
    end;
   end else begin
-   Tangent.xyz:=Tangent.xyz.Normalize;
-   if Bitangent.xyz.Length<Tolerance then begin
-    Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
+   result.Tangent.xyz:=result.Tangent.xyz.Normalize;
+   if result.Bitangent.xyz.Length<Tolerance then begin
+    result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
    end else begin
-    Bitangent.xyz:=Bitangent.xyz.Normalize;
-    Bisector:=Tangent.xyz+Bitangent.xyz;
+    result.Bitangent.xyz:=result.Bitangent.xyz.Normalize;
+    Bisector:=result.Tangent.xyz+result.Bitangent.xyz;
     if Bisector.Length<Tolerance then begin
-     Bisector:=Tangent.xyz;
+     Bisector:=result.Tangent.xyz;
     end else begin
      Bisector:=Bisector.Normalize;
     end;
-    Axis:=Bisector.Cross(Normal.xyz).Normalize;
+    Axis:=Bisector.Cross(result.Normal.xyz).Normalize;
     if Axis.Dot(Tangent.xyz)>0.0 then begin
-     Tangent.xyz:=(Bisector+Axis).Normalize;
-     Bitangent.xyz:=(Bisector-Axis).Normalize;
+     result.Tangent.xyz:=(Bisector+Axis).Normalize;
+     result.Bitangent.xyz:=(Bisector-Axis).Normalize;
     end else begin
-     Tangent.xyz:=(Bisector-Axis).Normalize;
-     Bitangent.xyz:=(Bisector+Axis).Normalize;
+     result.Tangent.xyz:=(Bisector-Axis).Normalize;
+     result.Bitangent.xyz:=(Bisector+Axis).Normalize;
     end;
    end;
   end;
  end;
- Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
- Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
- Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz).Normalize;
- result.RawComponents:=RawComponents;
- result.RawComponents[0,3]:=Backup.x;
- result.RawComponents[1,3]:=Backup.y;
- result.RawComponents[2,3]:=Backup.z;
+ result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
+ result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
+ result.Normal.xyz:=result.Tangent.xyz.Cross(result.Bitangent.xyz).Normalize;
+ result.RawComponents[0,3]:=RawComponents[0,3];
+ result.RawComponents[1,3]:=RawComponents[1,3];
+ result.RawComponents[2,3]:=RawComponents[2,3];
+ result.RawComponents[3,3]:=RawComponents[3,3];
+ result.RawComponents[3,0]:=RawComponents[3,0];
+ result.RawComponents[3,1]:=RawComponents[3,1];
+ result.RawComponents[3,2]:=RawComponents[3,2];
 end;
 
 function TpvMatrix4x4.ToQuaternion:TpvQuaternion;
@@ -18795,6 +18859,47 @@ begin
    end;
   end;
  end;
+end;
+
+// 32-bit normal encoding from Journal of Computer Graphics Techniques Vol. 3, No. 2, 2014
+function EncodeNormalAsUInt32(const aNormal:TpvVector3):TpvUInt32;
+var Projected0,Projected1:TpvUInt32;
+    InversedL1Norm,Encoded0,Encoded1:TpvScalar;
+begin
+ InversedL1Norm:=1.0/(abs(aNormal.x)+abs(aNormal.y)+abs(aNormal.z));
+ if aNormal.z<0.0 then begin
+  Encoded0:=1.0-abs(aNormal.y*InversedL1Norm)*SignNonZero(aNormal.x);
+  Encoded1:=1.0-abs(aNormal.x*InversedL1Norm)*SignNonZero(aNormal.y);
+ end else begin
+  Encoded0:=aNormal.x*InversedL1Norm;
+  Encoded1:=aNormal.y*InversedL1Norm;
+ end;
+ Projected0:=((CastFloatToUInt32(Encoded0) and TpvUInt32($80000000)) shr 16) or ((CastFloatToUInt32((abs(Encoded0)+2.0)*0.5) and TpvUInt32($7fffff)) shr 8);
+ Projected1:=((CastFloatToUInt32(Encoded1) and TpvUInt32($80000000)) shr 16) or ((CastFloatToUInt32((abs(Encoded1)+2.0)*0.5) and TpvUInt32($7fffff)) shr 8);
+ if (Projected0 and $7fff)=0 then begin
+  Projected0:=0;
+ end;
+ if (Projected1 and $7fff)=0 then begin
+  Projected1:=0;
+ end;
+ result:=(Projected1 shl 16) or Projected0;
+end;
+
+function DecodeNormalFromUInt32(const aNormal:TpvUInt32):TpvVector3;
+var Projected0,Projected1:TpvUInt32;
+    t:TpvScalar;
+begin
+ Projected0:=aNormal and TpvUInt32($ffff);
+ Projected1:=aNormal shr 16;
+ result.x:=CastUInt32ToFloat(CastFloatToUInt32((CastUInt32ToFloat(TpvUInt32($3f800000) or ((Projected0 and TpvUInt32($7fff)) shl 8))*2.0)-2.0) or ((Projected0 and TpvUInt32($8000)) shl 16));
+ result.y:=CastUInt32ToFloat(CastFloatToUInt32((CastUInt32ToFloat(TpvUInt32($3f800000) or ((Projected1 and TpvUInt32($7fff)) shl 8))*2.0)-2.0) or ((Projected1 and TpvUInt32($8000)) shl 16));
+ result.z:=1.0-(abs(result.x)+abs(result.y));
+ if result.z<0.0 then begin
+  t:=result.x;
+  result.x:=(1.0-abs(result.y))*SignNonZero(t);
+  result.y:=(1.0-abs(t))*SignNonZero(result.y);
+ end;
+ result:=result.Normalize;
 end;
 
 initialization

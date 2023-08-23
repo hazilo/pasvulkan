@@ -212,14 +212,14 @@ begin
   Stream.Free;
  end;
 
- Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_mboit_pass1_frag.spv');
+ Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragShadowTypeName+'_mboit_pass1_frag.spv');
  try
   fMeshFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
  finally
   Stream.Free;
  end;
 
- Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_mboit_masked_pass1_frag.spv');
+ Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragShadowTypeName+'_mboit_pass1_alphatest_frag.spv');
  try
   fMeshMaskedFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
  finally
@@ -737,7 +737,7 @@ begin
                                    aInFlightFrameIndex,
                                    InFlightFrameState^.ViewRenderPassIndex,
                                    InFlightFrameState^.FinalViewIndex,
-                                   InFlightFrameState^.CountViews,
+                                   InFlightFrameState^.CountFinalViews,
                                    FrameGraph.DrawFrameIndex,
                                    aCommandBuffer,
                                    fVulkanPipelineLayout,
@@ -751,7 +751,7 @@ begin
                                   aInFlightFrameIndex,
                                   InFlightFrameState^.ViewRenderPassIndex,
                                   InFlightFrameState^.FinalViewIndex,
-                                  InFlightFrameState^.CountViews,
+                                  InFlightFrameState^.CountFinalViews,
                                   FrameGraph.DrawFrameIndex,
                                   aCommandBuffer,
                                   fVulkanPipelineLayout,
@@ -764,7 +764,7 @@ begin
                                            aInFlightFrameIndex,
                                            InFlightFrameState^.ViewRenderPassIndex,
                                            InFlightFrameState^.FinalViewIndex,
-                                           InFlightFrameState^.CountViews,
+                                           InFlightFrameState^.CountFinalViews,
                                            FrameGraph.DrawFrameIndex,
                                            aCommandBuffer,
                                            fVulkanPipelineLayout,

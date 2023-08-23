@@ -2186,6 +2186,8 @@ type EpvScene3D=class(Exception);
             TImageInfos=array[0..65535] of TVkDescriptorImageInfo;
             TGlobalVulkanDescriptorSets=array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
             TVertexStagePushConstantArray=array[0..MaxRenderPassIndices-1] of TpvScene3D.TVertexStagePushConstants;
+            TInFlightFrameLights=array[0..MaxInFlightFrames-1] of TpvScene3D.TLights;
+            TCountInFlightFrameLights=array[0..MaxInFlightFrames-1] of TpvSizeInt;
       public
        const DoubleSidedFaceCullingModes:array[TDoubleSided,TFrontFacesInversed] of TFaceCullingMode=
               (
@@ -2194,6 +2196,7 @@ type EpvScene3D=class(Exception);
               );
       private
        fLock:TPasMPSpinLock;
+       fLoadLock:TPasMPSpinLock;
        fVulkanDevice:TpvVulkanDevice;
        fUploaded:TPasMPBool32;
        fInUpload:TPasMPBool32;
@@ -2267,8 +2270,8 @@ type EpvScene3D=class(Exception);
        fMaterialDataGeneration:TpvUInt64;
        fMaterialDataProcessedGeneration:TpvUInt64;
        fMaterialDataGenerationLock:TPasMPSpinLock;
-       fLights:array[0..MaxInFlightFrames-1] of TpvScene3D.TLights;
-       fCountLights:array[0..MaxInFlightFrames-1] of TpvSizeInt;
+       fLights:TInFlightFrameLights;
+       fCountLights:TCountInFlightFrameLights;
        fIndirectLights:array[0..MaxInFlightFrames-1,0..MaxVisibleLights-1] of TpvScene3D.TLight;
        fCountIndirectLights:array[0..MaxInFlightFrames-1] of TpvSizeInt;
        fGroupListLock:TPasMPSlimReaderWriterLock;
@@ -2299,6 +2302,7 @@ type EpvScene3D=class(Exception);
        fInFlightFrameImageInfoImageDescriptorUploadedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fRenderPassIndexCounter:TPasMPInt32;
        fPrimaryLightDirection:TpvVector3;
+       fPrimaryShadowMapLightDirection:TpvVector3;
        fDebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays;
        fVulkanDebugPrimitiveVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
@@ -2433,12 +2437,15 @@ type EpvScene3D=class(Exception);
        property VertexStagePushConstants:TVertexStagePushConstantArray read fVertexStagePushConstants;
        property Views:TViews read fViews;
        property PrimaryLightDirection:TpvVector3 read fPrimaryLightDirection write fPrimaryLightDirection;
+       property PrimaryShadowMapLightDirection:TpvVector3 read fPrimaryShadowMapLightDirection write fPrimaryShadowMapLightDirection;
        property LightBuffers:TpvScene3D.TLightBuffers read fLightBuffers;
        property DebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays read fDebugPrimitiveVertexDynamicArrays;
        property Particles:PParticles read fPointerToParticles;
       public
        property DefaultParticleImage:TImage read fDefaultParticleImage;
        property DefaultParticleTexture:TTexture read fDefaultParticleTexture;
+       property Lights:TInFlightFrameLights read fLights;
+       property CountLights:TCountInFlightFrameLights read fCountLights;
       published
        property PotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet read fPotentiallyVisibleSet;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
@@ -6399,6 +6406,9 @@ begin
     Radius:=Infinity;
    end;
   end;
+  if Data^.Type_=TpvScene3D.TLightData.TLightType.PrimaryDirectional then begin
+   fSceneInstance.fPrimaryShadowMapLightDirection:=Direction;
+  end;
   case Data^.Type_ of
    TpvScene3D.TLightData.TLightType.Directional,
    TpvScene3D.TLightData.TLightType.PrimaryDirectional:begin
@@ -9913,6 +9923,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
      CompactCode:TpvUInt64;
      Material,DuplicatedMaterial:TpvScene3D.TMaterial;
      MaterialIDMapArray:TpvScene3D.TGroup.TMaterialIDMapArray;
+     TextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
      OK:boolean;
  begin
   fCountInstanceAnimationChannels:=0;
@@ -10003,9 +10014,13 @@ var LightMap:TpvScene3D.TGroup.TLights;
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
                Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
+               TextureTransform:=Material.fData.GetTextureTransform(TpvScene3D.TTextureIndex(Channel^.TargetSubIndex));
+               if assigned(TextureTransform) then begin
+                TextureTransform^.Active:=true;
+               end;
               end;
              end;
-{             if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
+{            if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
                 (Channel^.TargetSubIndex>=0) then begin
               Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
              end;}
@@ -10534,36 +10549,53 @@ function TpvScene3D.TGroup.BeginLoad(const aStream:TStream):boolean;
 var GLTF:TPasGLTF.TDocument;
 begin
  result:=false;
- if assigned(aStream) then begin
+ fSceneInstance.fLoadLock.Acquire;
+ try
+  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad','Entering...');
   try
-   GLTF:=TPasGLTF.TDocument.Create;
-   try
-    if (length(FileName)>0) and (FileExists(FileName)) then begin
-     GLTF.RootPath:=ExtractFilePath(ExpandFileName(FileName));
+   if assigned(aStream) then begin
+    GLTF:=TPasGLTF.TDocument.Create;
+    try
+     if (length(FileName)>0) and (FileExists(FileName)) then begin
+      GLTF.RootPath:=ExtractFilePath(ExpandFileName(FileName));
+     end;
+     if IsAsset then begin
+      GLTF.GetURI:=AssetGetURI;
+     end;
+     GLTF.LoadFromStream(aStream);
+     AssignFromGLTF(GLTF);
+    finally
+     FreeAndNil(GLTF);
     end;
-    if IsAsset then begin
-     GLTF.GetURI:=AssetGetURI;
-    end;
-    GLTF.LoadFromStream(aStream);
-    AssignFromGLTF(GLTF);
-   finally
-    FreeAndNil(GLTF);
+    result:=true;
    end;
-   result:=true;
-  except
+  finally
+   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad','Leaving...');
   end;
+ finally
+  fSceneInstance.fLoadLock.Release;
  end;
 end;
 
 function TpvScene3D.TGroup.EndLoad:boolean;
 begin
- result:=inherited EndLoad;
- if result then begin
-  if SceneInstance.fUploaded then begin
-   Upload;
-   fSceneInstance.NewImageDescriptorGeneration;
-   fSceneInstance.NewMaterialDataGeneration;
+ fSceneInstance.fLoadLock.Acquire;
+ try
+  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad','Entering...');
+  try
+   result:=inherited EndLoad;
+   if result then begin
+    if SceneInstance.fUploaded then begin
+     Upload;
+     fSceneInstance.NewImageDescriptorGeneration;
+     fSceneInstance.NewMaterialDataGeneration;
+    end;
+   end;
+  finally
+   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad','Leaving...');
   end;
+ finally
+  fSceneInstance.fLoadLock.Release;
  end;
 end;
 
@@ -14416,6 +14448,7 @@ var VisibleBit:TpvUInt32;
       OK:=true;
      end;
      if OK then begin
+      Node:=fGroup.fNodes[aNodeIndex];
       OK:=((not assigned(fOnNodeFilter)) or fOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode)) and
           ((not assigned(GroupOnNodeFilter)) or GroupOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode)) and
           ((not assigned(GlobalOnNodeFilter)) or GlobalOnNodeFilter(aInFlightFrameIndex,aRenderPassIndex,Group,self,Node,InstanceNode));
@@ -14797,6 +14830,8 @@ begin
 
  inherited Create(aResourceManager,aParent,aMetaResource);
 
+ fLoadLock:=TPasMPSpinLock.Create;
+
  if assigned(aVulkanDevice) then begin
   fVulkanDevice:=aVulkanDevice;
  end else if assigned(pvApplication) then begin
@@ -14938,6 +14973,8 @@ begin
  fEmptyMaterial.IncRef;
 
  fPrimaryLightDirection:=TpvVector3.InlineableCreate(0.5,-1.0,-1.0).Normalize;
+
+ fPrimaryShadowMapLightDirection:=TpvVector3.InlineableCreate(0.5,-1.0,-1.0).Normalize;
 
 //fPrimaryLightDirection:=TpvVector3.InlineableCreate(0.333333333333,-0.666666666666,-0.666666666666).Normalize;
 
@@ -15242,6 +15279,8 @@ begin
  FreeAndNil(fObjectListLock);
 
  FreeAndNil(fLock);
+
+ FreeAndNil(fLoadLock);
 
  inherited Destroy;
 end;
