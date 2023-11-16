@@ -201,11 +201,16 @@ begin
  fRenderer.MaxMSAA:=UnitApplication.Application.MaxMSAA;
  fRenderer.MaxShadowMSAA:=UnitApplication.Application.MaxShadowMSAA;
  fRenderer.ShadowMapSize:=UnitApplication.Application.ShadowMapSize;
+ fRenderer.GlobalIlluminationCaching:=false;
  fRenderer.Prepare;
 
  fRenderer.AcquirePersistentResources;
 
  fRendererInstance:=TpvScene3DRendererInstance.Create(fRenderer,UnitApplication.Application.VirtualReality);
+
+ fRendererInstance.PixelAmountFactor:=1.0;
+
+ fRendererInstance.UseDebugBlit:=false;
 
  fRendererInstance.Prepare;
 
@@ -223,8 +228,8 @@ begin
  fCameraIndex:=-1;
 
  fCameraMatrix:=TpvMatrix4x4.CreateLookAt(Center+(TpvVector3.Create(sin(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0),
-                                                                     sin(-CameraRotationY*PI*2.0),
-                                                                     cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
+                                                                    sin(-CameraRotationY*PI*2.0),
+                                                                    cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
                                                            (Max(Max(Bounds[0],Bounds[1]),Bounds[2])*2.0*1.0)),
                                            Center,
                                            TpvVector3.Create(0.0,1.0,0.0)).SimpleInverse;
@@ -547,7 +552,19 @@ begin
   fUpdateLock.Release;
  end;
 
- fScene3D.PrepareGPUUpdate(InFlightFrameIndex);
+ fScene3D.ResetFrame(InFlightFrameIndex);
+
+ fScene3D.PrepareFrame(InFlightFrameIndex);
+
+ fRendererInstance.ResetFrame(InFlightFrameIndex);
+
+ fRendererInstance.CameraViewMatrices[InFlightFrameIndex]:=InFlightFrameState^.CameraViewMatrix;
+
+ if InFlightFrameState^.UseView then begin
+  fRendererInstance.AddView(InFlightFrameIndex,InFlightFrameState^.View);
+ end;
+
+ fRendererInstance.PrepareFrame(InFlightFrameIndex,pvApplication.DrawFrameCounter);
 
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,true);
 
@@ -571,33 +588,19 @@ begin
 
  InFlightFrameState:=@fInFlightFrameStates[InFlightFrameIndex];
 
- fScene3D.ExecuteGPUUpdate(InFlightFrameIndex);
+ fScene3D.BeginFrame(InFlightFrameIndex);
 
- fScene3D.TransferViewsToPreviousViews;
+ fRendererInstance.UploadFrame(InFlightFrameIndex);
 
- fScene3D.ClearViews;
+ fScene3D.UploadFrame(InFlightFrameIndex);
 
- fScene3D.ResetRenderPasses;
+ fRendererInstance.DrawFrame(pvApplication.SwapChainImageIndex,
+                             pvApplication.DrawInFlightFrameIndex,
+                             pvApplication.DrawFrameCounter,
+                             aWaitSemaphore,
+                             aWaitFence);
 
- fRendererInstance.Reset;
-
- fRendererInstance.CameraViewMatrix:=InFlightFrameState^.CameraViewMatrix;
-
- if InFlightFrameState^.UseView then begin
-  fRendererInstance.AddView(InFlightFrameState^.View);
- end;
-
- fRendererInstance.DrawUpdate(InFlightFrameIndex,pvApplication.DrawFrameCounter);
-
- fScene3D.UpdateViews(InFlightFrameIndex);
-
- fRenderer.Flush(InFlightFrameIndex,aWaitSemaphore);
-
- fRendererInstance.Draw(pvApplication.SwapChainImageIndex,
-                        pvApplication.DrawInFlightFrameIndex,
-                        pvApplication.DrawFrameCounter,
-                        aWaitSemaphore,
-                        aWaitFence);
+ fScene3D.EndFrame(InFlightFrameIndex);
 
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,false);
 

@@ -83,6 +83,7 @@ type { TpvScene3DRendererPassesCascadedShadowMapRenderPass }
        fOnSetRenderPassResourcesDone:boolean;
        procedure OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
                                           const aPipelineLayout:TpvVulkanPipelineLayout;
+                                          const aRendererInstance:TObject;
                                           const aRenderPassIndex:TpvSizeInt;
                                           const aPreviousInFlightFrameIndex:TpvSizeInt;
                                           const aInFlightFrameIndex:TpvSizeInt);
@@ -93,6 +94,9 @@ type { TpvScene3DRendererPassesCascadedShadowMapRenderPass }
        fMeshVertexShaderModule:TpvVulkanShaderModule;
        fMeshFragmentShaderModule:TpvVulkanShaderModule;
        fMeshMaskedFragmentShaderModule:TpvVulkanShaderModule;
+       fPassVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+       fPassVulkanDescriptorPool:TpvVulkanDescriptorPool;
+       fPassVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
        fVulkanPipelineShaderStageMeshVertex:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshFragment:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshMaskedFragment:TpvVulkanPipelineShaderStage;
@@ -212,18 +216,11 @@ begin
 
  fVulkanPipelineShaderStageMeshMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshMaskedFragmentShaderModule,'main');
 
- fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
- fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3D.TVertexStagePushConstants));
- fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.GlobalVulkanDescriptorSetLayout);
- fVulkanPipelineLayout.Initialize;
-
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleasePersistentResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
-
- FreeAndNil(fVulkanPipelineLayout);
 
  FreeAndNil(fVulkanPipelineShaderStageMeshVertex);
 
@@ -241,7 +238,8 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.AcquireVolatileResources;
-var AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
+var InFlightFrameIndex:TpvSizeInt;
+    AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
     VulkanGraphicsPipeline:TpvVulkanGraphicsPipeline;
@@ -250,6 +248,38 @@ begin
  inherited AcquireVolatileResources;
 
  fVulkanRenderPass:=VulkanRenderPass;
+
+ fPassVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
+ fPassVulkanDescriptorSetLayout.AddBinding(0,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.Initialize;
+
+ fPassVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.Initialize;
+
+ for InFlightFrameIndex:=0 to FrameGraph.CountInFlightFrames-1 do begin
+  fPassVulkanDescriptorSets[InFlightFrameIndex]:=TpvVulkanDescriptorSet.Create(fPassVulkanDescriptorPool,
+                                                                                 fPassVulkanDescriptorSetLayout);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(0,
+                                                                       0,
+                                                                       1,
+                                                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                                       [],
+                                                                       [fInstance.VulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [],
+                                                                       false);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].Flush;
+ end;
+
+ fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
+ fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3D.TVertexStagePushConstants));
+ fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.GlobalVulkanDescriptorSetLayout);
+ fVulkanPipelineLayout.AddDescriptorSetLayout(fPassVulkanDescriptorSetLayout);
+ fVulkanPipelineLayout.Initialize;
 
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
@@ -280,11 +310,11 @@ begin
      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshVertex);
      if AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Mask then begin
       VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshMaskedFragment);
-     end else begin
-      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshFragment);
+{    end else begin
+      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshFragment);}
      end;
 
-     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TVkPrimitiveTopology(PrimitiveTopology);
+     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TpvScene3D.VulkanPrimitiveTopologies[PrimitiveTopology];
      VulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
      fInstance.Renderer.Scene3D.InitializeGraphicsPipeline(VulkanGraphicsPipeline);
@@ -385,7 +415,8 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleaseVolatileResources;
-var AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
+var Index:TpvSizeInt;
+    AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
 begin
@@ -396,6 +427,12 @@ begin
    end;
   end;
  end;
+ FreeAndNil(fVulkanPipelineLayout);
+ for Index:=0 to fInstance.Renderer.CountInFlightFrames-1 do begin
+  FreeAndNil(fPassVulkanDescriptorSets[Index]);
+ end;
+ FreeAndNil(fPassVulkanDescriptorPool);
+ FreeAndNil(fPassVulkanDescriptorSetLayout);
  inherited ReleaseVolatileResources;
 end;
 
@@ -405,13 +442,21 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
-                                                                            const aPipelineLayout:TpvVulkanPipelineLayout;
-                                                                            const aRenderPassIndex:TpvSizeInt;
-                                                                            const aPreviousInFlightFrameIndex:TpvSizeInt;
-                                                                            const aInFlightFrameIndex:TpvSizeInt);
+                                                                                       const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                                                       const aRendererInstance:TObject;
+                                                                                       const aRenderPassIndex:TpvSizeInt;
+                                                                                       const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                                                                       const aInFlightFrameIndex:TpvSizeInt);
 begin
  if not fOnSetRenderPassResourcesDone then begin
   fOnSetRenderPassResourcesDone:=true;
+  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       fVulkanPipelineLayout.Handle,
+                                       1,
+                                       1,
+                                       @fPassVulkanDescriptorSets[aInFlightFrameIndex].Handle,
+                                       0,
+                                       nil);
  end;
 end;
 
@@ -429,7 +474,8 @@ begin
 
   if fInstance.Renderer.ShadowMode<>TpvScene3DRendererShadowMode.None then begin
 
-   fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],
+   fInstance.Renderer.Scene3D.Draw(fInstance,
+                                   fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],
                                    -1,
                                    aInFlightFrameIndex,
                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,
@@ -441,7 +487,8 @@ begin
                                    OnSetRenderPassResources,
                                    [TpvScene3D.TMaterial.TAlphaMode.Opaque]);
 
-   fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
+   fInstance.Renderer.Scene3D.Draw(fInstance,
+                                   fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
                                    -1,
                                    aInFlightFrameIndex,
                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,
@@ -453,7 +500,8 @@ begin
                                    OnSetRenderPassResources,
                                    [TpvScene3D.TMaterial.TAlphaMode.Mask]);
 
- { fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
+ { fInstance.Renderer.Scene3D.Draw(fInstance,
+                                   fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
                                    -1,
                                    aInFlightFrameIndex,
                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,

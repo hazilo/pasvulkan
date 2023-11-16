@@ -111,6 +111,7 @@ begin
  fForceUseValidationLayers:=false;
  fForceNoVSync:=false;
  VulkanNVIDIAAfterMath:=false;
+ //WaitOnPreviousFrame:=true;
  fMaxMSAA:=0;
  fMaxShadowMSAA:=1;
  fShadowMapSize:=2048;
@@ -209,6 +210,8 @@ begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.SMAA;
     end else if Parameter='msaa' then begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAA;
+    end else if Parameter='msaasmaa' then begin
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAASMAA;
     end else if Parameter='taa' then begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.TAA;
     end else begin

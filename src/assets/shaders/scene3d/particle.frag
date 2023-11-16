@@ -2,11 +2,14 @@
 
 #define PARTICLE_FRAGMENT_SHADER
 
-#extension GL_EXT_multiview : enable
+#ifndef VOXELIZATION  
+  #extension GL_EXT_multiview : enable
+#endif
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_EXT_control_flow_attributes : enable
 
 #if defined(LOCKOIT) || defined(DFAOIT)
   #extension GL_ARB_post_depth_coverage : enable
@@ -30,10 +33,26 @@
   layout(early_fragment_tests) in;
 #endif
 
-layout(location = 0) in vec3 inViewSpacePosition;
+#ifdef VOXELIZATION
+  layout(location = 0) in vec3 inWorldSpacePosition;
+#else
+  layout(location = 0) in vec3 inViewSpacePosition;
+#endif
 layout(location = 1) in vec2 inTexCoord;
 layout(location = 2) in vec4 inColor;
-layout(location = 3) flat in uint inTextureID;
+#ifdef VOXELIZATION
+  layout(location = 3) in vec3 inNormal;
+  layout(location = 4) flat in uint inTextureID;
+  layout(location = 5) flat in vec3 inAABBMin;
+  layout(location = 6) flat in vec3 inAABBMax;
+  layout(location = 7) flat in uint inCascadeIndex; 
+  layout(location = 8) in vec3 inVoxelPosition;
+  layout(location = 9) flat in vec3 inVertex0;
+  layout(location = 10) flat in vec3 inVertex1;
+  layout(location = 11) flat in vec3 inVertex2;
+#else
+  layout(location = 3) flat in uint inTextureID;
+#endif
 
 // Specialization constants are sadly unusable due to dead slow shader stage compilation times with several minutes "per" pipeline, 
 // when the validation layers and a debugger (GDB, LLDB, etc.) are active at the same time!
@@ -51,7 +70,7 @@ struct View {
   mat4 inverseProjectionMatrix;
 };
 
-layout(std140, set = 0, binding = 0) uniform uboViews {
+layout(std140, set = 1, binding = 0) uniform uboViews {
   View views[256];
 } uView;
 
@@ -59,17 +78,50 @@ layout(set = 0, binding = 4) uniform sampler2D u2DTextures[];
 
 ///layout(set = 0, binding = 4) uniform samplerCube uCubeTextures[];
 
-#define TRANSPARENCY_DECLARATION
-#include "transparency.glsl"
-#undef TRANSPARENCY_DECLARATION
+#ifdef VOXELIZATION
+  layout(location = 0) out vec4 outFragColor;
+  #include "voxelization_globals.glsl" 
+#endif
+
+#ifndef VOXELIZATION
+  #define TRANSPARENCY_DECLARATION
+  #include "transparency.glsl"
+  #undef TRANSPARENCY_DECLARATION
+#endif
 
 /* clang-format on */
 
-#define TRANSPARENCY_GLOBALS
-#include "transparency.glsl"
-#undef TRANSPARENCY_GLOBALS
+#if defined(VOXELIZATION)
+  #include "rgb9e5.glsl"
+#else
+  #define TRANSPARENCY_GLOBALS
+  #include "transparency.glsl"
+  #undef TRANSPARENCY_GLOBALS
+#endif
+
 
 void main() {
+
+#ifdef VOXELIZATION
+
+#if 0
+  bool additiveBlending = (inTextureID & 0x80000000u) != 0; // Reuse the MSB of the texture ID to indicate additive blending
+  if(additiveBlending) {
+    discard;
+    return;
+  } 
+#endif 
+
+  vec4 baseColor = (any(lessThan(inTexCoord, vec2(0.0))) || any(greaterThan(inTexCoord, vec2(1.0)))) ? vec4(0.0) : (texture(u2DTextures[nonuniformEXT(((inTextureID & 0x3fff) << 1) | (int(1/*sRGB*/) & 1))], inTexCoord) * inColor);
+  vec4 emissionColor = baseColor ;
+  float alpha = baseColor.w;
+
+  uint flags = (1u << 6u); // Double-sided
+  vec3 normal = inNormal;
+
+  #include "voxelization_fragment.glsl" 
+
+#else
 
   bool additiveBlending = (inTextureID & 0x80000000u) != 0; // Reuse the MSB of the texture ID to indicate additive blending
 
@@ -90,6 +142,8 @@ void main() {
 #define TRANSPARENCY_IMPLEMENTATION
 #include "transparency.glsl"
 #undef TRANSPARENCY_IMPLEMENTATION
+
+#endif
 
 }
 

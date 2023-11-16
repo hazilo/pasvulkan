@@ -155,7 +155,7 @@ begin
                                [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                               );
 
- fResourceOutput:=AddImageOutput('resourcetype_color_optimized_non_alpha',
+ fResourceOutput:=AddImageOutput('resourcetype_color_fullres_optimized_non_alpha',
                                  'resource_lens_final_color',
                                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                  TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
@@ -285,7 +285,7 @@ begin
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
                                                                  [TVkDescriptorImageInfo.Create(fInstance.Renderer.GeneralSampler.Handle,
-                                                                                                fInstance.SceneMipmappedArray2DImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
+                                                                                                fInstance.FullResSceneMipmappedArray2DImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
                                                                                                 TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],
@@ -326,8 +326,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fInstance.Width,fInstance.Height,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fInstance.Width,fInstance.Height);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceOutput.Width,fResourceOutput.Height,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceOutput.Width,fResourceOutput.Height);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -407,7 +407,7 @@ procedure TpvScene3DRendererPassesLensResolveRenderPass.Execute(const aCommandBu
 var Matrix:TpvMatrix4x4;
 begin
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
- Matrix:=fInstance.Renderer.Scene3D.Views.Items[fInstance.InFlightFrameStates[aInFlightFrameIndex].FinalViewIndex].ViewMatrix;
+ Matrix:=fInstance.Views[aInFlightFrameIndex].Items[fInstance.InFlightFrameStates[aInFlightFrameIndex].FinalViewIndex].ViewMatrix;
  fPushConstants.LensStarRotationAngle:=(Matrix.RawComponents[0,0]+Matrix.RawComponents[1,1]+Matrix.RawComponents[2,2])*(pi/3.0);
  aCommandBuffer.CmdPushConstants(fVulkanPipelineLayout.Handle,
                                  TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT),

@@ -4,6 +4,11 @@
 
 #define NUM_SHADOW_CASCADES 4
 
+#if defined(VOXELIZATION)
+  #undef LIGHTS
+  #undef SHADOWS
+#endif
+
 #ifdef USE_MATERIAL_BUFFER_REFERENCE
   #undef NOBUFFERREFERENCE
 #elif defined(USE_MATERIAL_SSBO)
@@ -18,6 +23,11 @@
   #extension GL_EXT_demote_to_helper_invocation : enable
 #endif
 #extension GL_EXT_nonuniform_qualifier : enable
+#if defined(USESHADERBUFFERFLOAT32ATOMICADD)
+  #extension GL_EXT_shader_atomic_float : enable
+#endif
+
+#extension GL_EXT_control_flow_attributes : enable
 
 #ifndef NOBUFFERREFERENCE
   #define sizeof(Type) (uint64_t(Type(uint64_t(0))+1))
@@ -50,6 +60,26 @@
   layout(early_fragment_tests) in;
 #endif
 
+#ifdef VOXELIZATION
+layout(location = 0) in vec3 inWorldSpacePosition;
+layout(location = 1) in vec3 inViewSpacePosition;
+layout(location = 2) in vec3 inCameraRelativePosition;
+layout(location = 3) in vec3 inTangent;
+layout(location = 4) in vec3 inBitangent;
+layout(location = 5) in vec3 inNormal;
+layout(location = 6) in vec2 inTexCoord0;
+layout(location = 7) in vec2 inTexCoord1;
+layout(location = 8) in vec4 inColor0;
+layout(location = 9) in vec3 inModelScale;
+layout(location = 10) flat in uint inMaterialID;
+layout(location = 11) flat in vec3 inAABBMin;
+layout(location = 12) flat in vec3 inAABBMax;
+layout(location = 13) flat in uint inCascadeIndex; 
+layout(location = 14) in vec3 inVoxelPosition; 
+layout(location = 15) flat in vec3 inVertex0;
+layout(location = 16) flat in vec3 inVertex1;
+layout(location = 17) flat in vec3 inVertex2;
+#else
 layout(location = 0) in vec3 inWorldSpacePosition;
 layout(location = 1) in vec3 inViewSpacePosition;
 layout(location = 2) in vec3 inCameraRelativePosition;
@@ -64,21 +94,25 @@ layout(location = 10) flat in uint inMaterialID;
 layout(location = 11) flat in int inViewIndex;
 layout(location = 12) flat in uint inFrameIndex;
 #ifdef VELOCITY
-layout(location = 13) in vec4 inPreviousClipSpace;
-layout(location = 14) in vec4 inCurrentClipSpace;
-layout(location = 15) flat in vec4 inJitter;
+layout(location = 13) flat in vec4 inJitter;
+layout(location = 14) in vec4 inPreviousClipSpace;
+layout(location = 15) in vec4 inCurrentClipSpace;
 #else
 layout(location = 13) flat in vec2 inJitter;
 #endif
+#endif
 
-#ifdef DEPTHONLY
-  #if defined(VELOCITY) && !(defined(MBOIT) && defined(MBOITPASS1))
-    layout(location = 0) out vec2 outFragVelocity;
-    layout(location = 1) out vec3 outFragNormal;
-  #endif
+#ifdef VOXELIZATION
+  // Nothing in this case, since the fragment shader writes to the voxel grid directly.
+#elif defined(DEPTHONLY)
 #else
-  #if defined(EXTRAEMISSIONOUTPUT) && !(defined(WBOIT) || defined(MBOIT))
+  #if defined(VELOCITY) && !(defined(MBOIT) && defined(MBOITPASS1))
+    layout(location = 1) out vec2 outFragVelocity;
+  #elif defined(EXTRAEMISSIONOUTPUT) && !(defined(WBOIT) || defined(MBOIT))
     layout(location = 1) out vec4 outFragEmission;
+  #elif defined(REFLECTIVESHADOWMAPOUTPUT)
+    layout(location = 1) out vec4 outFragNormalUsed; // xyz = normal, w = 1.0 if normal was used, 0.0 otherwise (by clearing the normal buffer to vec4(0.0))
+    //layout(location = 2) out vec3 outFragPosition; // Can be reconstructed from depth and inversed model view projection matrix 
   #endif
 #endif
 
@@ -117,16 +151,16 @@ struct Material {
   vec4 clearcoatFactorClearcoatRoughnessFactor;
   vec4 iorIridescenceFactorIridescenceIorIridescenceThicknessMinimum;
   vec4 iridescenceThicknessMaximumTransmissionFactorVolumeThicknessFactorVolumeAttenuationDistance;
-  vec4 volumeAttenuationColor;
+  uvec4 volumeAttenuationColorAnisotropyStrengthAnisotropyRotation;
   uvec4 alphaCutOffFlagsTex0Tex1;
-  int textures[16];
-  mat3x2 textureTransforms[16];
+  int textures[20];
+  mat3x2 textureTransforms[20];
 };
 #endif
 
-layout(std140, set = 0, binding = 0) uniform uboViews {
-  View views[256];
-} uView;
+layout(set = 0, binding = 0, std430) readonly buffer InstanceMatrices {
+  mat4 instanceMatrices[];
+};
 
 #ifdef LIGHTS
 struct Light {
@@ -137,7 +171,7 @@ struct Light {
   mat4 shadowMapMatrix;
 };
 
-layout(std430, set = 0, binding = 1) readonly buffer LightItemData {
+layout(set = 0, binding = 1, std430) readonly buffer LightItemData {
 //uvec4 lightMetaData;
   Light lights[];
 };
@@ -147,7 +181,7 @@ struct LightTreeNode {
   uvec4 aabbMaxUserData;
 };
 
-layout(std430, set = 0, binding = 2) readonly buffer LightTreeNodeData {
+layout(set = 0, binding = 2, std430) readonly buffer LightTreeNodeData {
   LightTreeNode lightTreeNodes[];
 };
 
@@ -155,7 +189,7 @@ layout(std430, set = 0, binding = 2) readonly buffer LightTreeNodeData {
 
 #ifdef NOBUFFERREFERENCE
 
-layout(std430, set = 0, binding = 3) readonly buffer Materials {
+layout(set = 0, binding = 3, std430) readonly buffer Materials {
   Material materials[];
 };
 
@@ -170,13 +204,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Ma
   vec4 clearcoatFactorClearcoatRoughnessFactor;
   vec4 iorIridescenceFactorIridescenceIorIridescenceThicknessMinimum;
   vec4 iridescenceThicknessMaximumTransmissionFactorVolumeThicknessFactorVolumeAttenuationDistance;
-  vec4 volumeAttenuationColor;
+  uvec4 volumeAttenuationColorAnisotropyStrengthAnisotropyRotation;
   uvec4 alphaCutOffFlagsTex0Tex1;
-  int textures[16];
-  mat3x2 textureTransforms[16];
+  int textures[20];
+  mat3x2 textureTransforms[20];
 };
 
-layout(std140, set = 0, binding = 3) uniform Materials {
+layout(set = 0, binding = 3, std140) uniform Materials {
   Material materials;
 } uMaterials;
 
@@ -188,11 +222,15 @@ layout(set = 0, binding = 4) uniform samplerCube uCubeTextures[];
 
 // Pass descriptor set
 
-#ifdef DEPTHONLY
-#else
-layout(set = 1, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
+layout(set = 1, binding = 0, std140) uniform uboViews {
+  View views[256];
+} uView;
 
-layout(set = 1, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
+#if !(defined(DEPTHONLY) || defined(VOXELIZATION))
+
+layout(set = 1, binding = 1) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
+
+layout(set = 1, binding = 2) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
 
 #ifdef SHADOWS
 const uint SHADOWMAP_MODE_NONE = 1;
@@ -201,30 +239,30 @@ const uint SHADOWMAP_MODE_DPCF = 3;
 const uint SHADOWMAP_MODE_PCSS = 4;
 const uint SHADOWMAP_MODE_MSM = 5;
 
-layout(std140, set = 1, binding = 2) uniform uboCascadedShadowMaps {
+layout(set = 1, binding = 3, std140) uniform uboCascadedShadowMaps {
   mat4 shadowMapMatrices[NUM_SHADOW_CASCADES];
   vec4 shadowMapSplitDepthsScales[NUM_SHADOW_CASCADES];
   vec4 constantBiasNormalBiasSlopeBiasClamp[NUM_SHADOW_CASCADES];
   uvec4 metaData; // x = type
 } uCascadedShadowMaps;
 
-layout(set = 1, binding = 3) uniform sampler2DArray uCascadedShadowMapTexture;
+layout(set = 1, binding = 4) uniform sampler2DArray uCascadedShadowMapTexture;
 
 #ifdef PCFPCSS
 
 // Yay! Binding Aliasing! :-)
-layout(set = 1, binding = 3) uniform sampler2DArrayShadow uCascadedShadowMapTextureShadow;
+layout(set = 1, binding = 4) uniform sampler2DArrayShadow uCascadedShadowMapTextureShadow;
 
 #endif
 
 #endif
 
-layout(set = 1, binding = 4) uniform sampler2DArray uPassTextures[]; // 0 = SSAO, 1 = Opaque frame buffer
+layout(set = 1, binding = 5) uniform sampler2DArray uPassTextures[]; // 0 = SSAO, 1 = Opaque frame buffer
 
 #endif
 
 #ifdef FRUSTUMCLUSTERGRID
-layout (std140, set = 1, binding = 5) readonly uniform FrustumClusterGridGlobals {
+layout (set = 1, binding = 6, std140) readonly uniform FrustumClusterGridGlobals {
   uvec4 tileSizeZNearZFar; 
   vec4 viewRect;
   uvec4 countLightsViewIndexSizeOffsetedViewIndex;
@@ -232,18 +270,51 @@ layout (std140, set = 1, binding = 5) readonly uniform FrustumClusterGridGlobals
   vec4 scaleBiasMax;
 } uFrustumClusterGridGlobals;
 
-layout (std430, set = 1, binding = 6) readonly buffer FrustumClusterGridIndexList {
+layout (set = 1, binding = 7, std430) readonly buffer FrustumClusterGridIndexList {
    uint frustumClusterGridIndexList[];
 };
 
-layout (std430, set = 1, binding = 7) readonly buffer FrustumClusterGridData {
+layout (set = 1, binding = 8, std430) readonly buffer FrustumClusterGridData {
   uvec4 frustumClusterGridData[]; // x = start light index, y = count lights, z = start decal index, w = count decals
 };
+
 #endif
 
-#define TRANSPARENCY_DECLARATION
-#include "transparency.glsl"
-#undef TRANSPARENCY_DECLARATION
+#ifdef VOXELIZATION
+  layout(location = 0) out vec4 outFragColor;
+  #include "voxelization_globals.glsl"
+#endif
+
+// Extra global illumination descriptor set (optional, if global illumination is enabled) for more easily sharing the same 
+// global illumination data between multiple passes (e.g. opaque and transparent passes).
+
+#if defined(GLOBAL_ILLUMINATION_CASCADED_RADIANCE_HINTS)
+
+  #define GLOBAL_ILLUMINATION_VOLUME_UNIFORM_SET 2
+  #define GLOBAL_ILLUMINATION_VOLUME_UNIFORM_BINDING 0
+  layout(set = GLOBAL_ILLUMINATION_VOLUME_UNIFORM_SET, binding = 1) uniform sampler3D uTexGlobalIlluminationCascadedRadianceHintsSHVolumes[];
+  #define GLOBAL_ILLUMINATION_VOLUME_MESH_FRAGMENT
+  #include "global_illumination_cascaded_radiance_hints.glsl"
+
+#elif defined(GLOBAL_ILLUMINATION_CASCADED_VOXEL_CONE_TRACING) 
+
+  layout (set = 2, binding = 0, std140) readonly uniform VoxelGridData {
+    #include "voxelgriddata_uniforms.glsl"
+  } voxelGridData;
+
+  layout(set = 2, binding = 1) uniform sampler3D uVoxelGridOcclusion[];
+
+  layout(set = 2, binding = 2) uniform sampler3D uVoxelGridRadiance[];
+
+  #include "global_illumination_voxel_cone_tracing.glsl"
+
+#endif
+
+#ifndef VOXELIZATION
+  #define TRANSPARENCY_DECLARATION
+  #include "transparency.glsl"
+  #undef TRANSPARENCY_DECLARATION
+#endif
 
 /* clang-format on */
 
@@ -263,6 +334,38 @@ vec3 sq(vec3 t){
 
 vec4 sq(vec4 t){
   return t * t; //
+}
+
+float pow2(float t){
+  return t * t; //
+}
+
+vec2 pow2(vec2 t){
+  return t * t; //
+}
+
+vec3 pow2(vec3 t){
+  return t * t; //
+}
+
+vec4 pow2(vec4 t){
+  return t * t; //
+}
+
+float pow4(float t){
+  return t * t * t * t;  
+}
+
+vec2 pow4(vec2 t){
+  return t * t * t * t;  
+}
+
+vec3 pow4(vec3 t){
+  return t * t * t * t;  
+}
+
+vec4 pow4(vec4 t){
+  return t * t * t * t;  
 }
 
 #if 0
@@ -287,8 +390,16 @@ vec4 convertSRGBToLinearRGB(vec4 c) {
 #include "transparency.glsl"
 #undef TRANSPARENCY_GLOBALS
 
-#ifdef DEPTHONLY
-#else
+#ifdef VOXELIZATION
+vec3 cartesianToBarycentric(vec3 p, vec3 a, vec3 b, vec3 c) {
+  vec3 v0 = b - a, v1 = c - a, v2 = p - a;
+  float d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0), d21 = dot(v2, v1);
+  vec2 vw = vec2((d11 * d20) - (d01 * d21), (d00 * d21) - (d01 * d20)) / vec2((d00 * d11) - (d01 * d01));
+  return vec3((1.0 - vw.x) - vw.y, vw.xy);
+}
+#endif
+
+#if !(defined(DEPTHONLY) || defined(VOXELIZATION))
 #include "roughness.glsl"
 
 float envMapMaxLevelGGX, envMapMaxLevelCharlie;
@@ -300,11 +411,122 @@ const float PI = 3.14159265358979323846,     //
 float cavity, ambientOcclusion, specularOcclusion;
 uint flags, shadingModel;
 
+vec3 parallaxCorrectedReflection(vec3 reflectionDirection){
+    
+#define PARALLAX_CORRECTION_METHOD 0 // 0 = None, 1 = Offset, 2 = Vector, 3 = Halfway (all without proxy geometry, at the moment) 
+
+#if PARALLAX_CORRECTION_METHOD != 0
+//vec3 fragmentWorldPosition = inWorldSpacePosition;
+//vec3 cameraWorldPosition = uView.views[inViewIndex].inverseViewMatrix[3].xyz;
+#endif
+
+#if PARALLAX_CORRECTION_METHOD == 1
+
+  // The most straightforward way to do parallax correction is to adjust the reflection vector based on the relative positions of the 
+  // fragment and the camera. This adjustment will be based on how the view direction intersects with the virtual "bounding box" of the cubemap.
+  // Given that a cubemap is, conceptually, a bounding box surrounding the scene, we can think of the parallax correction as finding the intersection 
+  // of the view direction with this bounding box and using that point to adjust the reflection vector. Here's an approach to do this:
+
+  // Calculate the normalized view direction, which is the direction from the camera to the fragment.
+  vec3 viewDirection = normalize(-inCameraRelativePosition); //normalize(fragmentWorldPosition - cameraWorldPosition);
+  
+  // Compute the offset between the view direction and the original reflection direction.
+  // This offset represents how much the reflection direction should be adjusted to account for the viewer's position.
+  vec3 offset = viewDirection - reflectionDirection;
+  
+  // Apply the offset to the original reflection direction to get the parallax-corrected reflection direction.
+  vec3 parallaxCorrectedReflectionDirection = reflectionDirection + offset;
+
+  return normalize(parallaxCorrectedReflectionDirection);
+
+#elif PARALLAX_CORRECTION_METHOD == 2
+
+  // Another approach to parallax correction is to compute the reflection direction as usual and then adjust it based on the relative positions of the
+  // fragment and the camera. This adjustment will be based on how the reflection direction intersects with the virtual "bounding box" of the cubemap.
+  // Given just the fragment position, camera position, and reflection direction, we can only apply a general parallax correction, assuming a virtual 
+  // "bounding box" around the scene. Here's an approach to do this:
+
+  // Normalize the input reflection direction
+  vec3 normalizedReflectionDirection = normalize(reflectionDirection);
+
+  // Compute the view direction, which is the direction from the camera to the fragment
+  vec3 viewDirection = -inCameraRelativePosition; //fragmentWorldPosition - cameraWorldPosition;
+  
+  // Create a vector perpendicular to the reflection direction and the view direction.
+  vec3 perpendicularVector = cross(normalizedReflectionDirection, viewDirection);
+  
+  // Create another vector perpendicular to the reflection direction and the first perpendicular vector.
+  vec3 correctionVector = cross(perpendicularVector, normalizedReflectionDirection);
+  
+  // Use the magnitude of the view direction to apply the parallax correction.
+  float parallaxMagnitude = length(viewDirection) * 0.5;  // The scale factor (0.5) can be adjusted.
+  
+  // Apply the parallax correction to the reflection direction.
+  // The reflection direction is shifted by a fraction of the parallax-reflected direction.
+  vec3 parallaxCorrectedReflectionDirection = normalizedReflectionDirection + (correctionVector * parallaxMagnitude);
+
+  return normalize(parallaxCorrectedReflectionDirection);
+
+#elif PARALLAX_CORRECTION_METHOD == 3
+
+  vec3 localSurfaceNormal = inNormal;
+
+  // Normalize the input reflection direction
+  vec3 normalizedReflectionDirection = normalize(reflectionDirection);
+  
+  // Compute the view direction, which is the direction from the camera to the fragment
+  vec3 viewDirection = -inCameraRelativePosition; //fragmentWorldPosition - cameraWorldPosition;
+  
+  // Calculate the halfway vector between the view direction and the reflection direction.
+  // This is often used in shading models, especially for specular reflections.
+  vec3 halfwayVector = normalize(viewDirection + normalizedReflectionDirection);
+  
+  // Compute the reflection of the view direction about the local surface normal.
+  // This would be the reflection vector if the surface was a perfect mirror.
+  vec3 parallaxReflectedDirection = reflect(viewDirection, localSurfaceNormal);
+  
+  // Compute a scale factor based on the angle between the halfway vector and the local surface normal.
+  // The dot product here effectively measures the cosine of the angle between the two vectors.
+  // This factor will be used to adjust the reflection direction based on the viewer's position.
+  float parallaxScaleFactor = 0.5 * dot(halfwayVector, localSurfaceNormal);
+  
+  // Apply the parallax correction to the reflection direction.
+  // The reflection direction is shifted by a fraction of the parallax-reflected direction.
+  vec3 parallaxCorrectedReflectionDirection = normalizedReflectionDirection + (parallaxReflectedDirection * parallaxScaleFactor);
+  
+  // Return the normalized parallax-corrected reflection direction.
+  return normalize(parallaxCorrectedReflectionDirection);
+
+#else
+
+  return reflectionDirection;
+
+#endif
+
+}
+
 vec3 iridescenceFresnel = vec3(0.0);
 vec3 iridescenceF0 = vec3(0.0);
 float iridescenceFactor = 0.0;
 float iridescenceIor = 1.3;
 float iridescenceThickness = 400.0;
+
+#define ENABLE_ANISOTROPIC
+#ifdef ENABLE_ANISOTROPIC
+bool anisotropyActive;
+vec3 anisotropyDirection;
+vec3 anisotropyT;
+vec3 anisotropyB;
+float anisotropyStrength;
+float alphaRoughnessAnisotropyT;
+float alphaRoughnessAnisotropyB;
+float anisotropyTdotV;
+float anisotropyBdotV;
+float anisotropyTdotL;
+float anisotropyBdotL;
+float anisotropyTdotH;
+float anisotropyBdotH;
+#endif
 
 #if defined(BLEND) || defined(LOOPOIT) || defined(LOCKOIT) || defined(MBOIT) || defined(WBOIT) || defined(DFAOIT)
   #define TRANSMISSION
@@ -370,16 +592,41 @@ vec3 Schlick_to_F0(vec3 f, float VdotH) { return Schlick_to_F0(f, vec3(1.0), Vdo
 float Schlick_to_F0(float f, float VdotH) { return Schlick_to_F0(f, 1.0, VdotH); }
 
 float V_GGX(float NdotL, float NdotV, float alphaRoughness) {
+#ifdef ENABLE_ANISOTROPIC
+  float GGX;
+  if (anisotropyActive) {
+    GGX = (NdotL * length(vec3(alphaRoughnessAnisotropyT * anisotropyTdotV, alphaRoughnessAnisotropyB * anisotropyBdotV, NdotV))) + //
+          (NdotV * length(vec3(alphaRoughnessAnisotropyT * anisotropyTdotL, alphaRoughnessAnisotropyB * anisotropyBdotL, NdotL)));
+  }else{
+    float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+    GGX = (NdotL * sqrt(((NdotV * NdotV) * (1.0 - alphaRoughnessSq)) + alphaRoughnessSq)) +  //
+          (NdotV * sqrt(((NdotL * NdotL) * (1.0 - alphaRoughnessSq)) + alphaRoughnessSq));
+  }
+  return (GGX > 0.0) ? clamp(0.5 / GGX, 0.0, 1.0) : 0.0;
+#else
   float alphaRoughnessSq = alphaRoughness * alphaRoughness;
   float GGX = (NdotL * sqrt(((NdotV * NdotV) * (1.0 - alphaRoughnessSq)) + alphaRoughnessSq)) +  //
               (NdotV * sqrt(((NdotL * NdotL) * (1.0 - alphaRoughnessSq)) + alphaRoughnessSq));
   return (GGX > 0.0) ? (0.5 / GGX) : 0.0;
+#endif  
 }
 
 float D_GGX(float NdotH, float alphaRoughness) {
+#ifdef ENABLE_ANISOTROPIC
+  if (anisotropyActive) {
+    float a2 = alphaRoughnessAnisotropyT * alphaRoughnessAnisotropyB;
+    vec3 f = vec3(alphaRoughnessAnisotropyB * anisotropyTdotH, alphaRoughnessAnisotropyT * anisotropyBdotH, a2 * NdotH);
+    return (a2 * pow2(a2 / dot(f, f))) / PI;  
+  }else{
+    float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+    float f = ((NdotH * NdotH) * (alphaRoughnessSq - 1.0)) + 1.0;
+    return alphaRoughnessSq / (PI * (f * f));
+  }
+#else
   float alphaRoughnessSq = alphaRoughness * alphaRoughness;
   float f = ((NdotH * NdotH) * (alphaRoughnessSq - 1.0)) + 1.0;
   return alphaRoughnessSq / (PI * (f * f));
+#endif
 }
 
 float lambdaSheenNumericHelper(float x, float alphaG) {
@@ -583,6 +830,12 @@ void doSingleLight(const in vec3 lightColor, const in vec3 lightLit, const in ve
     float nDotH = clamp(dot(normal, halfVector), 0.0, 1.0);
     float vDotH = clamp(dot(viewDirection, halfVector), 0.0, 1.0);
     vec3 lit = vec3((materialCavity * nDotL * lightColor) * lightLit);
+#ifdef ENABLE_ANISOTROPIC
+    anisotropyTdotL = dot(anisotropyT, lightDirection);
+    anisotropyBdotL = dot(anisotropyB, lightDirection);
+    anisotropyTdotH = dot(anisotropyT, halfVector);
+    anisotropyBdotH = dot(anisotropyB, halfVector);
+#endif
     diffuseOutput += BRDF_lambertian(F0, F90, diffuseColor, specularWeight, vDotH) * lit;
     specularOutput += BRDF_specularGGX(F0, F90, alphaRoughness, specularWeight, vDotH, nDotL, nDotV, nDotH) * specularOcclusion * lit;
     if ((flags & (1u << 7u)) != 0u) {
@@ -612,7 +865,7 @@ vec3 getIBLRadianceLambertian(const in vec3 normal, const in vec3 viewDirection,
   float ao = cavity * ambientOcclusion;
   float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0);
   vec2 brdfSamplePoint = clamp(vec2(NdotV, roughness), vec2(0.0), vec2(1.0));
-  vec2 f_ab = textureLod(uImageBasedLightingBRDFTextures[0], brdfSamplePoint, 0.0).rg;
+  vec2 f_ab = textureLod(uImageBasedLightingBRDFTextures[0], brdfSamplePoint, 0.0).xy;
   vec3 irradiance = textureLod(uImageBasedLightingEnvMaps[2], normal.xyz, 0.0).xyz;
   vec3 mixedF0 = mix(F0, vec3(max(max(iridescenceF0.x, iridescenceF0.y), iridescenceF0.z)), iridescenceFactor);
   vec3 Fr = max(vec3(1.0 - roughness), mixedF0) - mixedF0;
@@ -625,10 +878,16 @@ vec3 getIBLRadianceLambertian(const in vec3 normal, const in vec3 viewDirection,
   return (FmsEms + k_D) * irradiance;
 }
 
-vec3 getIBLRadianceGGX(const in vec3 normal, const in float roughness, const in vec3 F0, const in float specularWeight, const in vec3 viewDirection, const in float litIntensity, const in vec3 imageLightBasedLightDirection) {
+vec3 getIBLRadianceGGX(in vec3 normal, const in float roughness, const in vec3 F0, const in float specularWeight, const in vec3 viewDirection, const in float litIntensity, const in vec3 imageLightBasedLightDirection) {
+  float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0);
+#ifdef ENABLE_ANISOTROPIC
+  if(anisotropyActive){
+  //float tangentRoughness = mix(roughness, 1.0, anisotropyStrength * anisotropyStrength);  
+    normal = normalize(mix(cross(cross(anisotropyDirection, viewDirection), anisotropyDirection), normal, pow4(1.0 - (anisotropyStrength * (1.0 - roughness)))));
+  }
+#endif
   vec3 reflectionVector = normalize(reflect(-viewDirection, normal));
-  float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0),                                                                            //
-      ao = cavity * ambientOcclusion,                                                                                                   //
+  float ao = cavity * ambientOcclusion,                                                                                                   //
       lit = mix(1.0, litIntensity, max(0.0, dot(reflectionVector, -imageLightBasedLightDirection) * (1.0 - (roughness * roughness)))),  //
       specularOcclusion = getSpecularOcclusion(NdotV, ao * lit, roughness);
   vec2 brdf = textureLod(uImageBasedLightingBRDFTextures[0], clamp(vec2(NdotV, roughness), vec2(0.0), vec2(1.0)), 0.0).xy;
@@ -1257,7 +1516,19 @@ vec4 textureFetch(const in int textureIndex, const in vec4 defaultValue, const b
 
 #endif
 
+#if defined(VOXELIZATION)
+  #include "rgb9e5.glsl"
+#endif
+
 void main() {
+#ifdef VOXELIZATION
+  if(any(lessThan(inWorldSpacePosition.xyz, inAABBMin.xyz)) || 
+     any(greaterThan(inWorldSpacePosition.xyz, inAABBMax.xyz)) ||
+     (uint(inCascadeIndex) >= uint(voxelGridData.countCascades))){
+    outFragColor = vec4(0.0);
+    return;
+  }
+#endif
   {
     float frontFacingSign = gl_FrontFacing ? 1.0 : -1.0;   
     workTangent = inTangent * frontFacingSign;
@@ -1274,7 +1545,7 @@ void main() {
     material = Material(materialPointer);
   }
 #endif
-#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || !defined(DEPTHONLY)
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || defined(VOXELIZATION) || !defined(DEPTHONLY)
   textureFlags = material.alphaCutOffFlagsTex0Tex1.zw;
   texCoords[0] = inTexCoord0;
   texCoords[1] = inTexCoord1;
@@ -1282,31 +1553,65 @@ void main() {
   texCoords_dFdx[1] = dFdxFine(inTexCoord1);
   texCoords_dFdy[0] = dFdyFine(inTexCoord0);
   texCoords_dFdy[1] = dFdyFine(inTexCoord1);
+#if !defined(VOXELIZATION)  
   /*if(!any(notEqual(inJitter.xy, vec2(0.0))))*/{
     texCoords[0] -= (texCoords_dFdx[0] * inJitter.x) + (texCoords_dFdy[0] * inJitter.y);
     texCoords[1] -= (texCoords_dFdx[1] * inJitter.x) + (texCoords_dFdy[1] * inJitter.y);
   }  
 #endif
-#ifndef DEPTHONLY
-  envMapMaxLevelGGX = textureQueryLevels(uImageBasedLightingEnvMaps[0]);
-  envMapMaxLevelCharlie = textureQueryLevels(uImageBasedLightingEnvMaps[1]);
+#endif
+#if !(defined(DEPTHONLY) || defined(VOXELIZATION))
+  envMapMaxLevelGGX = max(0.0, textureQueryLevels(uImageBasedLightingEnvMaps[0]) - 1.0);
+  envMapMaxLevelCharlie = max(0.0, textureQueryLevels(uImageBasedLightingEnvMaps[1]) - 1.0);
   flags = material.alphaCutOffFlagsTex0Tex1.y;
   shadingModel = (flags >> 0u) & 0xfu;
 #endif
-#ifdef DEPTHONLY
+#if defined(VOXELIZATION)
+  
+  uint flags = material.alphaCutOffFlagsTex0Tex1.y;
+  
+  // For meta voxelization, a very simple BRDF is used, so the data can be reused for various purposes at the later stages, so that
+  // new costly voxelization passes are not required to be performed for these cases. Hence also the name meta voxelization, as the
+  // voxelization is just performed for to gather meta data, which is then used for various purposes.
+
+  vec4 baseColor = textureFetch(0, vec4(1.0), true) * material.baseColorFactor * inColor0; 
+  
+  vec4 emissionColor = vec4(textureFetch(4, vec4(1.0), true).xyz * material.emissiveFactor.xyz * material.emissiveFactor.w * inColor0.xyz, baseColor.w);
+  
+  float alpha = baseColor.w;
+  
+  vec3 normal;
+  if ((textureFlags.x & (1 << 2)) != 0) {
+    vec4 normalTexture = textureFetch(2, vec2(0.0, 1.0).xxyx, false);
+    normal = normalize(                                                                                                                      //
+        mat3(normalize(workTangent), normalize(workBitangent), normalize(workNormal)) *                                                            //
+        normalize((normalTexture.xyz - vec3(0.5)) * (vec2(material.metallicRoughnessNormalScaleOcclusionStrengthFactor.z, 1.0).xxy * 2.0))  //
+    );
+  } else {
+    normal = normalize(workNormal);
+  }
+  normal *= (((flags & (1u << 6u)) != 0u) && !gl_FrontFacing) ? -1.0 : 1.0;
+
+#elif defined(DEPTHONLY)
 #if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT)
   float alpha = textureFetch(0, vec4(1.0), true).w * material.baseColorFactor.w * inColor0.w;
 #endif
 #else
+  
   vec4 color = vec4(0.0);
 #ifdef EXTRAEMISSIONOUTPUT
   vec4 emissionColor = vec4(0.0);
 #endif
+#if 0
+   // Just for debugging purposes
+   color = textureFetch(0, vec4(1.0), true) * material.baseColorFactor;
+#else
   float litIntensity = 1.0;
   switch (shadingModel) {
     case smPBRMetallicRoughness:
     case smPBRSpecularGlossiness: {
       vec4 diffuseColorAlpha = vec4(1.0);
+      vec4 baseColor = vec4(1.0);
       float ior = material.iorIridescenceFactorIridescenceIorIridescenceThicknessMinimum.x;
       vec3 F0 = vec3((abs(ior - 1.5) < 1e-6) ? 0.04 : pow((ior - 1.0) / (ior + 1.0), 2.0));
       vec3 F90 = vec3(1.0);
@@ -1321,7 +1626,7 @@ void main() {
             specularColorFactor *= textureFetch(11, vec4(1.0), true).xyz;
           }
           vec3 dielectricSpecularF0 = clamp(F0 * specularColorFactor, vec3(0.0), vec3(1.0));
-          vec4 baseColor = textureFetch(0, vec4(1.0), true) * material.baseColorFactor;
+          baseColor = textureFetch(0, vec4(1.0), true) * material.baseColorFactor;
           vec2 metallicRoughness = clamp(textureFetch(1, vec4(1.0), false).zy * material.metallicRoughnessNormalScaleOcclusionStrengthFactor.xy, vec2(0.0, 1e-3), vec2(1.0));
           diffuseColorAlpha = vec4(max(vec3(0.0), baseColor.xyz * (1.0 - metallicRoughness.x)), baseColor.w);
           F0 = mix(dielectricSpecularF0, baseColor.xyz, metallicRoughness.x);
@@ -1330,9 +1635,9 @@ void main() {
         }
         case smPBRSpecularGlossiness: {
           vec4 specularGlossiness = textureFetch(1, vec4(1.0), true) * vec4(material.specularFactor.xyz, material.metallicRoughnessNormalScaleOcclusionStrengthFactor.y);
-          diffuseColorAlpha = textureFetch(0, vec4(1.0), true) * material.baseColorFactor;
+          baseColor = textureFetch(0, vec4(1.0), true) * material.baseColorFactor;
           F0 = specularGlossiness.xyz;
-          diffuseColorAlpha.xyz *= max(0.0, 1.0 - max(max(F0.x, F0.y), F0.z));
+          diffuseColorAlpha = vec4(baseColor.xyz * max(0.0, 1.0 - max(max(F0.x, F0.y), F0.z)), baseColor.w);
           perceptualRoughness = clamp(1.0 - specularGlossiness.w, 1e-3, 1.0);
           break;
         }
@@ -1365,8 +1670,7 @@ void main() {
         const float SIGMA2 = 0.15915494, KAPPA = 0.18;        
         vec3 dx = dFdx(workNormal), dy = dFdy(workNormal);
         kernelRoughness = min(KAPPA, (2.0 * SIGMA2) * (dot(dx, dx) + dot(dy, dy)));
-        float roughness = perceptualRoughness * perceptualRoughness;
-        perceptualRoughness = sqrt(sqrt(clamp((roughness * roughness) + kernelRoughness, 0.0, 1.0)));
+        perceptualRoughness = sqrt(clamp((perceptualRoughness * perceptualRoughness) + kernelRoughness, 0.0, 1.0));
       }
 #endif
 
@@ -1393,10 +1697,18 @@ void main() {
       float transparency = 0.0;
       float refractiveAngle = 0.0;
       float shadow = 1.0;
+      float screenSpaceAmbientOcclusion = 1.0;
   #if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || defined(BLEND) || defined(ENVMAP)
       ambientOcclusion = 1.0;
+  #else      
+  #if defined(GLOBAL_ILLUMINATION_CASCADED_RADIANCE_HINTS) || defined(GLOBAL_ILLUMINATION_CASCADED_VOXEL_CONE_TRACING)
+      screenSpaceAmbientOcclusion = texelFetch(uPassTextures[0], ivec3(gl_FragCoord.xy, int(gl_ViewIndex)), 0).x;
+      ambientOcclusion = screenSpaceAmbientOcclusion;
+      //ambientOcclusion = ((textureFlags.x & (1 << 3)) != 0) ? 1.0 : screenSpaceAmbientOcclusion;
   #else
       ambientOcclusion = ((textureFlags.x & (1 << 3)) != 0) ? 1.0 : texelFetch(uPassTextures[0], ivec3(gl_FragCoord.xy, int(gl_ViewIndex)), 0).x;
+      screenSpaceAmbientOcclusion = ambientOcclusion;
+  #endif
   #endif
 
       vec3 viewDirection = normalize(-inCameraRelativePosition);
@@ -1428,7 +1740,7 @@ void main() {
       if ((flags & (1u << 12u)) != 0u) {
         volumeThickness = material.iridescenceThicknessMaximumTransmissionFactorVolumeThicknessFactorVolumeAttenuationDistance.z * (((textureFlags.x & (1 << 15)) != 0) ? textureFetch(15, vec4(1.0), false).y : 1.0);  
         volumeAttenuationDistance = material.iridescenceThicknessMaximumTransmissionFactorVolumeThicknessFactorVolumeAttenuationDistance.w;        
-        volumeAttenuationColor = material.volumeAttenuationColor.xyz;        
+        volumeAttenuationColor = uintBitsToFloat(material.volumeAttenuationColorAnisotropyStrengthAnisotropyRotation.xyz);        
       }
 #endif
 
@@ -1465,8 +1777,7 @@ void main() {
           const float SIGMA2 = 0.15915494, KAPPA = 0.18;        
           vec3 dx = dFdx(workNormal), dy = dFdy(workNormal);
           kernelRoughness = min(KAPPA, (2.0 * SIGMA2) * (dot(dx, dx) + dot(dy, dy)));
-          float roughness = sheenRoughness * sheenRoughness;
-          sheenRoughness = sqrt(sqrt(clamp((roughness * roughness) + kernelRoughness, 0.0, 1.0)));
+          sheenRoughness = sqrt(clamp((sheenRoughness * sheenRoughness) + kernelRoughness, 0.0, 1.0));
         }
 #endif
         sheenRoughness = max(sheenRoughness, 1e-7);
@@ -1497,17 +1808,37 @@ void main() {
         clearcoatRoughness = min(max(clearcoatRoughness, minimumRoughness) + geometryRoughness, 1.0);
 #else
         {
-          float roughness = clearcoatRoughness * clearcoatRoughness;
-          clearcoatRoughness = sqrt(sqrt(clamp((roughness * roughness) + kernelRoughness, 0.0, 1.0)));
+          clearcoatRoughness = sqrt(clamp((clearcoatRoughness * clearcoatRoughness) + kernelRoughness, 0.0, 1.0));
         }
 #endif
       }
 
       specularOcclusion = getSpecularOcclusion(clamp(dot(normal, viewDirection), 0.0, 1.0), cavity * ambientOcclusion, alphaRoughness);
 
+#ifdef ENABLE_ANISOTROPIC
+      if (anisotropyActive = ((flags & (1u << 13u)) != 0u)) {
+        vec2 ansitropicStrengthAnsitropicRotation = unpackHalf2x16(material.volumeAttenuationColorAnisotropyStrengthAnisotropyRotation.w);        
+        vec2 directionRotation = vec2(sin(vec2(ansitropicStrengthAnsitropicRotation.y) + vec2(1.5707963267948966, 0.0)));
+        mat2 rotationMatrix = mat2(directionRotation.x, directionRotation.y, -directionRotation.y, directionRotation.x);
+        vec3 anisotropySample = textureFetch(16, vec4(1.0, 0.5, 1.0, 1.0), false).xyz;
+        vec2 direction = rotationMatrix * fma(anisotropySample.xy, vec2(2.0), vec2(-1.0));
+        anisotropyT = mat3(workTangent, workBitangent, normal) * normalize(vec3(direction, 0.0));
+        anisotropyB = cross(workNormal, anisotropyT);
+        anisotropyStrength = clamp(ansitropicStrengthAnsitropicRotation.x * anisotropySample.z, 0.0, 1.0);
+        alphaRoughnessAnisotropyT = mix(alphaRoughness, 1.0, anisotropyStrength * anisotropyStrength);
+        alphaRoughnessAnisotropyB = clamp(alphaRoughness, 1e-3, 1.0);
+        anisotropyTdotV = dot(anisotropyT, viewDirection);
+        anisotropyBdotV = dot(anisotropyB, viewDirection);   
+      }
+#endif
+
 #ifdef LIGHTS
-#define LIGHTCLUSTERS
-#ifdef LIGHTCLUSTERS
+#if defined(REFLECTIVESHADOWMAPOUTPUT)
+      if(lights[0].metaData.x == 4u){ // Only the first light is supported for RSMs, and only when it is the primary directional light 
+        for(int lightIndex = 0; lightIndex < 1; lightIndex++){
+          {
+            Light light = lights[lightIndex];
+#elif defined(LIGHTCLUSTERS)
       // Light cluster grid
       uvec3 clusterXYZ = uvec3(uvec2(uvec2(gl_FragCoord.xy) / uFrustumClusterGridGlobals.tileSizeZNearZFar.xy), 
                                uint(clamp(fma(log2(-inViewSpacePosition.z), uFrustumClusterGridGlobals.scaleBiasMax.x, uFrustumClusterGridGlobals.scaleBiasMax.y), 0.0, uFrustumClusterGridGlobals.scaleBiasMax.z)));
@@ -1536,8 +1867,10 @@ void main() {
             vec3 lightVector = lightPosition - inWorldSpacePosition.xyz;
             vec3 normalizedLightVector = normalize(lightVector);
 #ifdef SHADOWS
+#if !defined(REFLECTIVESHADOWMAPOUTPUT)
             if (/*(uShadows != 0) &&*/ ((light.metaData.y & 0x80000000u) == 0u) && (uCascadedShadowMaps.metaData.x != SHADOWMAP_MODE_NONE)) {
               switch (light.metaData.x) {
+#if !defined(REFLECTIVESHADOWMAPOUTPUT)
 #if 0
                 case 1u: { // Directional 
                   // imageLightBasedLightDirection = light.directionZFar.xyz;
@@ -1560,6 +1893,7 @@ void main() {
                   lightAttenuation *= reduceLightBleeding(getMSMShadowIntensity(moments, clamp((length(vector) - znear) / (zfar - znear), 0.0, 1.0), 5e-3, 1e-2), 0.0);
                   break;
                 }
+#endif
 #endif
                 case 4u: {  // Primary directional
                   imageLightBasedLightDirection = light.directionZFar.xyz;
@@ -1608,10 +1942,11 @@ void main() {
               }
 #endif
             }
-
+#endif
             float lightAttenuationEx = lightAttenuation;
 #endif
             switch (light.metaData.x) {
+#if !defined(REFLECTIVESHADOWMAPOUTPUT)
               case 1u: {  // Directional
                 lightDirection = -light.directionZFar.xyz;
                 break;
@@ -1634,6 +1969,7 @@ void main() {
                 lightDirection = normalizedLightVector;
                 break;
               }
+#endif
               case 4u: {  // Primary directional
                 imageLightBasedLightDirection = lightDirection = -light.directionZFar.xyz;
                 break;
@@ -1642,6 +1978,7 @@ void main() {
                 continue;
               }
             }
+#if !defined(REFLECTIVESHADOWMAPOUTPUT)
             switch (light.metaData.x) {
               case 2u:    // Point
               case 3u: {  // Spot
@@ -1658,7 +1995,11 @@ void main() {
                 break;
               }
             }
+#endif
             if((lightAttenuation > 0.0) || ((flags & ((1u << 7u) | (1u << 8u))) != 0u)){
+#if defined(REFLECTIVESHADOWMAPOUTPUT)
+              diffuseOutput += lightAttenuation * light.colorIntensity.xyz * light.colorIntensity.w * diffuseColorAlpha.xyz * max(0.0, dot(normal, lightDirection));
+#else
               doSingleLight(light.colorIntensity.xyz * light.colorIntensity.w,  //
                             vec3(lightAttenuation),                             //
                             lightDirection,                                     //
@@ -1677,6 +2018,7 @@ void main() {
                             clearcoatF0,                                        //
                             clearcoatRoughness,                                 //
                             specularWeight);                                    //
+#endif
 #ifdef TRANSMISSION
               if ((flags & (1u << 11u)) != 0u) {
                 // If the light ray travels through the geometry, use the point it exits the geometry again.
@@ -1725,7 +2067,11 @@ void main() {
               }
 #endif
             }
-#ifdef LIGHTCLUSTERS
+#if defined(REFLECTIVESHADOWMAPOUTPUT)
+          }
+        }
+      }
+#elif defined(LIGHTCLUSTERS)
           }
         }
       }
@@ -1777,15 +2123,68 @@ void main() {
                     clearcoatRoughness,                 //
                     specularWeight);                    //
 #endif
-      diffuseOutput += getIBLRadianceLambertian(normal, viewDirection, perceptualRoughness, diffuseColorAlpha.xyz, F0, specularWeight);
-      specularOutput += getIBLRadianceGGX(normal, perceptualRoughness, F0, specularWeight, viewDirection, litIntensity, imageLightBasedLightDirection);
+#if defined(GLOBAL_ILLUMINATION_CASCADED_RADIANCE_HINTS)
+      {
+        vec3 volumeSphericalHarmonics[9];
+        globalIlluminationVolumeLookUp(volumeSphericalHarmonics, inWorldSpacePosition.xyz, vec3(0.0), normal.xyz);
+#if 0
+        vec3 shResidualDiffuse = max(vec3(0.0), globalIlluminationDecodeColor(globalIlluminationCompressedSphericalHarmonicsDecodeWithCosineLobe(normal, volumeSphericalHarmonics)));
+        diffuseOutput += shResidualDiffuse * baseColor.xyz * screenSpaceAmbientOcclusion * cavity;
+#else
+        vec3 shAmbient = vec3(0.0), shDominantDirectionalLightColor = vec3(0.0), shDominantDirectionalLightDirection = vec3(0.0);
+        globalIlluminationSphericalHarmonicsExtractAndSubtract(volumeSphericalHarmonics, shAmbient, shDominantDirectionalLightColor, shDominantDirectionalLightDirection);
+        vec3 shResidualDiffuse = max(vec3(0.0), globalIlluminationDecodeColor(globalIlluminationCompressedSphericalHarmonicsDecodeWithCosineLobe(normal, volumeSphericalHarmonics)));
+        diffuseOutput += shResidualDiffuse * baseColor.xyz * screenSpaceAmbientOcclusion * cavity;
+        doSingleLight(shDominantDirectionalLightColor,                    //
+                      vec3(screenSpaceAmbientOcclusion * cavity),         //
+                      -shDominantDirectionalLightDirection,               //
+                      normal.xyz,                                         //
+                      diffuseColorAlpha.xyz,                              //
+                      F0,                                                 //
+                      F90,                                                //
+                      viewDirection,                                      //
+                      refractiveAngle,                                    //
+                      transparency,                                       //
+                      alphaRoughness,                                     //
+                      cavity,                                             //
+                      sheenColor,                                         //
+                      sheenRoughness,                                     //
+                      clearcoatNormal,                                    //
+                      clearcoatF0,                                        //
+                      clearcoatRoughness,                                 //
+                      specularWeight);                                    //
+#endif
+      }
+#elif defined(GLOBAL_ILLUMINATION_CASCADED_VOXEL_CONE_TRACING)
+      float iblWeight = 1.0; 
+      {
+        if(dot(diffuseColorAlpha.xyz, vec3(1.0)) > 1e-6){
+          vec4 c = cvctIndirectDiffuseLight(inWorldSpacePosition.xyz, normal.xyz);
+          diffuseOutput += c.xyz * diffuseColorAlpha.xyz * screenSpaceAmbientOcclusion * cavity * OneOverPI;
+          iblWeight = clamp(1.0 - c.w, 0.0, 1.0);
+        }
+        if(dot(F0, vec3(1.0)) > 1e-6){
+          specularOutput += cvctIndirectSpecularLight(inWorldSpacePosition.xyz, normal.xyz, viewDirection, cvctRoughnessToVoxelConeTracingApertureAngle(perceptualRoughness), 1e+24) * F0 * cavity * OneOverPI;
+        }
+      }
+#endif
+#if !defined(REFLECTIVESHADOWMAPOUTPUT) 
+#if !(defined(GLOBAL_ILLUMINATION_CASCADED_RADIANCE_HINTS))
+#if defined(GLOBAL_ILLUMINATION_CASCADED_VOXEL_CONE_TRACING)
+//    float iblWeight = 1.0; 
+#else
+      float iblWeight = 1.0; // for future sky occulsion 
+#endif
+      diffuseOutput += getIBLRadianceLambertian(normal, viewDirection, perceptualRoughness, diffuseColorAlpha.xyz, F0, specularWeight) * iblWeight;
+      specularOutput += getIBLRadianceGGX(normal, perceptualRoughness, F0, specularWeight, viewDirection, litIntensity, imageLightBasedLightDirection) * iblWeight;
       if ((flags & (1u << 7u)) != 0u) {
-        sheenOutput += getIBLRadianceCharlie(normal, viewDirection, sheenRoughness, sheenColor);
+        sheenOutput += getIBLRadianceCharlie(normal, viewDirection, sheenRoughness, sheenColor) * iblWeight;
       }
       if ((flags & (1u << 8u)) != 0u) {
-        clearcoatOutput += getIBLRadianceGGX(clearcoatNormal, clearcoatRoughness, clearcoatF0.xyz, 1.0, viewDirection, litIntensity, imageLightBasedLightDirection);
-        clearcoatFresnel = F_Schlick(clearcoatF0, clearcoatF90, clamp(dot(clearcoatNormal, viewDirection), 0.0, 1.0));
+        clearcoatOutput += getIBLRadianceGGX(clearcoatNormal, clearcoatRoughness, clearcoatF0.xyz, 1.0, viewDirection, litIntensity, imageLightBasedLightDirection) * iblWeight;
+        clearcoatFresnel = F_Schlick(clearcoatF0, clearcoatF90, clamp(dot(clearcoatNormal, viewDirection), 0.0, 1.0)) * iblWeight;
       }
+#endif
 #if defined(TRANSMISSION)
       if ((flags & (1u << 11u)) != 0u) {
         transmissionOutput += getIBLVolumeRefraction(normal.xyz, viewDirection,
@@ -1798,7 +2197,12 @@ void main() {
                                                      volumeAttenuationDistance);        
       }
 #endif
+#endif
+#if defined(REFLECTIVESHADOWMAPOUTPUT)
+      vec3 emissiveOutput = vec3(0.0); // No emissive output for RSMs
+#else
       vec3 emissiveOutput = emissiveTexture.xyz * material.emissiveFactor.xyz * material.emissiveFactor.w;
+#endif
       color = vec2(0.0, diffuseColorAlpha.w).xxxy;
 #ifndef EXTRAEMISSIONOUTPUT
       color.xyz += emissiveOutput;
@@ -1807,6 +2211,15 @@ void main() {
       color.xyz += mix(diffuseOutput, transmissionOutput, transmissionFactor);
 #else
       color.xyz += diffuseOutput;
+#endif
+#if defined(GLOBAL_ILLUMINATION_CASCADED_RADIANCE_HINTS)
+#if 0
+      color.xyz += globalIlluminationCascadeVisualizationColor(inWorldSpacePosition).xyz;
+#endif
+#elif defined(GLOBAL_ILLUMINATION_CASCADED_VOXEL_CONE_TRACING)
+#if 0
+      color.xyz += cvctCascadeVisualizationColor(inWorldSpacePosition).xyz;
+#endif
 #endif
       color.xyz += specularOutput;
       color.xyz = fma(color.xyz, vec3(albedoSheenScaling), sheenOutput);
@@ -1821,9 +2234,10 @@ void main() {
       break;
     }
   }
+#endif
   float alpha = color.w * inColor0.w, outputAlpha = ((flags & 32) != 0) ? (color.w * inColor0.w) : 1.0; // AMD GPUs under Linux doesn't like mix(1.0, color.w * inColor0.w, float(int(uint((flags >> 5u) & 1u)))); due to the unsigned int stuff
   vec4 finalColor = vec4(color.xyz * inColor0.xyz, outputAlpha);
-#if !(defined(WBOIT) || defined(MBOIT))
+#if !(defined(WBOIT) || defined(MBOIT) || defined(VOXELIZATION))
 #ifndef BLEND 
   outFragColor = finalColor;
 #endif
@@ -1833,7 +2247,7 @@ void main() {
 #endif
 #endif
 
-#ifdef ALPHATEST
+#if defined(ALPHATEST)
   #if defined(NODISCARD)  
     float fragDepth;
   #endif
@@ -1908,18 +2322,31 @@ void main() {
   #endif
 #endif
 
+#if !defined(VOXELIZATION)
   const bool additiveBlending = false; // Mesh does never use additive blending currently, so static compile time constant folding is possible here.
    
 #define TRANSPARENCY_IMPLEMENTATION
 #include "transparency.glsl"
 #undef TRANSPARENCY_IMPLEMENTATION
 
-#ifdef VELOCITY
+#if defined(VELOCITY)
+
   outFragVelocity = (((inCurrentClipSpace.xy / inCurrentClipSpace.w) - inJitter.xy) - ((inPreviousClipSpace.xy / inPreviousClipSpace.w) - inJitter.zw)) * 0.5;
+  
+#elif defined(REFLECTIVESHADOWMAPOUTPUT)
 
   vec3 normal = normalize(workNormal);
-  normal /= (abs(normal.x) + abs(normal.y) + abs(normal.z));
-  outFragNormal = normalize(vec3(fma(normal.xx, vec2(0.5, -0.5), vec2(fma(normal.y, 0.5, 0.5))), clamp(normal.z * 3.402823e+38, 0.0, 1.0)));  
+/*normal /= (abs(normal.x) + abs(normal.y) + abs(normal.z));
+  outFragNormalUsed = vec4(vec3(fma(normal.xx, vec2(0.5, -0.5), vec2(fma(normal.y, 0.5, 0.5))), clamp(normal.z * 3.402823e+38, 0.0, 1.0)), 1.0);*/  
+  outFragNormalUsed = vec4(vec3(fma(normal.xyz, vec3(0.5), vec3(0.5))), 1.0);  
+
+  //outFragPosition = inWorldSpacePosition.xyz;
+
+#endif
+#endif
+
+#ifdef VOXELIZATION
+  #include "voxelization_fragment.glsl"   
 #endif
 
 }

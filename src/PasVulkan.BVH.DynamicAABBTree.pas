@@ -128,6 +128,7 @@ type EpvBVHDynamicAABBTree=class(Exception);
             TState=record
              TreeNodes:TTreeNodes;
              Root:TpvSizeInt;
+             Generation:TpvUInt64;
             end;
             PState=^TState;
             TUserDataArray=array of TpvPtrInt;
@@ -145,6 +146,7 @@ type EpvBVHDynamicAABBTree=class(Exception);
             PSkipListNode=^TSkipListNode;
             TSkipListNodes=array of TSkipListNode;
             TSkipListNodeArray=TpvDynamicArray<TSkipListNode>;
+            PSkipListNodeArray=^TSkipListNodeArray;
             TSkipListNodeMap=array of TpvSizeUInt;
             TSkipListNodeStackItem=record
              Pass:TpvSizeInt;
@@ -195,6 +197,8 @@ type EpvBVHDynamicAABBTree=class(Exception);
        FreeList:TpvSizeInt;
        Path:TpvSizeUInt;
        InsertionCount:TpvSizeInt;
+       Dirty:TPasMPBool32;
+       Generation:TpvUInt64;
        constructor Create;
        destructor Destroy; override;
        procedure Clear;
@@ -210,6 +214,7 @@ type EpvBVHDynamicAABBTree=class(Exception);
        procedure RebuildBottomUp;
        procedure RebuildTopDown;
        procedure Rebuild;
+       function UpdateGeneration:TpvUInt64;
        function ComputeHeight:TpvSizeInt;
        function GetHeight:TpvSizeInt;
        function GetAreaRatio:TpvDouble;
@@ -464,9 +469,6 @@ end;
 
 { TpvBVHDynamicAABBTree }
 
-
-{ TpvBVHDynamicAABBTree }
-
 constructor TpvBVHDynamicAABBTree.Create;
 var i:TpvSizeInt;
 begin
@@ -486,6 +488,8 @@ begin
  FreeList:=0;
  Path:=0;
  InsertionCount:=0;
+ Dirty:=false;
+ Generation:=0;
  fSkipListNodeLock:=TPasMPSpinLock.Create;
  fSkipListNodeMap:=nil;
  fSkipListNodeStack.Initialize;
@@ -547,6 +551,7 @@ begin
  Node^.Height:=0;
  Node^.UserData:=0;
  inc(NodeCount);
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.FreeNode(const aNodeID:TpvSizeInt);
@@ -557,6 +562,7 @@ begin
  Node^.Height:=-1;
  FreeList:=aNodeID;
  dec(NodeCount);
+ Dirty:=true;
 end;
 
 function TpvBVHDynamicAABBTree.Balance(const aNodeID:TpvSizeInt):TpvSizeInt;
@@ -646,6 +652,7 @@ begin
    result:=aNodeID;
   end;
  end;
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.InsertLeaf(const aLeaf:TpvSizeInt);
@@ -736,6 +743,9 @@ begin
   end;
 
  end;
+
+ Dirty:=true;
+
 end;
 
 procedure TpvBVHDynamicAABBTree.RemoveLeaf(const aLeaf:TpvSizeInt);
@@ -773,6 +783,7 @@ begin
    Nodes[Sibling].Parent:=NULLNODE;
    FreeNode(Parent);
   end;
+  Dirty:=true;
  end;
 end;
 
@@ -786,12 +797,14 @@ begin
  Node^.UserData:=aUserData;
  Node^.Height:=0;
  InsertLeaf(result);
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.DestroyProxy(const aNodeID:TpvSizeInt);
 begin
  RemoveLeaf(aNodeID);
  FreeNode(aNodeID);
+ Dirty:=true;
 end;
 
 function TpvBVHDynamicAABBTree.MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement:TpvVector3):boolean;
@@ -823,6 +836,7 @@ begin
   end;
   Node^.AABB:=b;
   InsertLeaf(aNodeID);
+  Dirty:=true;
  end;
 end;
 
@@ -920,6 +934,7 @@ begin
    NewNodes:=nil;
   end;
  end;
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.RebuildTopDown;
@@ -1161,6 +1176,8 @@ begin
 
  end;
 
+ Dirty:=true;
+
 end;
 
 procedure TpvBVHDynamicAABBTree.Rebuild;
@@ -1170,6 +1187,14 @@ begin
  end else begin
   RebuildTopDown;
  end;
+end;
+
+function TpvBVHDynamicAABBTree.UpdateGeneration:TpvUInt64;
+begin
+ if TPasMPInterlocked.CompareExchange(Dirty,TPasMPBool32(false),TPasMPBool32(true)) then begin
+  inc(Generation);
+ end;
+ result:=Generation;
 end;
 
 function TpvBVHDynamicAABBTree.ComputeHeight:TpvSizeInt;
@@ -1585,7 +1610,7 @@ begin
  try
   if Root>=0 then begin
    if length(fSkipListNodeMap)<length(Nodes) then begin
-    SetLength(fSkipListNodeMap,(length(Nodes)*3) shr 1);
+    SetLength(fSkipListNodeMap,length(Nodes)+((length(Nodes)+1) shr 1));
    end;
    aSkipListNodeArray.Count:=0;
    NewStackItem.Pass:=0;

@@ -192,7 +192,10 @@ type EpvFrameGraph=class(Exception);
                     (
                      Undefined,
                      Absolute,
-                     SurfaceDependent
+                     SurfaceDependent,
+                     SurfaceDependentPreviousPowerOfTwo,
+                     SurfaceDependentNextPowerOfTwo,
+                     SurfaceDependentNearestPowerOfTwo
                     );
                    PImageSizeKind=^TImageSizeKind;
                    TKind=TImageSizeKind;
@@ -597,6 +600,8 @@ type EpvFrameGraph=class(Exception);
                    TResourceTransitionFlag=
                     (
                      Attachment,
+                     ExplicitInputAttachment,
+                     ExplicitOutputAttachment,
                      PreviousFrameInput,
                      NextFrameOutput
                     );
@@ -1562,6 +1567,7 @@ var InFlightFrameIndex:TpvSizeInt;
 begin
  for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
   fCommandBuffers[InFlightFrameIndex]:=TpvVulkanCommandBuffer.Create(fQueue.fCommandBufferCommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+  fQueue.fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fCommandBuffers[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_COMMAND_BUFFER,'FrameGraph.Queue.CommandBuffers['+IntToStr(InFlightFrameIndex)+']');
   fSignallingSemaphores[InFlightFrameIndex].Clear;
  end;
 end;
@@ -1595,6 +1601,7 @@ begin
  fCommandPool:=TpvVulkanCommandPool.Create(fFrameGraph.fVulkanDevice,
                                            fPhysicalQueue.QueueFamilyIndex,
                                            TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+ fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fCommandPool.Handle,TVkObjectType.VK_OBJECT_TYPE_COMMAND_POOL,'FrameGraph.Queue.CommandPool');
 
  fCommandBufferCommandPool:=nil;
 
@@ -1640,6 +1647,7 @@ begin
  fCommandBufferCommandPool:=TpvVulkanCommandPool.Create(fFrameGraph.fVulkanDevice,
                                                         fPhysicalQueue.QueueFamilyIndex,
                                                         TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+ fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fCommandBufferCommandPool.Handle,TVkObjectType.VK_OBJECT_TYPE_COMMAND_POOL,'FrameGraph.Queue.CommandBufferCommandPool');
  for CommandBuffer in fCommandBuffers do begin
   CommandBuffer.AcquireVolatileResources;
  end;
@@ -1986,14 +1994,29 @@ begin
 
  case ImageResourceType.fImageSize.Kind of
   TpvFrameGraph.TImageSize.TKind.Absolute:begin
-   fExtent.width:=Max(1,trunc(ImageResourceType.fImageSize.Size.x));
-   fExtent.height:=Max(1,trunc(ImageResourceType.fImageSize.Size.y));
-   fExtent.depth:=Max(1,trunc(ImageResourceType.fImageSize.Size.z));
+   fExtent.width:=Max(1,round(ImageResourceType.fImageSize.Size.x));
+   fExtent.height:=Max(1,round(ImageResourceType.fImageSize.Size.y));
+   fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
   end;
   TpvFrameGraph.TImageSize.TKind.SurfaceDependent:begin
-   fExtent.width:=Max(1,trunc(ImageResourceType.fImageSize.Size.x*fFrameGraph.fSurfaceWidth));
-   fExtent.height:=Max(1,trunc(ImageResourceType.fImageSize.Size.y*fFrameGraph.fSurfaceHeight));
-   fExtent.depth:=Max(1,trunc(ImageResourceType.fImageSize.Size.z));
+   fExtent.width:=Max(1,round(ImageResourceType.fImageSize.Size.x*fFrameGraph.fSurfaceWidth));
+   fExtent.height:=Max(1,round(ImageResourceType.fImageSize.Size.y*fFrameGraph.fSurfaceHeight));
+   fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
+  end;
+  TpvFrameGraph.TImageSize.TKind.SurfaceDependentPreviousPowerOfTwo:begin
+   fExtent.width:=Max(1,RoundDownToPowerOfTwo(round(ImageResourceType.fImageSize.Size.x*fFrameGraph.fSurfaceWidth)));
+   fExtent.height:=Max(1,RoundDownToPowerOfTwo(round(ImageResourceType.fImageSize.Size.y*fFrameGraph.fSurfaceHeight)));
+   fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
+  end;
+  TpvFrameGraph.TImageSize.TKind.SurfaceDependentNextPowerOfTwo:begin
+   fExtent.width:=Max(1,RoundUpToPowerOfTwo(round(ImageResourceType.fImageSize.Size.x*fFrameGraph.fSurfaceWidth)));
+   fExtent.height:=Max(1,RoundUpToPowerOfTwo(round(ImageResourceType.fImageSize.Size.y*fFrameGraph.fSurfaceHeight)));
+   fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
+  end;
+  TpvFrameGraph.TImageSize.TKind.SurfaceDependentNearestPowerOfTwo:begin
+   fExtent.width:=Max(1,RoundNearestToPowerOfTwo(round(ImageResourceType.fImageSize.Size.x*fFrameGraph.fSurfaceWidth)));
+   fExtent.height:=Max(1,RoundNearestToPowerOfTwo(round(ImageResourceType.fImageSize.Size.y*fFrameGraph.fSurfaceHeight)));
+   fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
   end;
   else {TpvFrameGraph.TImageSize.TKind.Undefined:}begin
   end;
@@ -2032,6 +2055,7 @@ begin
                                                                     fCountMipMaps,
                                                                     0,
                                                                     fCountArrayLayers);
+   fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanImageViews[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_IMAGE_VIEW,fResourceType.Name+'['+IntToStr(InFlightFrameIndex)+']');
    fVulkanAdditionalFormatImageViews[InFlightFrameIndex]:=fVulkanImageViews[InFlightFrameIndex];
   end;
 
@@ -2057,6 +2081,7 @@ begin
                                                                             fCountMipMaps,
                                                                             0,
                                                                             fCountArrayLayers);
+   fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanSurfaceImageViews[SwapChainImageIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_IMAGE_VIEW,fResourceType.Name+'['+IntToStr(SwapChainImageIndex)+']');
   end;
 
   for InFlightFrameIndex:=0 to Min(Max(fFrameGraph.fCountInFlightFrames,1),MaxInFlightFrames)-1 do begin
@@ -2096,7 +2121,8 @@ begin
    end else begin
 
     fVulkanImages[InFlightFrameIndex]:=TpvVulkanImage.Create(fFrameGraph.fVulkanDevice,
-                                                             TVkImageCreateFlags(TpvInt32(IfThen((fAdditionalFormat<>VK_FORMAT_UNDEFINED) and (fAdditionalFormat<>fFormat),TpvInt32(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT),TpvInt32(0)))),
+                                                             TVkImageCreateFlags(TpvInt32(IfThen((fAdditionalFormat<>VK_FORMAT_UNDEFINED) and (fAdditionalFormat<>fFormat),TpvInt32(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT),TpvInt32(0)))) or
+                                                             TVkImageCreateFlags(TpvInt32(IfThen((fExtent.depth<=1) and (fCountArrayLayers=6),TpvInt32(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT),TpvInt32(0)))),
                                                              fImageType,
                                                              fFormat,
                                                              fExtent.width,
@@ -2112,6 +2138,7 @@ begin
                                                              @fFrameGraph.fQueueFamilyIndices.Items[0],
                                                              VK_IMAGE_LAYOUT_UNDEFINED,
                                                              fAdditionalFormat);
+    fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanImages[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_IMAGE,fResourceType.Name+'['+IntToStr(InFlightFrameIndex)+']');
 
     MemoryRequirements:=fFrameGraph.fVulkanDevice.MemoryManager.GetImageMemoryRequirements(fVulkanImages[InFlightFrameIndex].Handle,
                                                                                            RequiresDedicatedAllocation,
@@ -2171,6 +2198,7 @@ begin
                                                                       fCountMipMaps,
                                                                       0,
                                                                       fCountArrayLayers);
+    fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanImageViews[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_IMAGE_VIEW,fResourceType.Name+'['+IntToStr(InFlightFrameIndex)+']');
 
     if (fAdditionalFormat<>VK_FORMAT_UNDEFINED) and (fAdditionalFormat<>fFormat) then begin
      fVulkanAdditionalFormatImageViews[InFlightFrameIndex]:=TpvVulkanImageView.Create(fFrameGraph.fVulkanDevice,
@@ -2382,19 +2410,20 @@ begin
     fVulkanBuffers[InFlightFrameIndex]:=fVulkanBuffers[0];
    end else begin
     fVulkanBuffers[InFlightFrameIndex]:=TpvVulkanBuffer.Create(fFrameGraph.fVulkanDevice,
-                                                                fSize,
-                                                                fUsage,
-                                                                VK_SHARING_MODE_EXCLUSIVE,
-                                                                fFrameGraph.fQueueFamilyIndices.Items,
-                                                                fMemoryRequiredPropertyFlags,
-                                                                fMemoryPreferredPropertyFlags,
-                                                                fMemoryAvoidPropertyFlags,
-                                                                fMemoryPreferredNotPropertyFlags,
-                                                                fMemoryRequiredHeapFlags,
-                                                                fMemoryPreferredHeapFlags,
-                                                                fMemoryAvoidHeapFlags,
-                                                                fMemoryPreferredNotHeapFlags,
-                                                                fBufferFlags);
+                                                               fSize,
+                                                               fUsage,
+                                                               VK_SHARING_MODE_EXCLUSIVE,
+                                                               fFrameGraph.fQueueFamilyIndices.Items,
+                                                               fMemoryRequiredPropertyFlags,
+                                                               fMemoryPreferredPropertyFlags,
+                                                               fMemoryAvoidPropertyFlags,
+                                                               fMemoryPreferredNotPropertyFlags,
+                                                               fMemoryRequiredHeapFlags,
+                                                               fMemoryPreferredHeapFlags,
+                                                               fMemoryAvoidHeapFlags,
+                                                               fMemoryPreferredNotHeapFlags,
+                                                               fBufferFlags);
+    fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanBuffers[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_BUFFER,fResourceType.Name+'['+IntToStr(InFlightFrameIndex)+']');
    end;
   end;
  end;
@@ -2961,7 +2990,7 @@ begin
  for ExplicitPassNameDependency in fExplicitPassNameDependencies do begin
   Pass:=fFrameGraph.fPassNameHashMap[ExplicitPassNameDependency.fPassName];
   if assigned(Pass) then begin
-  AddExplicitPassDependency(Pass,ExplicitPassNameDependency.fDstStageMask);
+   AddExplicitPassDependency(Pass,ExplicitPassNameDependency.fDstStageMask);
   end else begin
    raise EpvFrameGraphMissingExplicitPassDependency.Create('Missing explicit pass dependency "'+ExplicitPassNameDependency.fPassName+'"');
   end;
@@ -3090,7 +3119,8 @@ const LabelInfoColors:array[0..15,0..3] of TVkFloat=
 var LabelInfo:TVkDebugUtilsLabelEXT;
 begin
  fCPUTimeValues[fFrameGraph.fDrawInFlightFrameIndex]:=pvApplication.HighResolutionTimer.GetTime;
- if assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
+ if fFrameGraph.fVulkanDevice.Instance.ExtDebugUtilsEnabled and
+    assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
     assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
   FillChar(LabelInfo,SizeOf(TVkDebugUtilsLabelEXT),#0);
   LabelInfo.sType:=VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
@@ -3114,7 +3144,8 @@ begin
  if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
   fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(aQueue.fPhysicalQueue,aCommandBuffer);
  end;
- if assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
+ if fFrameGraph.fVulkanDevice.Instance.ExtDebugUtilsEnabled and
+    assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
     assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
   aCommandBuffer.Device.Commands.CmdEndDebugUtilsLabelEXT(aCommandBuffer.Handle);
  end;
@@ -3470,6 +3501,7 @@ begin
   for PhysicalPass in fFromPhysicalPasses do begin
    if not assigned(PhysicalPass.fEvents[InFlightFrameIndex]) then begin
     PhysicalPass.fEvents[InFlightFrameIndex]:=TpvVulkanEvent.Create(fFrameGraph.fVulkanDevice);
+    fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(PhysicalPass.fEvents[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_EVENT,PhysicalPass.ClassName+'['+IntToStr(InFlightFrameIndex)+']');
    end;
    fWorkFromPhysicalPassesEventHandles[InFlightFrameIndex].Add(PhysicalPass.fEvents[InFlightFrameIndex].Handle);
   end;
@@ -4010,21 +4042,48 @@ begin
   RenderPass:=Subpass.fRenderPass;
   case RenderPass.fSize.Kind of
    TpvFrameGraph.TImageSize.TKind.Absolute:begin
-    Width:=Max(1,trunc(RenderPass.fSize.Size.x));
-    Height:=Max(1,trunc(RenderPass.fSize.Size.y));
+    Width:=Max(1,round(RenderPass.fSize.Size.x));
+    Height:=Max(1,round(RenderPass.fSize.Size.y));
     if fMultiview then begin
      Layers:=1;
     end else begin
-     Layers:=Max(1,trunc(RenderPass.fSize.Size.w));
+     Layers:=Max(1,round(RenderPass.fSize.Size.w));
     end;
    end;
    TpvFrameGraph.TImageSize.TKind.SurfaceDependent:begin
-    Width:=Max(1,trunc(RenderPass.fSize.Size.x*fFrameGraph.fSurfaceWidth));
-    Height:=Max(1,trunc(RenderPass.fSize.Size.y*fFrameGraph.fSurfaceHeight));
+    Width:=Max(1,round(RenderPass.fSize.Size.x*fFrameGraph.fSurfaceWidth));
+    Height:=Max(1,round(RenderPass.fSize.Size.y*fFrameGraph.fSurfaceHeight));
     if fMultiview then begin
      Layers:=1;
     end else begin
-     Layers:=Max(1,trunc(RenderPass.fSize.Size.w));
+     Layers:=Max(1,round(RenderPass.fSize.Size.w));
+    end;
+   end;
+   TpvFrameGraph.TImageSize.TKind.SurfaceDependentPreviousPowerOfTwo:begin
+    Width:=Max(1,RoundDownToPowerOfTwo(round(RenderPass.fSize.Size.x*fFrameGraph.fSurfaceWidth)));
+    Height:=Max(1,RoundDownToPowerOfTwo(round(RenderPass.fSize.Size.y*fFrameGraph.fSurfaceHeight)));
+    if fMultiview then begin
+     Layers:=1;
+    end else begin
+     Layers:=Max(1,round(RenderPass.fSize.Size.w));
+    end;
+   end;
+   TpvFrameGraph.TImageSize.TKind.SurfaceDependentNextPowerOfTwo:begin
+    Width:=Max(1,RoundUpToPowerOfTwo(round(RenderPass.fSize.Size.x*fFrameGraph.fSurfaceWidth)));
+    Height:=Max(1,RoundUpToPowerOfTwo(round(RenderPass.fSize.Size.y*fFrameGraph.fSurfaceHeight)));
+    if fMultiview then begin
+     Layers:=1;
+    end else begin
+     Layers:=Max(1,round(RenderPass.fSize.Size.w));
+    end;
+   end;
+   TpvFrameGraph.TImageSize.TKind.SurfaceDependentNearestPowerOfTwo:begin
+    Width:=Max(1,RoundNearestToPowerOfTwo(round(RenderPass.fSize.Size.x*fFrameGraph.fSurfaceWidth)));
+    Height:=Max(1,RoundNearestToPowerOfTwo(round(RenderPass.fSize.Size.y*fFrameGraph.fSurfaceHeight)));
+    if fMultiview then begin
+     Layers:=1;
+    end else begin
+     Layers:=Max(1,round(RenderPass.fSize.Size.w));
     end;
    end;
    else {TpvFrameGraph.TImageSize.TKind.Undefined:}begin
@@ -4105,6 +4164,10 @@ begin
 
 //fFrameGraph.fVulkanDevice.DebugMarker.SetObjectName(fVulkanRenderPass.Handle,TVkDebugReportObjectTypeEXT.VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT,fSubpasses[0].fRenderPass.Name);
 
+ if fSubpasses.Count>0 then begin
+  fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanRenderPass.Handle,TVkObjectType.VK_OBJECT_TYPE_RENDER_PASS,fSubpasses[0].fRenderPass.Name);
+ end;
+
  for AttachmentIndex:=0 to fAttachments.Count-1 do begin
   Attachment:=@fAttachments.Items[AttachmentIndex];
   fVulkanRenderPass.ClearValues[AttachmentIndex]^:=Attachment^.ClearValue;
@@ -4152,6 +4215,9 @@ begin
      end;
     end;
     fVulkanSurfaceFrameBuffers[InFlightFrameIndex,SurfaceIndex].Initialize;
+    if fSubpasses.Count>0 then begin
+     fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanSurfaceFrameBuffers[InFlightFrameIndex,SurfaceIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_FRAMEBUFFER,fSubpasses[0].fRenderPass.Name+'.SurfaceFrameBuffer['+IntToStr(InFlightFrameIndex)+','+IntToStr(SurfaceIndex)+']');
+    end;
    end;
   end;
 
@@ -4175,6 +4241,9 @@ begin
                                                                                                 false));
    end;
    fVulkanFrameBuffers[InFlightFrameIndex].Initialize;
+   if fSubpasses.Count>0 then begin
+    fFrameGraph.fVulkanDevice.DebugUtils.SetObjectName(fVulkanFrameBuffers[InFlightFrameIndex].Handle,TVkObjectType.VK_OBJECT_TYPE_FRAMEBUFFER,fSubpasses[0].fRenderPass.Name+'.FrameBuffer['+IntToStr(InFlightFrameIndex)+']');
+   end;
   end;
 
  end;
@@ -4246,39 +4315,42 @@ begin
  fEventPipelineBarrierGroups.Execute(aCommandBuffer);
  fBeforePipelineBarrierGroups.Execute(aCommandBuffer);
  ResetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
- if fHasVulkanSurfaceFrameBuffers then begin
-  fVulkanRenderPass.BeginRenderPass(aCommandBuffer,
-                                   fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex],
-                                   SubpassContents,
-                                   0,
-                                   0,
-                                   fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex].Width,
-                                   fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex].Height);
- end else begin
-  fVulkanRenderPass.BeginRenderPass(aCommandBuffer,
-                                    fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex],
+ if (fSubpasses.Count>1) or
+    ((fSubpasses.Count=1) and (fSubpasses[0].fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1])) then begin
+  if fHasVulkanSurfaceFrameBuffers then begin
+   fVulkanRenderPass.BeginRenderPass(aCommandBuffer,
+                                    fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex],
                                     SubpassContents,
                                     0,
                                     0,
-                                    fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex].Width,
-                                    fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex].Height);
- end;
- for SubpassIndex:=0 to fSubpasses.Count-1 do begin
-  Subpass:=fSubpasses[SubpassIndex];
-  if Subpass.fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1] then begin
-   if not SingleSubpassDebug then begin
-    Subpass.fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
+                                    fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex].Width,
+                                    fVulkanSurfaceFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawSwapChainImageIndex].Height);
+  end else begin
+   fVulkanRenderPass.BeginRenderPass(aCommandBuffer,
+                                     fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex],
+                                     SubpassContents,
+                                     0,
+                                     0,
+                                     fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex].Width,
+                                     fVulkanFrameBuffers[fFrameGraph.fDrawInFlightFrameIndex].Height);
+  end;
+  for SubpassIndex:=0 to fSubpasses.Count-1 do begin
+   Subpass:=fSubpasses[SubpassIndex];
+   if Subpass.fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1] then begin
+    if not SingleSubpassDebug then begin
+     Subpass.fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
+    end;
+    Subpass.fRenderPass.Execute(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawFrameIndex);
+    if not SingleSubpassDebug then begin
+     Subpass.fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
+    end;
    end;
-   Subpass.fRenderPass.Execute(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawFrameIndex);
-   if not SingleSubpassDebug then begin
-    Subpass.fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
+   if (SubpassIndex+1)<fSubpasses.Count then begin
+    aCommandBuffer.CmdNextSubpass(SubpassContents);
    end;
   end;
-  if (SubpassIndex+1)<fSubpasses.Count then begin
-   aCommandBuffer.CmdNextSubpass(SubpassContents);
-  end;
+  fVulkanRenderPass.EndRenderPass(aCommandBuffer);
  end;
- fVulkanRenderPass.EndRenderPass(aCommandBuffer);
  fAfterPipelineBarrierGroups.Execute(aCommandBuffer);
  SetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
  if SingleSubpassDebug then begin
@@ -4321,7 +4393,11 @@ begin
 
  fDoSignalSemaphore:=false;
 
+{$if defined(Android) or defined(iOS)}
+ fTryToMergeSubpasses:=true;
+{$else}
  fTryToMergeSubpasses:=false;
+{$ifend}
 
  fDefaultResourceInstanceType:=TResourceInstanceType.InstancePerInFlightFrame;
 
@@ -4382,8 +4458,10 @@ begin
 
  fVulkanUniversalQueueCommandBuffer:=TpvVulkanCommandBuffer.Create(fUniversalQueue.fCommandPool,
                                                                    VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+ fVulkanDevice.DebugUtils.SetObjectName(fVulkanUniversalQueueCommandBuffer.Handle,TVkObjectType.VK_OBJECT_TYPE_COMMAND_BUFFER,'FrameGraph.VulkanUniversalQueueCommandBuffer');
 
  fVulkanUniversalQueueCommandBufferFence:=TpvVulkanFence.Create(fVulkanDevice);
+ fVulkanDevice.DebugUtils.SetObjectName(fVulkanUniversalQueueCommandBufferFence.Handle,TVkObjectType.VK_OBJECT_TYPE_FENCE,'FrameGraph.VulkanUniversalQueueCommandBufferFence');
 
  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   begin
@@ -5482,11 +5560,11 @@ type TEventBeforeAfter=(Event,Before,After);
      ResourcePhysicalImageData.fRequestedFormat:=ImageResourceType.fFormat;
      ResourcePhysicalImageData.fFormat:=ImageResourceType.fFormat;
      ResourcePhysicalImageData.fAdditionalFormat:=ImageResourceType.fAdditionalFormat;
-     ResourcePhysicalImageData.fExtent.width:=Max(1,trunc(ImageResourceType.fImageSize.Size.x));
-     ResourcePhysicalImageData.fExtent.height:=Max(1,trunc(ImageResourceType.fImageSize.Size.y));
-     ResourcePhysicalImageData.fExtent.depth:=Max(1,trunc(ImageResourceType.fImageSize.Size.z));
+     ResourcePhysicalImageData.fExtent.width:=Max(1,round(ImageResourceType.fImageSize.Size.x));
+     ResourcePhysicalImageData.fExtent.height:=Max(1,round(ImageResourceType.fImageSize.Size.y));
+     ResourcePhysicalImageData.fExtent.depth:=Max(1,round(ImageResourceType.fImageSize.Size.z));
      ResourcePhysicalImageData.fCountMipMaps:=1;
-     ResourcePhysicalImageData.fCountArrayLayers:=trunc(ImageResourceType.fImageSize.Size.w);
+     ResourcePhysicalImageData.fCountArrayLayers:=round(ImageResourceType.fImageSize.Size.w);
      ResourcePhysicalImageData.fTextureArray:=ResourcePhysicalImageData.fCountArrayLayers>0;
      ResourcePhysicalImageData.fCountArrayLayers:=Max(1,ResourcePhysicalImageData.fCountArrayLayers);
      ResourcePhysicalImageData.fSamples:=ImageResourceType.fSamples;
@@ -6540,7 +6618,27 @@ type TEventBeforeAfter=(Event,Before,After);
          TResourceTransition.TKind.ImageInput:begin
           for AttachmentIndex:=0 to PhysicalRenderPass.fAttachments.Count-1 do begin
            if PhysicalRenderPass.fAttachments.Items[AttachmentIndex].Resource=ResourceTransition.fResource then begin
-            Subpass.fInputAttachments.Add(AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout));
+            case ResourceTransition.Layout of
+             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+             VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+             VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+             VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL:begin
+              if TResourceTransition.TFlag.ExplicitOutputAttachment in ResourceTransition.fFlags then begin
+               AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout);
+              end else begin
+               Subpass.fInputAttachments.Add(AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout));
+              end;
+             end;
+             else begin
+              if TResourceTransition.TFlag.ExplicitInputAttachment in ResourceTransition.fFlags then begin
+               Subpass.fInputAttachments.Add(AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout));
+              end else begin
+               AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout);
+              end;
+             end;
+            end;
             break;
            end;
           end;
@@ -6575,7 +6673,23 @@ type TEventBeforeAfter=(Event,Before,After);
            for AttachmentIndex:=0 to PhysicalRenderPass.fAttachments.Count-1 do begin
             if PhysicalRenderPass.fAttachments.Items[AttachmentIndex].Resource=ResourceTransition.fResource then begin
              Subpass.fDepthStencilAttachment:=AddAttachmentReference(PhysicalRenderPass,AttachmentIndex,ResourceTransition.fLayout);
-             Subpass.fInputAttachments.Add(Subpass.fDepthStencilAttachment);
+             case ResourceTransition.Layout of
+              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+              VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+              VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+              VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
+              VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL:begin
+               if not (TResourceTransition.TFlag.ExplicitOutputAttachment in ResourceTransition.fFlags) then begin
+                Subpass.fInputAttachments.Add(Subpass.fDepthStencilAttachment);
+               end;
+              end;
+              else begin
+               if TResourceTransition.TFlag.ExplicitInputAttachment in ResourceTransition.fFlags then begin
+                Subpass.fInputAttachments.Add(Subpass.fDepthStencilAttachment);
+               end;
+              end;
+             end;
              break;
             end;
            end;
@@ -6590,6 +6704,8 @@ type TEventBeforeAfter=(Event,Before,After);
             end;
            end;
           end;
+         end;
+         else begin
          end;
         end;
        end;
@@ -6866,6 +6982,7 @@ begin
    for WaitingSemaphoreIndex:=0 to CommandBuffer.fWaitingSemaphores.Count-1 do begin
     WaitingSemaphore:=@CommandBuffer.fWaitingSemaphores.Items[WaitingSemaphoreIndex];
     Semaphore:=TpvVulkanSemaphore.Create(fVulkanDevice);
+    fVulkanDevice.DebugUtils.SetObjectName(Semaphore.Handle,TVkObjectType.VK_OBJECT_TYPE_SEMAPHORE,'FrameGraphSemaphore');
     if assigned(WaitingSemaphore^.SignallingCommandBuffer) then begin
      WaitingSemaphore^.SignallingCommandBuffer.fSignallingSemaphores[InFlightFrameIndex].Add(Semaphore);
      WaitingSemaphore^.SignallingCommandBuffer.fSignallingSemaphoreHandles[InFlightFrameIndex].Add(Semaphore.Handle);
@@ -6902,6 +7019,7 @@ begin
    if fDoSignalSemaphore and
       (CommandBuffer=CommandBuffer.fQueue.fCommandBuffers[CommandBuffer.fQueue.fCommandBuffers.Count-1]) then begin
     Semaphore:=TpvVulkanSemaphore.Create(fVulkanDevice);
+    fVulkanDevice.DebugUtils.SetObjectName(Semaphore.Handle,TVkObjectType.VK_OBJECT_TYPE_SEMAPHORE,'FrameGraphSemaphore');
     CommandBuffer.fSignallingSemaphores[InFlightFrameIndex].Add(Semaphore);
     CommandBuffer.fSignallingSemaphoreHandles[InFlightFrameIndex].Add(Semaphore.Handle);
     fDrawToSignalSemaphoreHandles[InFlightFrameIndex].Add(Semaphore.Handle);

@@ -76,8 +76,15 @@ uses SysUtils,
 
 type { TpvScene3DRendererSkyBox }
      TpvScene3DRendererSkyBox=class
+      public
+       type TPushConstants=record
+             ViewBaseIndex:TpvUInt32;
+             CountViews:TpvUInt32;
+             SkyBoxBrightnessFactor:TpvFloat;
+            end;
       private
        fRenderer:TpvScene3DRenderer;
+       fRendererInstance:TpvScene3DRendererInstance;
        fScene3D:TpvScene3D;
        fVertexShaderModule:TpvVulkanShaderModule;
        fFragmentShaderModule:TpvVulkanShaderModule;
@@ -90,7 +97,7 @@ type { TpvScene3DRendererSkyBox }
        fVulkanPipeline:TpvVulkanGraphicsPipeline;
       public
 
-       constructor Create(const aRenderer:TpvScene3DRenderer;const aScene3D:TpvScene3D;const aSkyCubeMap:TVkDescriptorImageInfo);
+       constructor Create(const aRenderer:TpvScene3DRenderer;const aRendererInstance:TpvScene3DRendererInstance;const aScene3D:TpvScene3D;const aSkyCubeMap:TVkDescriptorImageInfo);
 
        destructor Destroy; override;
 
@@ -109,13 +116,15 @@ implementation
 
 { TpvScene3DRendererSkyBox }
 
-constructor TpvScene3DRendererSkyBox.Create(const aRenderer:TpvScene3DRenderer;const aScene3D:TpvScene3D;const aSkyCubeMap:TVkDescriptorImageInfo);
+constructor TpvScene3DRendererSkyBox.Create(const aRenderer:TpvScene3DRenderer;const aRendererInstance:TpvScene3DRendererInstance;const aScene3D:TpvScene3D;const aSkyCubeMap:TVkDescriptorImageInfo);
 var Index:TpvSizeInt;
     Stream:TStream;
 begin
  inherited Create;
 
  fRenderer:=aRenderer;
+
+ fRendererInstance:=aRendererInstance;
 
  fScene3D:=aScene3D;
 
@@ -163,7 +172,7 @@ begin
                                                     1,
                                                     TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
                                                     [],
-                                                    [fScene3D.GlobalVulkanViewUniformBuffers[Index].DescriptorBufferInfo],
+                                                    [fRendererInstance.VulkanViewUniformBuffers[Index].DescriptorBufferInfo],
                                                     [],
                                                     false);
   fVulkanDescriptorSets[Index].WriteToDescriptorSet(1,
@@ -178,7 +187,7 @@ begin
  end;
 
  fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fRenderer.VulkanDevice);
- fVulkanPipelineLayout.AddPushConstantRange(TVkPipelineStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3D.TVertexStagePushConstants));
+ fVulkanPipelineLayout.AddPushConstantRange(TVkPipelineStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3DRendererSkyBox.TPushConstants));
  fVulkanPipelineLayout.AddDescriptorSetLayout(fVulkanDescriptorSetLayout);
  fVulkanPipelineLayout.Initialize;
 
@@ -260,6 +269,16 @@ begin
                                                               TVkColorComponentFlags(VK_COLOR_COMPONENT_G_BIT) or
                                                               TVkColorComponentFlags(VK_COLOR_COMPONENT_B_BIT) or
                                                               TVkColorComponentFlags(VK_COLOR_COMPONENT_A_BIT));
+ if fRenderer.VelocityBufferNeeded then begin
+  fVulkanPipeline.ColorBlendState.AddColorBlendAttachmentState(false,
+                                                               VK_BLEND_FACTOR_ZERO,
+                                                               VK_BLEND_FACTOR_ZERO,
+                                                               VK_BLEND_OP_ADD,
+                                                               VK_BLEND_FACTOR_ZERO,
+                                                               VK_BLEND_FACTOR_ZERO,
+                                                               VK_BLEND_OP_ADD,
+                                                               0);
+ end;
 
  fVulkanPipeline.DepthStencilState.DepthTestEnable:=false;
  fVulkanPipeline.DepthStencilState.DepthWriteEnable:=false;
@@ -279,16 +298,17 @@ begin
 end;
 
 procedure TpvScene3DRendererSkyBox.Draw(const aInFlightFrameIndex,aViewBaseIndex,aCountViews:TpvSizeInt;const aCommandBuffer:TpvVulkanCommandBuffer);
-var VertexStagePushConstants:TpvScene3D.TVertexStagePushConstants;
+var PushConstants:TpvScene3DRendererSkyBox.TPushConstants;
 begin
- VertexStagePushConstants.ViewBaseIndex:=aViewBaseIndex;
- VertexStagePushConstants.CountViews:=aCountViews;
+ PushConstants.ViewBaseIndex:=aViewBaseIndex;
+ PushConstants.CountViews:=aCountViews;
+ PushConstants.SkyBoxBrightnessFactor:=fScene3D.SkyBoxBrightnessFactor;
  aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,fVulkanPipeline.Handle);
  aCommandBuffer.CmdPushConstants(fVulkanPipelineLayout.Handle,
                                  TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT),
                                  0,
-                                 SizeOf(TpvScene3D.TVertexStagePushConstants),
-                                 @VertexStagePushConstants);
+                                 SizeOf(TpvScene3DRendererSkyBox.TPushConstants),
+                                 @PushConstants);
  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       fVulkanPipelineLayout.Handle,
                                       0,

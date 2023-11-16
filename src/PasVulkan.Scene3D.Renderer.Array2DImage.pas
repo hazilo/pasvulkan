@@ -75,15 +75,16 @@ type { TpvScene3DRendererArray2DImage }
      TpvScene3DRendererArray2DImage=class
       private
        fVulkanImage:TpvVulkanImage;
-       fVulkanSampler:TpvVulkanSampler;
        fVulkanImageView:TpvVulkanImageView;
        fVulkanArrayImageView:TpvVulkanImageView;
        fMemoryBlock:TpvVulkanDeviceMemoryBlock;
-       fDescriptorImageInfo:TVkDescriptorImageInfo;
-       fArrayDescriptorImageInfo:TVkDescriptorImageInfo;
+       fWidth:TpvInt32;
+       fHeight:TpvInt32;
+       fLayers:TpvInt32;
+       fFormat:TVkFormat;
       public
 
-       constructor Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT);const aImageLayout:TVkImageLayout=TVkImageLayout(VK_IMAGE_LAYOUT_GENERAL));
+       constructor Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT);const aImageLayout:TVkImageLayout=TVkImageLayout(VK_IMAGE_LAYOUT_GENERAL);const aStorage:boolean=false);
 
        destructor Destroy; override;
 
@@ -91,17 +92,17 @@ type { TpvScene3DRendererArray2DImage }
 
        property VulkanImage:TpvVulkanImage read fVulkanImage;
 
-       property VulkanSampler:TpvVulkanSampler read fVulkanSampler;
-
        property VulkanArrayImageView:TpvVulkanImageView read fVulkanArrayImageView;
 
        property VulkanImageView:TpvVulkanImageView read fVulkanImageView;
 
-      public
+       property Width:TpvInt32 read fWidth;
 
-       property DescriptorImageInfo:TVkDescriptorImageInfo read fDescriptorImageInfo;
+       property Height:TpvInt32 read fHeight;
 
-       property ArrayDescriptorImageInfo:TVkDescriptorImageInfo read fArrayDescriptorImageInfo;
+       property Layers:TpvInt32 read fLayers;
+
+       property Format:TVkFormat read fFormat;
 
      end;
 
@@ -109,7 +110,7 @@ implementation
 
 { TpvScene3DRendererArray2DImage }
 
-constructor TpvScene3DRendererArray2DImage.Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits;const aImageLayout:TVkImageLayout);
+constructor TpvScene3DRendererArray2DImage.Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits;const aImageLayout:TVkImageLayout;const aStorage:boolean=false);
 var MemoryRequirements:TVkMemoryRequirements;
     RequiresDedicatedAllocation,
     PrefersDedicatedAllocation:boolean;
@@ -123,6 +124,14 @@ var MemoryRequirements:TVkMemoryRequirements;
     ImageAspectMask:TVkImageAspectFlags;
 begin
  inherited Create;
+
+ fWidth:=aWidth;
+
+ fHeight:=aHeight;
+
+ fLayers:=aLayers;
+
+ fFormat:=aFormat;
 
  case aFormat of
   VK_FORMAT_D16_UNORM,
@@ -155,7 +164,7 @@ begin
                                      aSampleBits,
                                      VK_IMAGE_TILING_OPTIMAL,
                                      TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT) or
-                                     //TVkImageUsageFlags(VK_IMAGE_USAGE_STORAGE_BIT) or
+                                     IfThen(aStorage,TVkImageUsageFlags(VK_IMAGE_USAGE_STORAGE_BIT),0) or
                                      TVkImageUsageFlags(VK_IMAGE_USAGE_TRANSFER_DST_BIT),
                                      VK_SHARING_MODE_EXCLUSIVE,
                                      0,
@@ -226,23 +235,6 @@ begin
                            Fence,
                            true);
 
-    fVulkanSampler:=TpvVulkanSampler.Create(pvApplication.VulkanDevice,
-                                            TVkFilter(VK_FILTER_LINEAR),
-                                            TVkFilter(VK_FILTER_LINEAR),
-                                            TVkSamplerMipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR),
-                                            TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE),
-                                            TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE),
-                                            TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE),
-                                            0.0,
-                                            false,
-                                            1.0,
-                                            false,
-                                            TVkCompareOp(VK_COMPARE_OP_NEVER),
-                                            0.0,
-                                            1,
-                                            TVkBorderColor(VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK),
-                                            false);
-
     fVulkanImageView:=TpvVulkanImageView.Create(pvApplication.VulkanDevice,
                                                 fVulkanImage,
                                                 ImageViewType,
@@ -271,14 +263,6 @@ begin
                                                      0,
                                                      aLayers);
 
-    fDescriptorImageInfo:=TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
-                                                        fVulkanImageView.Handle,
-                                                        aImageLayout);
-
-    fArrayDescriptorImageInfo:=TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
-                                                             fVulkanArrayImageView.Handle,
-                                                             aImageLayout);
-
    finally
     FreeAndNil(Fence);
    end;
@@ -298,7 +282,6 @@ begin
  FreeAndNil(fMemoryBlock);
  FreeAndNil(fVulkanArrayImageView);
  FreeAndNil(fVulkanImageView);
- FreeAndNil(fVulkanSampler);
  FreeAndNil(fVulkanImage);
  inherited Destroy;
 end;

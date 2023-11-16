@@ -120,9 +120,14 @@ begin
 
  inherited AcquirePersistentResources;
 
- Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_comp.spv');
+ if fInstance.Renderer.Scene3D.HardwareRaytracingSupport then begin
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_raytracing_comp.spv');
+ end else begin
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_comp.spv');
+ end;
  try
   fComputeShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
+  fInstance.Renderer.VulkanDevice.DebugUtils.SetObjectName(fComputeShaderModule.Handle,VK_OBJECT_TYPE_SHADER_MODULE,'TpvScene3DRendererPassesMeshComputePass.fComputeShaderModule');
  finally
   Stream.Free;
  end;
@@ -146,8 +151,11 @@ begin
 
  fPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
  fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TpvScene3D.TMeshComputeStagePushConstants));
- fPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.MeshComputeVulkanDescriptorSetLayout);
+ fPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.MeshComputeVulkanDescriptorSet0Layout);
+ fPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.MeshComputeVulkanDescriptorSet1Layout);
  fPipelineLayout.Initialize;
+
+ fInstance.Renderer.VulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DRendererPassesMeshComputePass.fPipelineLayout');
 
  fPipeline:=TpvVulkanComputePipeline.Create(fInstance.Renderer.VulkanDevice,
                                             fInstance.Renderer.VulkanPipelineCache,
@@ -156,9 +164,11 @@ begin
                                             fPipelineLayout,
                                             nil,
                                             0);
+ fInstance.Renderer.VulkanDevice.DebugUtils.SetObjectName(fPipeline.Handle,VK_OBJECT_TYPE_PIPELINE,'TpvScene3DRendererPassesMeshComputePass.fPipeline');
 
  for Index:=0 to fInstance.Renderer.CountInFlightFrames-1 do begin
   fEvents[Index]:=TpvVulkanEvent.Create(fInstance.Renderer.VulkanDevice);
+  fInstance.Renderer.VulkanDevice.DebugUtils.SetObjectName(fEvents[Index].Handle,VK_OBJECT_TYPE_EVENT,'TpvScene3DRendererPassesMeshComputePass.fEvents['+IntToStr(Index)+']');
   fEventReady[Index]:=false;
  end;
 

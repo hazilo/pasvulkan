@@ -100,7 +100,6 @@ type { TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass }
        fVulkanPipelineShaderStageVertex:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageFragment:TpvVulkanPipelineShaderStage;
        fVulkanGraphicsPipeline:TpvVulkanGraphicsPipeline;
-       fVulkanSampler:TpvVulkanSampler;
        fVulkanDescriptorPool:TpvVulkanDescriptorPool;
        fVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
@@ -117,6 +116,8 @@ type { TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass }
      end;
 
 implementation
+
+uses PasVulkan.Scene3D.Renderer.CameraPreset;
 
 { TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass }
 
@@ -138,8 +139,8 @@ begin
 //SeparateCommandBuffer:=true;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,
-                                       1.0,
-                                       1.0,
+                                       fInstance.SizeFactor,
+                                       fInstance.SizeFactor,
                                        1.0,
                                        fInstance.CountSurfaceViews);
 
@@ -213,23 +214,6 @@ begin
 
  fVulkanRenderPass:=VulkanRenderPass;
 
- fVulkanSampler:=TpvVulkanSampler.Create(fInstance.Renderer.VulkanDevice,
-                                         TVkFilter.VK_FILTER_LINEAR,
-                                         TVkFilter.VK_FILTER_LINEAR,
-                                         TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         0.0,
-                                         false,
-                                         0.0,
-                                         false,
-                                         VK_COMPARE_OP_ALWAYS,
-                                         0.0,
-                                         0.0,
-                                         VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
-                                         false);
-
  fVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,
                                                        TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
                                                        fInstance.Renderer.CountInFlightFrames);
@@ -280,8 +264,8 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-                                                                 [TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
-                                                                                                fInstance.DepthMipmappedArray2DImages[InFlightFrameIndex].ArrayDescriptorImageInfo.imageView,
+                                                                 [TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
+                                                                                                fInstance.DepthMipmappedArray2DImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
                                                                                                 TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],
@@ -292,7 +276,7 @@ begin
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
                                                                  [],
-                                                                 [fInstance.Renderer.Scene3D.GlobalVulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                 [fInstance.VulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
                                                                  [],
                                                                  false);
   fVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(3,
@@ -327,8 +311,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fInstance.Width,fInstance.Height,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fInstance.Width,fInstance.Height);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceOutput.Width,fResourceOutput.Height,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceOutput.Width,fResourceOutput.Height);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -394,8 +378,6 @@ begin
 
  FreeAndNil(fVulkanDescriptorPool);
 
- FreeAndNil(fVulkanSampler);
-
  fVulkanRenderPass:=nil;
 
  inherited ReleaseVolatileResources;
@@ -409,15 +391,17 @@ end;
 procedure TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt);
 var InFlightFrameState:TpvScene3DRendererInstance.PInFlightFrameState;
     PushConstants:TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass.TPushConstants;
+    CameraPreset:TpvScene3DRendererCameraPreset;
 begin
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
  InFlightFrameState:=@fInstance.InFlightFrameStates^[aInFlightFrameIndex];
  PushConstants.ViewBaseIndex:=InFlightFrameState^.FinalViewIndex;
- PushConstants.FocalLength:=fInstance.CameraPreset.FocalLength;
- PushConstants.FocalPlaneDistance:=fInstance.CameraPreset.FocalPlaneDistance;
- PushConstants.FNumber:=fInstance.CameraPreset.FNumber;
- PushConstants.SensorSizeY:=fInstance.CameraPreset.SensorSize.y;
- PushConstants.UseAutoFocus:=ord(fInstance.CameraPreset.AutoFocus) and 1;
+ CameraPreset:=fInstance.CameraPresets[aInFlightFrameIndex];
+ PushConstants.FocalLength:=CameraPreset.FocalLength;
+ PushConstants.FocalPlaneDistance:=CameraPreset.FocalPlaneDistance;
+ PushConstants.FNumber:=CameraPreset.FNumber;
+ PushConstants.SensorSizeY:=CameraPreset.SensorSize.y;
+ PushConstants.UseAutoFocus:=ord(CameraPreset.AutoFocus) and 1;
  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       fVulkanPipelineLayout.Handle,
                                       0,

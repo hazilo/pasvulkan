@@ -3115,6 +3115,30 @@ begin
  end;
 end;
 
+function CheckForVulkanAPI(const aTag:TXMLTag):boolean;
+var i,j:longint;
+    s,t:string;
+begin
+ result:=false;
+ if assigned(aTag) then begin
+  s:=aTag.GetParameter('api','vulkan');
+  while length(s)>0 do begin
+   i:=pos(',',s);
+   if i>0 then begin
+    t:=trim(copy(s,1,i-1));
+    Delete(s,1,i);
+   end else begin
+    t:=trim(s);
+    s:='';
+   end;
+   if t='vulkan' then begin
+    result:=true;
+    break;
+   end;
+  end;
+ end;
+end;
+
 procedure ParseValidityTag(Tag:TXMLTag;const StringList:TStringList);
 var i:longint;
     ChildItem:TXMLItem;
@@ -3152,6 +3176,9 @@ begin
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
    if ChildTag.Name='extension' then begin
+    if not CheckForVulkanAPI(ChildTag) then begin
+     continue;
+    end;
     Extension:=TExtensionOrFeature.Create;
     ExtensionsOrFeatures.Add(Extension);
     Extension.Name:=ChildTag.GetParameter('name','');
@@ -3164,11 +3191,17 @@ begin
      ChildChildItem:=ChildTag.Items[j];
      if ChildChildItem is TXMLTag then begin
       ChildChildTag:=TXMLTag(ChildChildItem);
+      if not CheckForVulkanAPI(ChildChildTag) then begin
+       continue;
+      end;
       if ChildChildTag.Name='require' then begin
        for k:=0 to ChildChildTag.Items.Count-1 do begin
         ChildChildChildItem:=ChildChildTag.Items[k];
         if ChildChildChildItem is TXMLTag then begin
          ChildChildChildTag:=TXMLTag(ChildChildChildItem);
+         if not CheckForVulkanAPI(ChildChildChildTag) then begin
+          continue;
+         end;
          if ChildChildChildTag.Name='enum' then begin
           ExtensionOrFeatureEnum:=TExtensionOrFeatureEnum.Create;
           Extension.Enums.Add(ExtensionOrFeatureEnum);
@@ -3237,6 +3270,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='feature' then begin
     inc(result);
     Feature:=TExtensionOrFeature.Create;
@@ -3251,11 +3287,17 @@ begin
      ChildChildItem:=ChildTag.Items[j];
      if ChildChildItem is TXMLTag then begin
       ChildChildTag:=TXMLTag(ChildChildItem);
+      if not CheckForVulkanAPI(ChildChildTag) then begin
+       continue;
+      end;
       if ChildChildTag.Name='require' then begin
        for k:=0 to ChildChildTag.Items.Count-1 do begin
         ChildChildChildItem:=ChildChildTag.Items[k];
         if ChildChildChildItem is TXMLTag then begin
          ChildChildChildTag:=TXMLTag(ChildChildChildItem);
+         if not CheckForVulkanAPI(ChildChildChildTag) then begin
+          continue;
+         end;
          if ChildChildChildTag.Name='enum' then begin
           ExtensionOrFeatureEnum:=TExtensionOrFeatureEnum.Create;
           Feature.Enums.Add(ExtensionOrFeatureEnum);
@@ -3351,6 +3393,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='vendorid' then begin
     VendorID:=TVendorID.Create;
     VendorIDList.Add(VendorID);
@@ -3373,6 +3418,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='tag' then begin
     ATag:=TTag.Create;
     TagList.Add(ATag);
@@ -3420,7 +3468,7 @@ var i,j,k,ArraySize,CountTypeDefinitions,VersionVariant,VersionMajor,VersionMino
     ChildItem,ChildChildItem,NextChildChildItem:TXMLItem;
     ChildTag,ChildChildTag:TXMLTag;
     Category,Type_,Name,Text,NextText,ArraySizeStr,Comment,ParameterLine,ParameterName,CodeParameterLine,
-    Alias:ansistring;
+    Alias,Define:ansistring;
     TypeDefinitions:TTypeDefinitions;
     SortedTypeDefinitions:TPTypeDefinitions;
     TypeDefinition:PTypeDefinition;
@@ -3568,15 +3616,29 @@ begin
    ChildItem:=Tag.Items[i];
    if ChildItem is TXMLTag then begin
     ChildTag:=TXMLTag(ChildItem);
+    if not CheckForVulkanAPI(ChildTag) then begin
+     continue;
+    end;
     if ChildTag.Name='type' then begin
      Alias:=ChildTag.GetParameter('alias');
      if length(Alias)>0 then begin
       Name:=ChildTag.GetParameter('name');
       Category:=ChildTag.GetParameter('category');
       if Category='basetype' then begin
+       if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+        Define:='Metal';
+       end else begin
+        Define:='';
+       end;
+       if length(Define)>0 then begin
+        BaseTypes.Add('{$ifdef '+Define+'}');
+       end;
        BaseTypes.Add('     PP'+Name+'=PP'+Alias+';');
        BaseTypes.Add('     P'+Name+'=P'+Alias+';');
        BaseTypes.Add('     T'+Name+'=T'+Alias+';');
+       if length(Define)>0 then begin
+        BaseTypes.Add('{$endif}');
+       end;
        BaseTypes.Add('');
       end else if Category='bitmask' then begin
        BitMaskTypes.Add('     PP'+Name+'=PP'+Alias+';');
@@ -3584,9 +3646,20 @@ begin
        BitMaskTypes.Add('     T'+Name+'=T'+Alias+';');
        BitMaskTypes.Add('');
       end else if Category='handle' then begin
+       if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+        Define:='Metal';
+       end else begin
+        Define:='';
+       end;
+       if length(Define)>0 then begin
+        HandleTypes.Add('{$ifdef '+Define+'}');
+       end;
        HandleTypes.Add('     PP'+Name+'=PP'+Alias+';');
        HandleTypes.Add('     P'+Name+'=P'+Alias+';');
        HandleTypes.Add('     T'+Name+'=T'+Alias+';');
+       if length(Define)>0 then begin
+        HandleTypes.Add('{$endif}');
+       end;
        HandleTypes.Add('');
       end else if Category='enum' then begin
        AliasEnumTypes.Add('     PP'+Name+'=PP'+Alias+';');
@@ -3604,6 +3677,18 @@ begin
        TypeDefinition^.Type_:='';
        TypeDefinition^.Alias:=Alias;
        TypeDefinition^.Ptr:=0;
+       if (pos('NvSci',Name)>0) or (Name='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Name)>0) and (pos('NV',Name)>0)) then begin
+        TypeDefinition^.Define:='NvSci';
+       end else if (Name='VkPerformanceQueryReservationInfoKHR') or
+                   (Name='VkPipelineOfflineCreateInfo') or
+                   (Name='VkPhysicalDeviceVulkanSC10Properties') or
+                   (Name='VkPipelinePoolSize') or
+                   (Name='VkDeviceObjectReservationCreateInfo') or
+                   (Name='VkCommandPoolMemoryReservationCreateInfo') or
+                   (Name='VkCommandPoolMemoryConsumption') or
+                   (Name='VkPhysicalDeviceVulkanSC10Features') then begin
+        TypeDefinition^.Define:='VulkanSC';
+       end;
       end else begin
        Assert(false,Category);
       end;
@@ -3700,9 +3785,20 @@ begin
        end else if Category='basetype' then begin
         Type_:=ParseText(ChildTag.FindTag('type'),['']);
         Name:=ParseText(ChildTag.FindTag('name'),['']);
+        if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+         Define:='Metal';
+        end else begin
+         Define:='';
+        end;
+        if length(Define)>0 then begin
+         BaseTypes.Add('{$ifdef '+Define+'}');
+        end;
         BaseTypes.Add('     PP'+Name+'=^P'+Name+';');
         BaseTypes.Add('     P'+Name+'=^T'+Name+';');
         BaseTypes.Add('     T'+Name+'='+TranslateType(Type_,0)+';');
+        if length(Define)>0 then begin
+         BaseTypes.Add('{$endif}');
+        end;
         BaseTypes.Add('');
        end else if Category='bitmask' then begin
         Type_:=ParseText(ChildTag.FindTag('type'),['']);
@@ -3740,6 +3836,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='name' then begin
            TypeDefinition^.Name:=ParseText(ChildChildTag,['']);
            if pos('void*',Text)>0 then begin
@@ -3768,6 +3867,44 @@ begin
              end;
              TypeDefinitionMember:=@TypeDefinition^.Members[TypeDefinition^.CountMembers];
              inc(TypeDefinition^.CountMembers);
+             if (Type_='HWND') or (Type_='HMONITOR') or (Type_='HINSTANCE') or (Type_='SECURITY_ATTRIBUTES') then begin
+              TypeDefinition^.Define:='Windows';
+             end else if Type_='RROutput' then begin
+              TypeDefinition^.Define:='RandR';
+             end else if (Type_='Display') or (Type_='VisualID') or (Type_='Window') then begin
+              TypeDefinition^.Define:='XLIB';
+             end else if (Type_='xcb_connection_t') or (Type_='xcb_visualid_t') or (Type_='xcb_window_t') then begin
+              TypeDefinition^.Define:='XCB';
+             end else if (Type_='wl_display') or (Type_='wl_surface') then begin
+              TypeDefinition^.Define:='Wayland';
+             end else if (Type_='ANativeWindow') or (Type_='AHardwareBuffer') then begin
+              TypeDefinition^.Define:='Android';
+             end else if (Type_='zx_handle_t') or (pos('FUCHSIA',UpperCase(Type_))>0) then begin
+              TypeDefinition^.Define:='Fuchsia';
+             end else if (pos('MTL',Type_)>0) then begin
+              TypeDefinition^.Define:='Metal';
+             end else if (Type_='IDirectFB') or (Type_='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(Type_))>0) then begin
+              TypeDefinition^.Define:='DirectFB';
+             end else if (pos('_screen_context',Type_)>0) or (pos('_screen_window',Type_)>0) or (pos('qnx',LowerCase(Type_))>0) then begin
+              TypeDefinition^.Define:='QNX';
+             end else if pos('StdVideo',Type_)>0 then begin
+              TypeDefinition^.Define:='VkStdVideo';
+             end else if pos('VkVideo',Type_)>0 then begin
+              TypeDefinition^.Define:='VkVideo';
+             end else if (pos('NvSci',Type_)>0) or (Type_='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Type_)>0) and (pos('NV',Type_)>0)) then begin
+              TypeDefinition^.Define:='NvSci';
+             end else if (Type_='VkFaultLevel') or (Type_='VkFaultType') or (Type_='VkFaultData') or (Type_='VkCommandPoolMemoryConsumption') then begin
+              TypeDefinition^.Define:='VulkanSC';
+             end else if (Type_='VkPerformanceQueryReservationInfoKHR') or
+                         (Type_='VkPipelineOfflineCreateInfo') or
+                         (Type_='VkPhysicalDeviceVulkanSC10Properties') or
+                         (Type_='VkPipelinePoolSize') or
+                         (Type_='VkDeviceObjectReservationCreateInfo') or
+                         (Type_='VkCommandPoolMemoryReservationCreateInfo') or
+                         (Type_='VkCommandPoolMemoryConsumption') or
+                         (Type_='VkPhysicalDeviceVulkanSC10Features') then begin
+              TypeDefinition^.Define:='VulkanSC';
+             end;
              TypeDefinitionMember^.Type_:=Type_;
              k:=pos(',',Text);
              if k>0 then begin
@@ -3833,6 +3970,19 @@ begin
          TypeDefinition^.Define:='VkStdVideo';
         end else if pos('VkVideo',Name)>0 then begin
          TypeDefinition^.Define:='VkVideo';
+        end else if (pos('NvSci',Name)>0) or (Name='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Name)>0) and (pos('NV',Name)>0)) then begin
+         TypeDefinition^.Define:='NvSci';
+        end else if (Name='VkFaultLevel') or (Name='VkFaultType') or (Name='VkFaultData') or (Name='VkCommandPoolMemoryConsumption') then begin
+         TypeDefinition^.Define:='VulkanSC';
+        end else if (Name='VkPerformanceQueryReservationInfoKHR') or
+                    (Name='VkPipelineOfflineCreateInfo') or
+                    (Name='VkPhysicalDeviceVulkanSC10Properties') or
+                    (Name='VkPipelinePoolSize') or
+                    (Name='VkDeviceObjectReservationCreateInfo') or
+                    (Name='VkCommandPoolMemoryReservationCreateInfo') or
+                    (Name='VkCommandPoolMemoryConsumption') or
+                    (Name='VkPhysicalDeviceVulkanSC10Features') then begin
+         TypeDefinition^.Define:='VulkanSC';
         end;
         SetLength(TypeDefinition^.Members,ChildTag.Items.Count);
         TypeDefinition^.CountMembers:=0;
@@ -3840,6 +3990,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='member' then begin
            Comment:='';
            if (j+1)<ChildTag.Items.Count then begin
@@ -3938,6 +4091,8 @@ begin
             TypeDefinition^.Define:='Android';
            end else if (Type_='zx_handle_t') or (pos('FUCHSIA',UpperCase(Type_))>0) then begin
             TypeDefinition^.Define:='Fuchsia';
+           end else if (pos('MTL',Type_)>0) then begin
+            TypeDefinition^.Define:='Metal';
            end else if (Type_='IDirectFB') or (Type_='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(Type_))>0) then begin
             TypeDefinition^.Define:='DirectFB';
            end else if (pos('_screen_context',Type_)>0) or (pos('_screen_window',Type_)>0) or (pos('qnx',LowerCase(Type_))>0) then begin
@@ -3946,6 +4101,10 @@ begin
             TypeDefinition^.Define:='VkStdVideo';
            end else if pos('VkVideo',Type_)>0 then begin
             TypeDefinition^.Define:='VkVideo';
+           end else if (pos('NvSci',Type_)>0) or (Type_='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Type_)>0) and (pos('NV',Type_)>0)) then begin
+            TypeDefinition^.Define:='NvSci';
+           end else if (Type_='VkFaultLevel') or (Type_='VkFaultType') or (Type_='VkFaultData') or (Type_='VkCommandPoolMemoryConsumption') then begin
+            TypeDefinition^.Define:='VulkanSC';
            end;
           end;
          end;
@@ -4089,7 +4248,8 @@ begin
         end;
         if (TypeDefinition^.Name<>'VkBaseInStructure') and
            (TypeDefinition^.Name<>'VkBaseOutStructure') and
-           (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') then begin
+           (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') and
+           (TypeDefinition^.Name<>'VkExportMetalObjectsInfoEXT') then begin
          RecordConstructorCodeStringList.Add(CodeParameterLine);
          RecordConstructorStringList.Add(ParameterLine);
         end;
@@ -4098,7 +4258,8 @@ begin
       if (TypeDefinition^.Name<>'VkBaseInStructure') and
          (TypeDefinition^.Name<>'VkBaseOutStructure') and
          (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') and
-         (TypeDefinition^.Name<>'VkSubpassEndInfo') then begin
+         (TypeDefinition^.Name<>'VkSubpassEndInfo') and
+         (TypeDefinition^.Name<>'VkExportMetalObjectsInfoEXT') then begin
        if HasArray then begin
         RecordConstructorCodeStringList.Add('var ArrayItemCount:TVkInt32;');
        end;
@@ -4233,6 +4394,9 @@ begin
     ChildItem:=Tag.Items[i];
     if ChildItem is TXMLTag then begin
      ChildTag:=TXMLTag(ChildItem);
+     if not CheckForVulkanAPI(ChildTag) then begin
+      continue;
+     end;
      if (ChildTag.Name='enum') or (ChildTag.Name='unused') then begin
       ValueItem:=@ValueItems[CountValueItems];
       ValueItem^.IsExtended:=false;
@@ -4507,6 +4671,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='command' then begin
     Alias:=ChildTag.GetParameter('alias','');
     AliasName:='';
@@ -4523,6 +4690,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='proto' then begin
            ProtoName:=ParseText(ChildChildTag.FindTag('name'),['']);
            break;
@@ -4556,6 +4726,9 @@ begin
        ChildChildItem:=ChildTag.Items[j];
        if ChildChildItem is TXMLTag then begin
         ChildChildTag:=TXMLTag(ChildChildItem);
+        if not CheckForVulkanAPI(ChildChildTag) then begin
+         continue;
+        end;
         if ChildChildTag.Name='proto' then begin
          if length(AliasName)>0 then begin
           ProtoName:=AliasName;
@@ -4626,6 +4799,8 @@ begin
           Define:='Android';
          end else if (ParamType='zx_handle_t') or (pos('FUCHSIA',UpperCase(ParamType))>0) then begin
           Define:='Fuchsia';
+         end else if (pos('MTL',ParamType)>0) then begin
+          Define:='Metal';
          end else if (ParamType='IDirectFB') or (ParamType='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(ParamType))>0) then begin
           Define:='DirectFB';
          end else if (pos('_screen_context',ParamType)>0) or (pos('_screen_window',ParamType)>0) or (pos('qnx',LowerCase(ParamType))>0) then begin
@@ -4634,6 +4809,10 @@ begin
           Define:='VkStdVideo';
          end else if pos('VkVideo',ParamType)>0 then begin
           Define:='VkVideo';
+         end else if (pos('NvSci',ParamType)>0) or (ParamType='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',ParamType)>0) and (pos('NV',ParamType)>0)) then begin
+          Define:='NvSci';
+         end else if (ParamType='VkFaultLevel') or (ParamType='VkFaultType') or (ParamType='VkFaultData') or (ParamType='VkCommandPoolMemoryConsumption') then begin
+          Define:='VulkanSC';
          end;
         end;
        end;
@@ -4765,6 +4944,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='enums' then begin
     ParseEnumsTag(ChildTag);
    end;
@@ -4962,6 +5144,7 @@ begin
    OutputPAS.Add('     {$if defined(Fuchsia) and defined(VulkanUseFuchsiaUnits)}Fuchsia,{$ifend}');
    OutputPAS.Add('     {$if defined(DirectFB) and defined(VulkanUseDirectFBUnits)}DirectFB,{$ifend}');
    OutputPAS.Add('     {$if defined(QNX) and defined(VulkanUseQNXUnits)}QNX,{$ifend}');
+   OutputPAS.Add('     {$if defined(Metal) and defined(VulkanUseMetalUnits)}Metal,{$ifend}');
    OutputPAS.Add('     SysUtils;');
    OutputPAS.Add('');
    OutputPAS.Add('const VK_DEFAULT_LIB_NAME={$ifdef Windows}''vulkan-1.dll''{$else}{$ifdef Android}''libvulkan.so''{$else}{$ifdef Unix}''libvulkan.so.1''{$else}''libvulkan''{$endif}{$endif}{$endif};');
@@ -5508,7 +5691,7 @@ begin
   AllDeviceCommands.Free;
  end;
 
- readln;
+ //readln;
 end.
 
 

@@ -159,7 +159,7 @@ type EpvTriangleBVH=class(Exception);
 
      TpvTriangleBVHSkipListNodes=array of TpvTriangleBVHSkipListNode;
 
-     TpvTriangleBVHNodeQueue=TPasMPUnboundedQueue<TpvInt32>;
+     TpvTriangleBVHNodeQueue=TpvDynamicQueue<TpvInt32>;
 
      TpvTriangleBVHBuildMode=
       (
@@ -197,6 +197,7 @@ type EpvTriangleBVH=class(Exception);
        fBVHIntersectionCost:TpvScalar;
        fMaximumTrianglesPerNode:TpvInt32;
        fTriangleAreaSplitThreshold:TpvScalar;
+       fParallel:Boolean;
        procedure SplitTooLargeTriangles;
        function EvaluateSAH(const aParentTreeNode:PpvTriangleBVHTreeNode;const aAxis:TpvInt32;const aSplitPosition:TpvFloat):TpvFloat;
        function FindBestSplitPlaneMeanVariance(const aParentTreeNode:PpvTriangleBVHTreeNode;out aAxis:TpvInt32;out aSplitPosition:TpvFloat):Boolean;
@@ -236,6 +237,7 @@ type EpvTriangleBVH=class(Exception);
        property BVHIntersectionCost:TpvScalar read fBVHIntersectionCost write fBVHIntersectionCost;
        property MaximumTrianglesPerNode:TpvInt32 read fMaximumTrianglesPerNode write fMaximumTrianglesPerNode;
        property TriangleAreaSplitThreshold:TpvScalar read fTriangleAreaSplitThreshold write fTriangleAreaSplitThreshold;
+       property Parallel:Boolean read fParallel write fParallel;
      end;
 
 implementation
@@ -340,7 +342,7 @@ begin
  fSkipListNodes:=nil;
  fCountSkipListNodes:=0;
 
- fNodeQueue:=TpvTriangleBVHNodeQueue.Create;
+ fNodeQueue.Initialize;
 
  fNodeQueueLock:=TPasMPSlimReaderWriterLock.Create;
 
@@ -360,6 +362,8 @@ begin
 
  fTriangleAreaSplitThreshold:=0.0;
 
+ fParallel:=false;
+
 end;
 
 destructor TpvTriangleBVH.Destroy;
@@ -368,7 +372,7 @@ begin
  fTreeNodes:=nil;
  fSkipListNodes:=nil;
  fTreeNodeStack.Finalize;
- FreeAndNil(fNodeQueue);
+ fNodeQueue.Finalize;
  FreeAndNil(fNodeQueueLock);
  fSkipListNodeMap:=nil;
  inherited Destroy;
@@ -1355,7 +1359,7 @@ begin
     fNodeQueue.Clear;
     fNodeQueue.Enqueue(0);
     fCountActiveWorkers:=0;
-    if assigned(fPasMPInstance) and (fPasMPInstance.CountJobWorkerThreads>0) then begin
+    if fParallel and assigned(fPasMPInstance) and (fPasMPInstance.CountJobWorkerThreads>0) then begin
      Jobs:=nil;
      try
       SetLength(Jobs,fPasMPInstance.CountJobWorkerThreads);
@@ -1377,11 +1381,11 @@ begin
 
  end;
 
- if length(fSkipListNodeMap)<=fCountTreeNodes then begin
-  SetLength(fSkipListNodeMap,fCountTreeNodes+((fCountTreeNodes+1) shr 1));
+ if length(fSkipListNodeMap)<fCountTreeNodes then begin
+  SetLength(fSkipListNodeMap,fCountTreeNodes);//+((fCountTreeNodes+1) shr 1));
  end;
- if length(fSkipListNodes)<=fCountTreeNodes then begin
-  SetLength(fSkipListNodes,fCountTreeNodes+((fCountTreeNodes+1) shr 1));
+ if length(fSkipListNodes)<fCountTreeNodes then begin
+  SetLength(fSkipListNodes,fCountTreeNodes);
  end;
  fCountSkipListNodes:=0;
  fTreeNodeStack.Push((TpvUInt64(fTreeNodeRoot) shl 1) or 0);
@@ -1392,7 +1396,13 @@ begin
    0:begin
     SkipListNodeIndex:=fCountSkipListNodes;
     inc(fCountSkipListNodes);
+    if length(fSkipListNodes)<=fCountSkipListNodes then begin
+     SetLength(fSkipListNodes,fCountSkipListNodes+((fCountSkipListNodes+1) shr 1));
+    end;
     SkipListNode:=@fSkipListNodes[SkipListNodeIndex];
+    if length(fSkipListNodeMap)<=TreeNodeIndex then begin
+     SetLength(fSkipListNodeMap,(TreeNodeIndex+1)+((TreeNodeIndex+2) shr 1));
+    end;
     fSkipListNodeMap[TreeNodeIndex]:=SkipListNodeIndex;
     SkipListNode^.Min.xyz:=TreeNode^.Bounds.Min;
     SkipListNode^.Min.w:=0.0;
@@ -1421,6 +1431,12 @@ begin
    end;
   end;
  end;
+
+ if length(fSkipListNodes)<>fCountSkipListNodes then begin
+  SetLength(fSkipListNodes,fCountSkipListNodes);
+ end;
+
+ fSkipListNodeMap:=nil;
 
 end;
 

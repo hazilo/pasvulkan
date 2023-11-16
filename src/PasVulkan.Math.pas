@@ -209,6 +209,7 @@ type PpvScalar=^TpvScalar;
        class function InlineableCreate(const aX:TpvScalar):TpvVector3; overload; inline; static;
        class function InlineableCreate(const aX,aY,aZ:TpvScalar):TpvVector3; overload; inline; static;
        class function InlineableCreate(const aXY:TpvVector2;const aZ:TpvScalar=0.0):TpvVector3; overload; inline; static;
+       class function InlineableCreate(const aXYZ:TpvVector3):TpvVector3; overload; inline; static;
        class operator Implicit(const a:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Explicit(const a:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Equal(const a,b:TpvVector3):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -248,7 +249,13 @@ type PpvScalar=^TpvScalar;
        function SquaredLength:TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function Normalize:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function DistanceTo({$ifdef fpc}constref{$else}const{$endif} aToVector:TpvVector3):TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Min(const aWith:TpvVector3):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Max(const aWith:TpvVector3):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Abs:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Truncate:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Round:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Floor:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Ceil:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function Dot({$ifdef fpc}constref{$else}const{$endif} aWithVector:TpvVector3):TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function AngleTo(const aToVector:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Cross({$ifdef fpc}constref{$else}const{$endif} aOtherVector:TpvVector3):TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
@@ -468,6 +475,9 @@ type PpvScalar=^TpvScalar;
         2:(
          Normal:TpvVector3;
          Distance:TpvScalar;
+        );
+        3:(
+         Vector4:TpvVector4;
         );
      end;
 
@@ -733,6 +743,7 @@ type PpvScalar=^TpvScalar;
         1:(m00,m01,m02,m10,m11,m12,m20,m21,m22:TpvScalar);
         2:(Tangent,Bitangent,Normal:TpvVector3);
         3:(Right,Up,Forwards:TpvVector3);
+        4:(RawVectors:array[0..2] of TpvVector3);
        end;
 
      PpvDecomposedMatrix4x4=^TpvDecomposedMatrix4x4;
@@ -816,6 +827,14 @@ type PpvScalar=^TpvScalar;
        constructor CreatePerspectiveRightHandedOneToZero(const fovy,Aspect,zNear,zFar:TpvScalar);
        constructor CreatePerspectiveReversedZ(const aFOVY,aAspectRatio,aZNear:TpvScalar);
        constructor CreatePerspective(const fovy,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveReversedZ(const aFOVX,aAspectRatio,aZNear:TpvScalar);
+       constructor CreateHorizontalFOVPerspective(const fovx,Aspect,zNear,zFar:TpvScalar);
        constructor CreateLookAt(const Eye,Center,Up:TpvVector3);
        constructor CreateFill(const Eye,RightVector,UpVector,ForwardVector:TpvVector3);
        constructor CreateConstructX(const xAxis:TpvVector3);
@@ -893,6 +912,8 @@ type PpvScalar=^TpvScalar;
        function MulInverted({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -906,6 +927,7 @@ type PpvScalar=^TpvScalar;
         1:(m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33:TpvScalar);
         2:(Tangent,Bitangent,Normal,Translation:TpvVector4);
         3:(Right,Up,Forwards,Offset:TpvVector4);
+        4:(RawVectors:array[0..3] of TpvVector4);
      end;
 
      // Dual quaternion with uniform scaling support
@@ -966,6 +988,7 @@ type PpvScalar=^TpvScalar;
       public
        const Null:TpvMatrix4x4=(RawComponents:((0.0,0.0,0,0.0),(0.0,0.0,0,0.0),(0.0,0.0,0,0.0),(0.0,0.0,0,0.0)));
              Identity:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,1.0,0.0),(0.0,0.0,0,1.0)));
+             RotateY180:TpvMatrix4x4=(RawComponents:((-1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,-1.0,0.0),(0.0,0.0,0,1.0)));
              RightToLeftHanded:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,-1.0,0.0),(0.0,0.0,0,1.0)));
              Flip:TpvMatrix4x4=(RawComponents:((0.0,0.0,-1.0,0.0),(-1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,0,1.0)));
              InverseFlip:TpvMatrix4x4=(RawComponents:((0.0,-1.0,0.0,0.0),(0.0,0.0,1.0,0.0),(-1.0,0.0,0,0.0),(0.0,0.0,0,1.0)));
@@ -1070,8 +1093,10 @@ type PpvScalar=^TpvScalar;
        function Flip:TpvAABB;
        function SquareMagnitude:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Resize(const f:TpvScalar):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
+       procedure DirectCombine(const WithAABB:TpvAABB); {$ifdef CAN_INLINE}inline;{$endif}
+       procedure DirectCombineVector3(const v:TpvVector3); {$ifdef CAN_INLINE}inline;{$endif}
        function Combine(const WithAABB:TpvAABB):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
-       function CombineVector3(v:TpvVector3):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
+       function CombineVector3(const v:TpvVector3):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
        function DistanceTo(const ToAABB:TpvAABB):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Radius:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Compare(const WithAABB:TpvAABB):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1474,9 +1499,17 @@ type PpvScalar=^TpvScalar;
 
      PpvPolynomial=^TpvPolynomial;
 
+function RoundDownToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundDownToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundDownToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+
 function RoundUpToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function RoundUpToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function RoundUpToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+
+function RoundNearestToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundNearestToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundNearestToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 
 function IntLog2(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function IntLog264(x:TpvUInt64):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
@@ -1684,6 +1717,82 @@ function SolveRootsInInterval(const aCoefs:array of TpvDouble;const aMin,aMax:Tp
 
 implementation
 
+function RoundDownToPowerOfTwo(x:TpvUInt32):TpvUInt32;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
+
+function RoundDownToPowerOfTwo64(x:TpvUInt64):TpvUInt64;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+  x:=x or (x shr 32);
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
+
+function RoundDownToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+{$ifdef CPU64}
+  x:=x or (x shr 32);
+{$endif}
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
+
 function RoundUpToPowerOfTwo(x:TpvUInt32):TpvUInt32;
 begin
  dec(x);
@@ -1719,6 +1828,42 @@ begin
  x:=x or (x shr 32);
 {$endif}
  result:=x+1;
+end;
+
+function RoundNearestToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt32;
+begin
+ a:=RoundDownToPowerOfTwo(x);
+ b:=RoundUpToPowerOfTwo(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
+end;
+
+function RoundNearestToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt64;
+begin
+ a:=RoundDownToPowerOfTwo64(x);
+ b:=RoundUpToPowerOfTwo64(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
+end;
+
+function RoundNearestToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt32;
+begin
+ a:=RoundDownToPowerOfTwoSizeUInt(x);
+ b:=RoundUpToPowerOfTwoSizeUInt(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
 end;
 
 function IntLog2(x:TpvUInt32):TpvUInt32; {$if defined(fpc)}{$ifdef CAN_INLINE}inline;{$endif}
@@ -2464,6 +2609,11 @@ begin
  result.z:=aZ;
 end;
 
+class function TpvVector3.InlineableCreate(const aXYZ:TpvVector3):TpvVector3;
+begin
+ result:=aXYZ;
+end;
+
 class operator TpvVector3.Implicit(const a:TpvScalar):TpvVector3;
 begin
  result.x:=a;
@@ -2619,9 +2769,9 @@ end;
 class operator TpvVector3.Multiply({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  mulss xmm0,dword ptr [b+0]
  mulss xmm1,dword ptr [b+4]
  mulss xmm2,dword ptr [b+8]
@@ -2654,9 +2804,9 @@ end;
 class operator TpvVector3.Divide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  divss xmm0,dword ptr [b+0]
  divss xmm1,dword ptr [b+4]
  divss xmm2,dword ptr [b+8]
@@ -2689,9 +2839,9 @@ end;
 class operator TpvVector3.IntDivide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  divss xmm0,dword ptr [b+0]
  divss xmm1,dword ptr [b+4]
  divss xmm2,dword ptr [b+8]
@@ -3085,6 +3235,20 @@ begin
 end;
 {$ifend}
 
+function TpvVector3.Min(const aWith:TpvVector3):TpvVector3;
+begin
+ result.x:=Math.Min(x,aWith.x);
+ result.y:=Math.Min(y,aWith.y);
+ result.z:=Math.Min(z,aWith.z);
+end;
+
+function TpvVector3.Max(const aWith:TpvVector3):TpvVector3;
+begin
+ result.x:=Math.Max(x,aWith.x);
+ result.y:=Math.Max(y,aWith.y);
+ result.z:=Math.Max(z,aWith.z);
+end;
+
 function TpvVector3.Abs:TpvVector3;
 {$if defined(SIMD) and defined(cpu386)}
 asm
@@ -3133,6 +3297,194 @@ begin
  result.x:=System.abs(x);
  result.y:=System.abs(y);
  result.z:=System.abs(z);
+end;
+{$ifend}
+
+function TpvVector3.Truncate:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,3
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,3
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=System.trunc(x);
+ result.y:=System.trunc(y);
+ result.z:=System.trunc(z);
+end;
+{$ifend}
+
+function TpvVector3.Round:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,0
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,0
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=System.Round(x);
+ result.y:=System.Round(y);
+ result.z:=System.Round(z);
+end;
+{$ifend}
+
+function TpvVector3.Floor:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,1
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,1
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=Math.Floor(x);
+ result.y:=Math.Floor(y);
+ result.z:=Math.Floor(z);
+end;
+{$ifend}
+
+function TpvVector3.Ceil:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,2
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,2
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=Math.Ceil(x);
+ result.y:=Math.Ceil(y);
+ result.z:=Math.Ceil(z);
 end;
 {$ifend}
 
@@ -9183,6 +9535,156 @@ begin
  end;
 end;
 
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zFar/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(-(zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-zNear)/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(zNear*zFar)/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/(zFar-zNear);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zFar/(zNear-zFar);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zNear/(zFar-zNear);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(zNear*zFar)/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveReversedZ(const aFOVX,aAspectRatio,aZNear:TpvScalar);
+var t,sx,sy:TpvScalar;
+begin
+ t:=tan(aFOVX*DEG2RAD*0.5);
+ sx:=1.0/t;
+ sy:=sx*aAspectRatio;
+ RawComponents[0,0]:=sx;
+ RawComponents[0,1]:=0.0;
+ RawComponents[0,2]:=0.0;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=0.0;
+ RawComponents[1,1]:=sy;
+ RawComponents[1,2]:=0.0;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=0.0;
+ RawComponents[2,1]:=0.0;
+ RawComponents[2,2]:=0.0;
+ RawComponents[2,3]:=-1.0;
+ RawComponents[3,0]:=0.0;
+ RawComponents[3,1]:=0.0;
+ RawComponents[3,2]:=aZNear;
+ RawComponents[3,3]:=0.0;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspective(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/ZDelta;
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/ZDelta;
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
 constructor TpvMatrix4x4.CreateLookAt(const Eye,Center,Up:TpvVector3);
 var RightVector,UpVector,ForwardVector:TpvVector3;
 begin
@@ -11745,6 +12247,21 @@ begin
  result.w:=a.w;
 end;
 
+function TpvMatrix4x4.MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
+begin
+ result.x:=(abs(RawComponents[0,0])*a.x)+(abs(RawComponents[1,0])*a.y)+(abs(RawComponents[2,0])*a.z);
+ result.y:=(abs(RawComponents[0,1])*a.x)+(abs(RawComponents[1,1])*a.y)+(abs(RawComponents[2,1])*a.z);
+ result.z:=(abs(RawComponents[0,2])*a.x)+(abs(RawComponents[1,2])*a.y)+(abs(RawComponents[2,2])*a.z);
+end;
+
+function TpvMatrix4x4.MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4;
+begin
+ result.x:=(abs(RawComponents[0,0])*a.x)+(abs(RawComponents[1,0])*a.y)+(abs(RawComponents[2,0])*a.z);
+ result.y:=(abs(RawComponents[0,1])*a.x)+(abs(RawComponents[1,1])*a.y)+(abs(RawComponents[2,1])*a.z);
+ result.z:=(abs(RawComponents[0,2])*a.x)+(abs(RawComponents[1,2])*a.y)+(abs(RawComponents[2,2])*a.z);
+ result.w:=a.w;
+end;
+
 function TpvMatrix4x4.MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
 begin
  result.x:=(RawComponents[0,0]*a.x)+(RawComponents[0,1]*a.y)+(RawComponents[0,2]*a.z);
@@ -11763,7 +12280,7 @@ end;
 function TpvMatrix4x4.MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
 var Temporary:TpvVector4;
 begin
- Temporary:=self*TpvVector4.Create(a,1.0);
+ Temporary:=self*TpvVector4.InlineableCreate(a,1.0);
  Temporary:=Temporary/Temporary.w;
  result:=Temporary.xyz;
 end;
@@ -13815,6 +14332,26 @@ begin
  result.Max:=Max+v;
 end;
 
+procedure TpvAABB.DirectCombine(const WithAABB:TpvAABB);
+begin
+ Min.x:=Math.Min(Min.x,WithAABB.Min.x);
+ Min.y:=Math.Min(Min.y,WithAABB.Min.y);
+ Min.z:=Math.Min(Min.z,WithAABB.Min.z);
+ Max.x:=Math.Max(Max.x,WithAABB.Max.x);
+ Max.y:=Math.Max(Max.y,WithAABB.Max.y);
+ Max.z:=Math.Max(Max.z,WithAABB.Max.z);
+end;
+
+procedure TpvAABB.DirectCombineVector3(const v:TpvVector3);
+begin
+ Min.x:=Math.Min(Min.x,v.x);
+ Min.y:=Math.Min(Min.y,v.y);
+ Min.z:=Math.Min(Min.z,v.z);
+ Max.x:=Math.Max(Max.x,v.x);
+ Max.y:=Math.Max(Max.y,v.y);
+ Max.z:=Math.Max(Max.z,v.z);
+end;
+
 function TpvAABB.Combine(const WithAABB:TpvAABB):TpvAABB;
 begin
  result.Min.x:=Math.Min(Min.x,WithAABB.Min.x);
@@ -13825,7 +14362,7 @@ begin
  result.Max.z:=Math.Max(Max.z,WithAABB.Max.z);
 end;
 
-function TpvAABB.CombineVector3(v:TpvVector3):TpvAABB;
+function TpvAABB.CombineVector3(const v:TpvVector3):TpvAABB;
 begin
  result.Min.x:=Math.Min(Min.x,v.x);
  result.Min.y:=Math.Min(Min.y,v.y);
@@ -14405,7 +14942,88 @@ begin
 end;
 
 function TpvAABB.Transform(const Transform:TpvMatrix3x3):TpvAABB;
-var i,j:TpvInt32;
+var Center,Temp,Extents:TpvVector3;
+begin
+ Center:=(Min+Max)*0.5;
+ Temp:=(Max-Min)*0.5;
+ Extents.x:=(abs(Transform.RawComponents[0,0])*Temp.x)+(abs(Transform.RawComponents[1,0])*Temp.y)+(abs(Transform.RawComponents[2,0])*Temp.z);
+ Extents.y:=(abs(Transform.RawComponents[0,1])*Temp.x)+(abs(Transform.RawComponents[1,1])*Temp.y)+(abs(Transform.RawComponents[2,1])*Temp.z);
+ Extents.z:=(abs(Transform.RawComponents[0,2])*Temp.x)+(abs(Transform.RawComponents[1,2])*Temp.y)+(abs(Transform.RawComponents[2,2])*Temp.z);
+ result.Min:=Center-Extents;
+ result.Max:=Center+Extents;
+end;
+{begin
+ result.Min.x:=0.0;
+ result.Min.y:=0.0;
+ result.Min.z:=0.0;
+ result.Max.x:=0.0;
+ result.Max.y:=0.0;
+ result.Max.z:=0.0;
+ if Transform.RawComponents[0,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Min.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Max.x);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Max.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Min.x);
+ end;
+ if Transform.RawComponents[0,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Min.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Max.x);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Max.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Min.x);
+ end;
+ if Transform.RawComponents[0,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Min.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Max.x);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Max.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Min.x);
+ end;
+ if Transform.RawComponents[1,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Min.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Max.y);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Max.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Min.y);
+ end;
+ if Transform.RawComponents[1,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Min.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Max.y);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Max.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Min.y);
+ end;
+ if Transform.RawComponents[1,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Min.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Max.y);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Max.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Min.y);
+ end;
+ if Transform.RawComponents[2,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Min.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Max.z);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Max.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Min.z);
+ end;
+ if Transform.RawComponents[2,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Min.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Max.z);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Max.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Min.z);
+ end;
+ if Transform.RawComponents[2,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Min.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Max.z);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Max.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Min.z);
+ end;
+end;}
+{var i,j:TpvInt32;
     a,b:TpvScalar;
 begin
  result.Min.x:=0.0;
@@ -14427,10 +15045,105 @@ begin
    end;
   end;
  end;
-end;
+end;}
 
 function TpvAABB.Transform(const Transform:TpvMatrix4x4):TpvAABB;
-var i,j:TpvInt32;
+var Center,Extents:TpvVector3;
+begin
+ Center:=(Transform*TpvVector4.InlineableCreate((Min+Max)*0.5,1.0)).xyz;
+ Extents:=Transform.MulAbsBasis((Max-Min)*0.5);
+ result.Min:=Center-Extents;
+ result.Max:=Center+Extents;
+end;
+{begin
+ result.Min.x:=Transform.RawComponents[3,0];
+ result.Min.y:=Transform.RawComponents[3,1];
+ result.Min.z:=Transform.RawComponents[3,2];
+ result.Max:=result.Min;
+ if Transform.RawComponents[0,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Min.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Max.x);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Max.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Min.x);
+ end;
+ if Transform.RawComponents[0,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Min.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Max.x);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Max.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Min.x);
+ end;
+ if Transform.RawComponents[0,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Min.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Max.x);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Max.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Min.x);
+ end;
+ if Transform.RawComponents[1,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Min.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Max.y);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Max.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Min.y);
+ end;
+ if Transform.RawComponents[1,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Min.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Max.y);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Max.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Min.y);
+ end;
+ if Transform.RawComponents[1,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Min.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Max.y);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Max.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Min.y);
+ end;
+ if Transform.RawComponents[2,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Min.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Max.z);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Max.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Min.z);
+ end;
+ if Transform.RawComponents[2,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Min.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Max.z);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Max.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Min.z);
+ end;
+ if Transform.RawComponents[2,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Min.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Max.z);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Max.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Min.z);
+ end;
+end;}
+{var Size:TpvVector3;
+    Basis:array[0..2] of TpvVector3;
+    Temp:array[0..7] of TpvVector3;
+begin
+ Size:=Max-Min;
+ Basis[0]:=TpvVector3.InlineableCreate(Transform.RawComponents[0,0],Transform.RawComponents[0,1],Transform.RawComponents[0,2])*Size;
+ Basis[1]:=TpvVector3.InlineableCreate(Transform.RawComponents[1,0],Transform.RawComponents[1,1],Transform.RawComponents[1,2])*Size;
+ Basis[2]:=TpvVector3.InlineableCreate(Transform.RawComponents[2,0],Transform.RawComponents[2,1],Transform.RawComponents[2,2])*Size;
+ Temp[0]:=(Transform*TpvVector4.InlineableCreate(Min,1.0)).xyz;
+ Temp[1]:=Temp[0]+Basis[0];
+ Temp[2]:=Temp[0]+Basis[1];
+ Temp[3]:=Temp[1]+Basis[1];
+ Temp[4]:=Temp[0]+Basis[2];
+ Temp[5]:=Temp[1]+Basis[2];
+ Temp[6]:=Temp[2]+Basis[2];
+ Temp[7]:=Temp[3]+Basis[2];
+ result.Min:=Temp[0].Min(Temp[1].Min(Temp[2].Min(Temp[3].Min(Temp[4].Min(Temp[5].Min(Temp[6].Min(Temp[7])))))));
+ result.Max:=Temp[0].Max(Temp[1].Max(Temp[2].Max(Temp[3].Max(Temp[4].Max(Temp[5].Max(Temp[6].Max(Temp[7])))))));
+end;}
+{var i,j:TpvInt32;
     a,b:TpvScalar;
 begin
  result.Min.x:=Transform[3,0];
@@ -14450,103 +15163,76 @@ begin
    end;
   end;
  end;
-end;
+end;}
 
 function TpvAABB.MatrixMul(const Transform:TpvMatrix3x3):TpvAABB;
-var Rotation:TpvMatrix3x3;
-    v:array[0..7] of TpvVector3;
-    Center,MinVector,MaxVector:TpvVector3;
-    i:TpvInt32;
+var Index:TpvInt32;
+    v:TpvVector3;
 begin
-
- Center:=(Min+Max)*0.5;
-
- MinVector:=Min-Center;
- MaxVector:=Max-Center;
-
- v[0]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MinVector.z);
- v[1]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MinVector.z);
- v[2]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MinVector.z);
- v[3]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MaxVector.z);
- v[4]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MaxVector.z);
- v[5]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MaxVector.z);
- v[6]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MaxVector.z);
- v[7]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MinVector.z);
-
- result.Min:=v[0];
- result.Max:=v[0];
- for i:=0 to 7 do begin
-  if result.Min.x>v[i].x then begin
-   result.Min.x:=v[i].x;
-  end;
-  if result.Min.y>v[i].y then begin
-   result.Min.y:=v[i].y;
-  end;
-  if result.Min.z>v[i].z then begin
-   result.Min.z:=v[i].z;
-  end;
-  if result.Max.x<v[i].x then begin
-   result.Max.x:=v[i].x;
-  end;
-  if result.Max.y<v[i].y then begin
-   result.Max.y:=v[i].y;
-  end;
-  if result.Max.z<v[i].z then begin
-   result.Max.z:=v[i].z;
+ for Index:=0 to 7 do begin
+  v:=Transform*TpvVector3.InlineableCreate(MinMax[(Index shr 0) and 1].x,
+                                           MinMax[(Index shr 1) and 1].y,
+                                           MinMax[(Index shr 2) and 1].z);
+  if Index=0 then begin
+   result.Min:=v;
+   result.Max:=v;
+  end else begin
+   if result.Min.x>v.x then begin
+    result.Min.x:=v.x;
+   end;
+   if result.Min.y>v.y then begin
+    result.Min.y:=v.y;
+   end;
+   if result.Min.z>v.z then begin
+    result.Min.z:=v.z;
+   end;
+   if result.Max.x<v.x then begin
+    result.Max.x:=v.x;
+   end;
+   if result.Max.y<v.y then begin
+    result.Max.y:=v.y;
+   end;
+   if result.Max.z<v.z then begin
+    result.Max.z:=v.z;
+   end;
   end;
  end;
- result.Min:=result.Min+Center;
- result.Max:=result.Max+Center;
 end;
 
 function TpvAABB.MatrixMul(const Transform:TpvMatrix4x4):TpvAABB;
-var Rotation:TpvMatrix4x4;
-    v:array[0..7] of TpvVector3;
-    Center,NewCenter,MinVector,MaxVector:TpvVector3;
-    i:TpvInt32;
+var Index:TpvInt32;
+    v:TpvVector4;
 begin
- Rotation:=TpvMatrix4x4.CreateRotation(Transform);
-
- Center:=(Min+Max)*0.5;
-
- MinVector:=Min-Center;
- MaxVector:=Max-Center;
-
- NewCenter:=Center+(Transform*TpvVector3.Origin);
-
- v[0]:=Rotation*TpvVector3.Create(MinVector.x,MinVector.y,MinVector.z);
- v[1]:=Rotation*TpvVector3.Create(MaxVector.x,MinVector.y,MinVector.z);
- v[2]:=Rotation*TpvVector3.Create(MaxVector.x,MaxVector.y,MinVector.z);
- v[3]:=Rotation*TpvVector3.Create(MaxVector.x,MaxVector.y,MaxVector.z);
- v[4]:=Rotation*TpvVector3.Create(MinVector.x,MaxVector.y,MaxVector.z);
- v[5]:=Rotation*TpvVector3.Create(MinVector.x,MinVector.y,MaxVector.z);
- v[6]:=Rotation*TpvVector3.Create(MaxVector.x,MinVector.y,MaxVector.z);
- v[7]:=Rotation*TpvVector3.Create(MinVector.x,MaxVector.y,MinVector.z);
-
- result.Min:=v[0];
- result.Max:=v[0];
- for i:=0 to 7 do begin
-  if result.Min.x>v[i].x then begin
-   result.Min.x:=v[i].x;
-  end;
-  if result.Min.y>v[i].y then begin
-   result.Min.y:=v[i].y;
-  end;
-  if result.Min.z>v[i].z then begin
-   result.Min.z:=v[i].z;
-  end;
-  if result.Max.x<v[i].x then begin
-   result.Max.x:=v[i].x;
-  end;
-  if result.Max.y<v[i].y then begin
-   result.Max.y:=v[i].y;
-  end;
-  if result.Max.z<v[i].z then begin
-   result.Max.z:=v[i].z;
+ for Index:=0 to 7 do begin
+  v:=Transform*TpvVector4.InlineableCreate(MinMax[(Index shr 0) and 1].x,
+                                           MinMax[(Index shr 1) and 1].y,
+                                           MinMax[(Index shr 2) and 1].z,
+                                           1.0);
+  v.xyz:=v.xyz/v.w;
+  if Index=0 then begin
+   result.Min:=v.xyz;
+   result.Max:=v.xyz;
+  end else begin
+   if result.Min.x>v.x then begin
+    result.Min.x:=v.x;
+   end;
+   if result.Min.y>v.y then begin
+    result.Min.y:=v.y;
+   end;
+   if result.Min.z>v.z then begin
+    result.Min.z:=v.z;
+   end;
+   if result.Max.x<v.x then begin
+    result.Max.x:=v.x;
+   end;
+   if result.Max.y<v.y then begin
+    result.Max.y:=v.y;
+   end;
+   if result.Max.z<v.z then begin
+    result.Max.z:=v.z;
+   end;
   end;
  end;
- result.Min:=result.Min+NewCenter;
- result.Max:=result.Max+NewCenter;
 end;
 
 function TpvAABB.ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean;

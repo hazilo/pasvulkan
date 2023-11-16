@@ -90,7 +90,6 @@ type { TpvScene3DRendererPassesAntialiasingNoneRenderPass }
         fVulkanPipelineShaderStageVertex:TpvVulkanPipelineShaderStage;
         fVulkanPipelineShaderStageFragment:TpvVulkanPipelineShaderStage;
         fVulkanGraphicsPipeline:TpvVulkanGraphicsPipeline;
-        fVulkanSampler:TpvVulkanSampler;
         fVulkanDescriptorPool:TpvVulkanDescriptorPool;
         fVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
         fVulkanImageViews:array[0..MaxInFlightFrames-1] of TpvVulkanImageView;
@@ -134,11 +133,21 @@ begin
                                        1.0,
                                        fInstance.CountSurfaceViews);
 
- fResourceColor:=AddImageInput('resourcetype_color_tonemapping',
+ Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,
+                                       fInstance.SizeFactor,
+                                       fInstance.SizeFactor,
+                                       1.0,
+                                       fInstance.CountSurfaceViews);
+
+ fResourceColor:=AddImageInput(fInstance.LastOutputResource.ResourceType.Name,
+                               fInstance.LastOutputResource.Resource.Name,
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                               []);
+{fResourceColor:=AddImageInput('resourcetype_color_tonemapping',
                                'resource_tonemapping_color',
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                               [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
-                              );
+                               []
+                              );}
 
  fResourceSurface:=AddImageOutput('resourcetype_color_antialiasing',
                                   'resource_antialiasing_color',
@@ -187,28 +196,10 @@ begin
 
  fVulkanGraphicsPipeline:=nil;
 
- fVulkanSampler:=TpvVulkanSampler.Create(fInstance.Renderer.VulkanDevice,
-                                         TVkFilter.VK_FILTER_LINEAR,
-                                         TVkFilter.VK_FILTER_LINEAR,
-                                         TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         0.0,
-                                         false,
-                                         0.0,
-                                         false,
-                                         VK_COMPARE_OP_ALWAYS,
-                                         0.0,
-                                         0.0,
-                                         VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
-                                         false);
-
 end;
 
 procedure TpvScene3DRendererPassesAntialiasingNoneRenderPass.ReleasePersistentResources;
 begin
- FreeAndNil(fVulkanSampler);
  FreeAndNil(fVulkanPipelineShaderStageVertex);
  FreeAndNil(fVulkanPipelineShaderStageFragment);
  FreeAndNil(fVulkanFragmentShaderModule);
@@ -260,7 +251,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT),
-                                                                 [TVkDescriptorImageInfo.Create(VK_NULL_HANDLE,//fVulkanSampler.Handle,
+                                                                 [TVkDescriptorImageInfo.Create(VK_NULL_HANDLE,//fInstance.Renderer.ClampedSampler.Handle,
                                                                                                 fResourceColor.VulkanImageViews[InFlightFrameIndex].Handle,
                                                                                                 fResourceColor.ResourceTransition.Layout)],// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
@@ -290,8 +281,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fInstance.Width,fInstance.Height,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fInstance.Width,fInstance.Height);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceSurface.Width,fResourceSurface.Height,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceSurface.Width,fResourceSurface.Height);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
