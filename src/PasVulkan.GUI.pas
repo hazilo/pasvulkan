@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -27751,7 +27751,7 @@ type TFilter=record
  function Add(const aFileName:TpvUTF8String;const aDirectory:Boolean;const aSize:TpvInt64;const aDateTime:TDateTime):TpvSizeInt;
  var ListItem:PListItem;
  begin
-  result:=fListItems.AddNew;
+  result:=fListItems.AddNewIndex;
   ListItem:=@fListItems.Items[result];
   ListItem^.FileName:=aFileName;
   ListItem^.LowerCaseFileName:=TpvUTF8String(LowerCase(String(aFileName)));

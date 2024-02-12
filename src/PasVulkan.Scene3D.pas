@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -90,9 +90,19 @@ uses {$ifdef Windows}
      PasVulkan.PooledObject,
      PasVulkan.Frustum,
      PasVulkan.BufferRangeAllocator,
+     PasVulkan.TransferQueue,
+     PasVulkan.Scene3D.Planet,
      POCA;
 
 type EpvScene3D=class(Exception);
+
+     TpvScene3DEnvironmentMode=
+      (
+       Texture,
+       Sky,
+       Starlight
+      );
+     PpvScene3DEnvironmentMode=^TpvScene3DEnvironmentMode;
 
      { TpvScene3D }
 
@@ -236,9 +246,13 @@ type EpvScene3D=class(Exception);
             TInt16Vector3=array[0..2] of TpvInt16;
             TInt16Vector4=array[0..3] of TpvInt16;
             PUInt32Vector4=^TUInt32Vector4;
+            TFloatDynamicArray=TpvDynamicArray<TpvFloat>;
+            TFloatDynamicArrayList=TpvDynamicArrayList<TpvFloat>;
             TMatrix4x4DynamicArray=TpvDynamicArray<TpvMatrix4x4>;
+            TMatrix4x4DynamicArrayList=TpvDynamicArrayList<TpvMatrix4x4>;
             TSizeIntDynamicArray=TpvDynamicArray<TpvSizeInt>;
             PSizeIntDynamicArray=^TSizeIntDynamicArray;
+            TSizeIntDynamicArrayList=TpvDynamicArrayList<TpvSizeInt>;
             TSizeIntDynamicArrayEx=array of TpvSizeInt;
             TView=packed record
              ViewMatrix:TpvMatrix4x4;
@@ -251,51 +265,60 @@ type EpvScene3D=class(Exception);
             TRendererInstanceIDManager=TpvGenericIDManager<TpvUInt32>;
             TScalarSum=record
              public
-              x:TpvDouble;
-              FactorSum:TpvDouble;
+              WeightedX:TpvDouble;
+              WeightedFactorSum:TpvDouble;
+              AdditiveX:TpvDouble;
              public
               procedure Clear; inline;
-              procedure Add(const aX,aFactor:TpvDouble); inline;
-              function Get(const aDefaultX:TpvDouble=0.0):TpvDouble; inline;
+              procedure Add(const aX,aFactor:TpvDouble;const aAdditive:Boolean);
+              function Get(const aDefaultX:TpvDouble=0.0):TpvDouble;
             end;
             TVector2Sum=record
              public
-              x:TpvDouble;
-              y:TpvDouble;
-              FactorSum:TpvDouble;
+              WeightedX:TpvDouble;
+              WeightedY:TpvDouble;
+              WeightedFactorSum:TpvDouble;
+              AdditiveX:TpvDouble;
+              AdditiveY:TpvDouble;
              public
               procedure Clear; inline;
-              procedure Add(const aX,aY,aFactor:TpvDouble); overload; inline;
-              procedure Add(const aVector:TpvVector2;const aFactor:TpvDouble); overload; inline;
-              function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0):TpvVector2; overload; inline;
-              function Get(const aDefault:TpvVector2):TpvVector2; overload; inline;
+              procedure Add(const aX,aY,aFactor:TpvDouble;const aAdditive:Boolean); overload;
+              procedure Add(const aVector:TpvVector2;const aFactor:TpvDouble;const aAdditive:Boolean); overload;
+              function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0):TpvVector2; overload;
+              function Get(const aDefault:TpvVector2):TpvVector2; overload;
             end;
             TVector3Sum=record
              public
-              x:TpvDouble;
-              y:TpvDouble;
-              z:TpvDouble;
-              FactorSum:TpvDouble;
+              WeightedX:TpvDouble;
+              WeightedY:TpvDouble;
+              WeightedZ:TpvDouble;
+              WeightedFactorSum:TpvDouble;
+              AdditiveX:TpvDouble;
+              AdditiveY:TpvDouble;
+              AdditiveZ:TpvDouble;
              public
               procedure Clear; inline;
-              procedure Add(const aX,aY,aZ,aFactor:TpvDouble); overload; inline;
-              procedure Add(const aVector:TpvVector3;const aFactor:TpvDouble); overload; inline;
-              function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0):TpvVector3; overload; inline;
-              function Get(const aDefault:TpvVector3):TpvVector3; overload; inline;
+              procedure Add(const aX,aY,aZ,aFactor:TpvDouble;const aAdditive:Boolean); overload;
+              procedure Add(const aVector:TpvVector3;const aFactor:TpvDouble;const aAdditive:Boolean); overload; inline;                                 function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0):TpvVector3; overload;
+              function Get(const aDefault:TpvVector3):TpvVector3; overload;
             end;
             TVector4Sum=record
              public
-              x:TpvDouble;
-              y:TpvDouble;
-              z:TpvDouble;
-              w:TpvDouble;
-              FactorSum:TpvDouble;
+              WeightedX:TpvDouble;
+              WeightedY:TpvDouble;
+              WeightedZ:TpvDouble;
+              WeightedW:TpvDouble;
+              WeightedFactorSum:TpvDouble;
+              AdditiveX:TpvDouble;
+              AdditiveY:TpvDouble;
+              AdditiveZ:TpvDouble;
+              AdditiveW:TpvDouble;
              public
               procedure Clear; inline;
-              procedure Add(const aX,aY,aZ,aW,aFactor:TpvDouble); overload; inline;
-              procedure Add(const aVector:TpvVector4;const aFactor:TpvDouble); overload; inline;
-              function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0;const aDefaultW:TpvDouble=0.0):TpvVector4; overload; inline;
-              function Get(const aDefault:TpvVector4):TpvVector4; overload; inline;
+              procedure Add(const aX,aY,aZ,aW,aFactor:TpvDouble;const aAdditive:Boolean); overload;
+              procedure Add(const aVector:TpvVector4;const aFactor:TpvDouble;const aAdditive:Boolean); overload;
+              function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0;const aDefaultW:TpvDouble=0.0):TpvVector4; overload;
+              function Get(const aDefault:TpvVector4):TpvVector4; overload;
             end;
             TInFlightFrameAABBs=array[0..MaxInFlightFrames-1] of TpvAABB;
        const MaxViews=65536 div SizeOf(TView);
@@ -329,25 +352,36 @@ type EpvScene3D=class(Exception);
              Jitter:TpvVector4;
             end;
             PVertexStagePushConstants=^TVertexStagePushConstants;
+            { TVertex }
             TVertex=packed record                    // Minimum required vertex structure for to be GLTF 2.0 conformant
-             case boolean of
-              false:(
-               Position:TpvVector3;                  //  12   12 (32-bit float 3D vector)
-               NodeIndex:TpvUInt32;                  // + 4 = 16 (unsigned 32-bit node index)
-               Normal:TInt16Vector2;                 // + 4 = 20 (signed 16-bit oct-encoded normal)
-               Tangent:TInt16Vector2;                // + 4 = 24 (signed 16-bit oct-encoded tangent)
-               TexCoord0:TpvVector2;                 // + 8 = 32 (must be full 32-bit float, for 0.0 .. 1.0 out-of-range texcoords)
-               TexCoord1:TpvVector2;                 // + 8 = 40 (must be full 32-bit float, for 0.0 .. 1.0 out-of-range texcoords)
-               Color0:TpvHalfFloatVector4;           // + 8 = 48 (must be at least half-float for HDR)
-               MorphTargetVertexBaseIndex:TpvUInt32; // + 4 = 52 (unsigned 32-bit morph target vertex base index)
-               JointBlockBaseIndex:TpvUInt32;        // + 4 = 56 (unsigned 32-bit joint block base index)
-               CountJointBlocks:TpvUInt16;           // + 2 = 58 (unsigned 16-bit count of joint blocks)
-               Flags:TpvUInt16;                      // + 2 = 60 (unsigned 16-bit flags)
-               MaterialID:TpvUInt32;                 // + 4 = 64 (unsigned 24-bit material ID)
-              );                                     //  ==   ==
-              true:(                                 //  80   80 per vertex
-               Padding:array[0..63] of TpvUInt8;
-              );
+             public
+              class function Create:TVertex; static;
+              procedure SetNormal(const aNormal:TpvVector3); inline;
+              procedure SetTangent(const aTangent:TpvVector3); inline;
+              procedure SetTangentSpaceVectors(const aTangent,aBitangent,aNormal:TpvVector3); inline;
+              procedure SetTangentSpace(const aTangentSpace:TpvMatrix3x3); inline;
+              function GetTangentSpace:TpvMatrix3x3; inline;
+             public
+              property TangentSpace:TpvMatrix3x3 read GetTangentSpace write SetTangentSpace;
+             public
+              case boolean of
+               false:(
+                Position:TpvVector3;                  //  12   12 (32-bit float 3D vector)
+                NodeIndex:TpvUInt32;                  // + 4 = 16 (unsigned 32-bit node index)
+                Normal:TpvInt16Vector2;               // + 4 = 20 (signed 16-bit oct-encoded normal)
+                Tangent:TpvInt16Vector2;              // + 4 = 24 (signed 16-bit oct-encoded tangent)
+                TexCoord0:TpvVector2;                 // + 8 = 32 (must be full 32-bit float, for 0.0 .. 1.0 out-of-range texcoords)
+                TexCoord1:TpvVector2;                 // + 8 = 40 (must be full 32-bit float, for 0.0 .. 1.0 out-of-range texcoords)
+                Color0:TpvHalfFloatVector4;           // + 8 = 48 (must be at least half-float for HDR)
+                MorphTargetVertexBaseIndex:TpvUInt32; // + 4 = 52 (unsigned 32-bit morph target vertex base index)
+                JointBlockBaseIndex:TpvUInt32;        // + 4 = 56 (unsigned 32-bit joint block base index)
+                CountJointBlocks:TpvUInt16;           // + 2 = 58 (unsigned 16-bit count of joint blocks)
+                Flags:TpvUInt16;                      // + 2 = 60 (unsigned 16-bit flags)
+                MaterialID:TpvUInt32;                 // + 4 = 64 (unsigned 24-bit material ID)
+               );                                     //  ==   ==
+               true:(                                 //  80   80 per vertex
+                Padding:array[0..63] of TpvUInt8;
+               );
             end;
             PVertex=^TVertex;
             TVertices=array of TVertex;
@@ -362,8 +396,8 @@ type EpvScene3D=class(Exception);
                RootNode:TpvUInt32;                   // + 4 = 44 (unsigned 32-bit root node)
                NodeIndex:TpvUInt32;                  // + 4 = 32 (unsigned 32-bit node index)
 
-               Normal:TInt16Vector2;                 // + 4 = 36 (signed 16-bit oct-encoded normal)
-               Tangent:TInt16Vector2;                // + 4 = 40 (signed 16-bit oct-encoded tangent)
+               Normal:TpvInt16Vector2;               // + 4 = 36 (signed 16-bit oct-encoded normal)
+               Tangent:TpvInt16Vector2;              // + 4 = 40 (signed 16-bit oct-encoded tangent)
                Flags:TpvUInt32;                      // + 4 = 44 (unsigned 32-bit flags)
                Generation:TpvUInt32;                 // + 4 = 48 (unsigned 32-bit generation)
 
@@ -757,7 +791,12 @@ type EpvScene3D=class(Exception);
               procedure AssignFromWhiteTexture;
               procedure AssignFromDefaultNormalMapTexture;
               procedure AssignFromDefaultParticleTexture;
+              procedure AssignFromStream(const aName:TpvUTF8String;const aStream:TStream);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
+             published
+              property Kind:TKind read fKind write fKind;
+              property ResourceDataStream:TMemoryStream read fResourceDataStream write fResourceDataStream;
+              property Texture:TpvVulkanTexture read fTexture write fTexture;
             end;
             TImageClass=class of TImage;
             TImages=TpvObjectGenericList<TImage>;
@@ -768,6 +807,7 @@ type EpvScene3D=class(Exception);
                     MinFilter:TVkFilter;
                     MagFilter:TVkFilter;
                     MipmapMode:TVkSamplerMipmapMode;
+                    MipmapActive:Boolean;
                     AddressModeS:TVkSamplerAddressMode;
                     AddressModeT:TVkSamplerAddressMode;
                    end;
@@ -776,6 +816,7 @@ type EpvScene3D=class(Exception);
               fMinFilter:TVkFilter;
               fMagFilter:TVkFilter;
               fMipmapMode:TVkSamplerMipmapMode;
+              fMipmapActive:Boolean;
               fAddressModeS:TVkSamplerAddressMode;
               fAddressModeT:TVkSamplerAddressMode;
               fLock:TPasMPSpinLock;
@@ -791,8 +832,15 @@ type EpvScene3D=class(Exception);
               procedure Unload; override;
               function GetHashData:THashData;
               procedure AssignFromDefault;
+              procedure AssignFromDefaultMipMap;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSampler:TPasGLTF.TSampler);
              published
+              property MinFilter:TVkFilter read fMinFilter write fMinFilter;
+              property MagFilter:TVkFilter read fMagFilter write fMagFilter;
+              property MipmapMode:TVkSamplerMipmapMode read fMipmapMode write fMipmapMode;
+              property MipmapActive:Boolean read fMipmapActive write fMipmapActive;
+              property AddressModeS:TVkSamplerAddressMode read fAddressModeS write fAddressModeS;
+              property AddressModeT:TVkSamplerAddressMode read fAddressModeT write fAddressModeT;
               property Sampler:TpvVulkanSampler read fSampler;
             end;
             TSamplers=TpvObjectGenericList<TSampler>;
@@ -935,6 +983,10 @@ type EpvScene3D=class(Exception);
                     AnisotropyRotation:TpvFloat;
                     AnisotropyTexture:TTextureReference;
                    end;
+                   TDispersion=record
+                    Active:boolean;
+                    Dispersion:TpvFloat;
+                   end;
                    TShaderData=packed record
                     case boolean of
                      false:(
@@ -948,9 +1000,15 @@ type EpvScene3D=class(Exception);
                       IridescenceThicknessMaximumTransmissionFactorVolumeThicknessFactorVolumeAttenuationDistance:TpvVector4;
                       // uvec4 Begin
                        VolumeAttenuationColor:TpvVector3;
-                       AnisotropyStrength:TpvUInt16;
-                       AnisotropyRotation:TpvUInt16;
+                       AnisotropyStrength:TpvUInt16; // Half float
+                       AnisotropyRotation:TpvUInt16; // Half float
                       // uvec4 End
+                      // uvec4 Dispersion
+                       Dispersion:TpvFloat;
+                       Unused0:TpvUInt32;
+                       Unused1:TpvUInt32;
+                       Unused2:TpvUInt32;
+                      // uvec4 Dispersion End
                       // uvec4 AlphaCutOffFlags begin
                        AlphaCutOff:TpvFloat; // for with uintBitsToFloat on GLSL code side
                        Flags:TpvUInt32;
@@ -988,6 +1046,7 @@ type EpvScene3D=class(Exception);
                      Transmission:TTransmission;
                      Volume:TVolume;
                      Anisotropy:TAnisotropy;
+                     Dispersion:TDispersion;
                      AnimatedTextureMask:TpvUInt64;
                      function GetTextureTransform(const aTextureIndex:TpvScene3D.TTextureIndex):TpvScene3D.TMaterial.TTextureReference.PTransform;
                    end;
@@ -1069,6 +1128,10 @@ type EpvScene3D=class(Exception);
                       AnisotropyRotation:0.0;
                       AnisotropyTexture:(Texture:nil;TexCoord:0;Transform:(Active:false;Offset:(x:0.0;y:0.0);Rotation:0.0;Scale:(x:1.0;y:1.0)));
                      );
+                     Dispersion:(
+                      Active:false;
+                      Dispersion:0.0;
+                     );
                      AnimatedTextureMask:0;
                     );
                    DefaultShaderData:TShaderData=
@@ -1084,6 +1147,10 @@ type EpvScene3D=class(Exception);
                      VolumeAttenuationColor:(x:1.0;y:1.0;z:1.0);
                      AnisotropyStrength:0;
                      AnisotropyRotation:0;
+                     Dispersion:0.0;
+                     Unused0:0;
+                     Unused1:0;
+                     Unused2:0;
                      AlphaCutOff:1.0;
                      Flags:0;
                      Textures0:0;
@@ -1118,9 +1185,6 @@ type EpvScene3D=class(Exception);
               fLock:TPasMPSpinLock;
               fGeneration:TpvUInt64;
               fVisible:boolean;
-{             fShaderDataUniformBlockBuffer:TpvVulkanBuffer;
-              fVulkanDescriptorPool:TpvVulkanDescriptorPool;
-              fVulkanDescriptorSet:TpvVulkanDescriptorSet;}
              public
               constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
               destructor Destroy; override;
@@ -1134,6 +1198,11 @@ type EpvScene3D=class(Exception);
               procedure AssignFromEmpty;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
               procedure FillShaderData;
+             public
+              property Data:TData read fData write fData;
+              property ShaderData:TShaderData read fShaderData write fShaderData;
+             published
+              property Visible:boolean read fVisible write fVisible;
             end;
             TMaterials=TpvObjectGenericList<TMaterial>;
             TCameraData=record
@@ -1188,6 +1257,7 @@ type EpvScene3D=class(Exception);
               fCastShadows:boolean;
               fVisible:boolean;
               fAlways:boolean;
+              fGeneration:TpvUInt64;
              public
               property Type_:TLightType read fType_ write fType_;
               property Intensity:TpvFloat read fIntensity write fIntensity;
@@ -1198,6 +1268,7 @@ type EpvScene3D=class(Exception);
               property CastShadows:boolean read fCastShadows write fCastShadows;
               property Visible:boolean read fVisible write fVisible;
               property Always:boolean read fAlways write fAlways;
+              property Generation:TpvUInt64 read fGeneration write fGeneration;
             end;
             PLightData=^TLightData;
             TLightItem=packed record
@@ -1268,6 +1339,7 @@ type EpvScene3D=class(Exception);
               fScissorRect:TpvFloatClipRect;
               fAABBTreeProxy:TpvSizeInt;
               fLightItemIndex:TpvSizeInt;
+              fGeneration:TpvUInt64;
              public
               constructor Create(const aSceneInstance:TpvScene3D); reintroduce;
               destructor Destroy; override;
@@ -1283,6 +1355,7 @@ type EpvScene3D=class(Exception);
               property OuterConeAngle:TpvFloat read fData.fOuterConeAngle write fData.fOuterConeAngle;
               property Color:TpvVector3 read fData.fColor write fData.fColor;
               property CastShadows:boolean read fData.fCastShadows write fData.fCastShadows;
+              property Generation:TpvUInt64 read fData.fGeneration write fData.fGeneration;
              published
               property ShadowMapIndex:TpvInt32 read fShadowMapIndex write fShadowMapIndex;
              public
@@ -1313,6 +1386,7 @@ type EpvScene3D=class(Exception);
             end;
             PMorphTargetVertex=^TMorphTargetVertex;
             TMorphTargetVertexDynamicArray=TpvDynamicArray<TMorphTargetVertex>;
+            TMorphTargetVertexDynamicArrayList=TpvDynamicArrayList<TMorphTargetVertex>;
             TIndicesDynamicArray=TpvDynamicArray<TVkUInt32>;
             TJointBlocksDynamicArray=TpvDynamicArray<TJointBlock>;
             TMatricesDynamicArray=TpvDynamicArray<TpvMatrix4x4>;
@@ -1390,6 +1464,7 @@ type EpvScene3D=class(Exception);
             PPerInFlightFrameGPUDrawIndexedIndirectCommandDynamicArrays=^TPerInFlightFrameGPUDrawIndexedIndirectCommandDynamicArrays;
             TPerInFlightFrameGPUDrawIndexedIndirectCommandSizeValues=array[0..MaxInFlightFrames-1] of TpvSizeInt;
             TPerInFlightFrameGPUDrawIndexedIndirectCommandBuffers=array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+            TPerInFlightFrameGPUDrawIndexedIndirectCommandBufferPartSizes=array[0..MaxInFlightFrames-1] of TpvSizeUInt;
             TPerInFlightFrameGPUCulledArray=array[0..MaxInFlightFrames-1,0..MaxRenderPassIndices-1] of Boolean;
             PPerInFlightFrameGPUCulledArray=^TPerInFlightFrameGPUCulledArray;
             TPerInFlightFrameGPUCountObjectIndicesArray=array[0..MaxInFlightFrames-1] of TpvSizeInt;
@@ -1405,10 +1480,14 @@ type EpvScene3D=class(Exception);
             PDrawChoreographyBatchRange=^TDrawChoreographyBatchRange;
             TDrawChoreographyBatchRangeDynamicArray=TpvDynamicArray<TDrawChoreographyBatchRange>;
             PDrawChoreographyBatchRangeDynamicArray=^TDrawChoreographyBatchRangeDynamicArray;
-            TDrawChoreographyBatchRangeRenderPassBuckets=array[0..MaxRenderPassIndices-1] of TDrawChoreographyBatchRangeDynamicArray;
+            TDrawChoreographyBatchRangeIndexDynamicArray=TpvDynamicArray<TpvSizeInt>;
+            PDrawChoreographyBatchRangeIndexDynamicArray=^TDrawChoreographyBatchRangeIndexDynamicArray;
+            TDrawChoreographyBatchRangeRenderPassBuckets=array[0..MaxRenderPassIndices-1] of TDrawChoreographyBatchRangeIndexDynamicArray;
             PDrawChoreographyBatchRangeRenderPassBuckets=^TDrawChoreographyBatchRangeRenderPassBuckets;
-            TDrawChoreographyBatchRangeFrameBuckets=array[0..MaxInFlightFrames-1] of TDrawChoreographyBatchRangeRenderPassBuckets;
+            TDrawChoreographyBatchRangeFrameBuckets=array[0..MaxInFlightFrames-1] of TDrawChoreographyBatchRangeDynamicArray;
             PDrawChoreographyBatchRangeFrameBuckets=^TDrawChoreographyBatchRangeFrameBuckets;
+            TDrawChoreographyBatchRangeFrameRenderPassBuckets=array[0..MaxInFlightFrames-1] of TDrawChoreographyBatchRangeRenderPassBuckets;
+            PDrawChoreographyBatchRangeFrameRenderPassBuckets=^TDrawChoreographyBatchRangeFrameRenderPassBuckets;
             { TVulkanLongTermStaticBufferData }
             TVulkanLongTermStaticBufferData=class
              private
@@ -1426,7 +1505,7 @@ type EpvScene3D=class(Exception);
               constructor Create(const aSceneInstance:TpvScene3D); reintroduce;
               destructor Destroy; override;
               function Check:Boolean;
-              procedure Update;
+              procedure Update(const aInFlightFrameIndex:TpvSizeInt);
               procedure UpdateReleaseFrameCounter;
             end;
             TVulkanLongTermStaticBufferDataArray=array[0..MaxInFlightFrames-1] of TVulkanLongTermStaticBufferData;
@@ -1440,7 +1519,7 @@ type EpvScene3D=class(Exception);
              public
               constructor Create(const aSceneInstance:TpvScene3D); reintroduce;
               destructor Destroy; override;
-              procedure Update;
+              procedure Update(const aInFlightFrameIndex:TpvSizeInt);
              published
               property BufferData:TVulkanLongTermStaticBufferData read fBufferData;
             end;
@@ -1484,9 +1563,10 @@ type EpvScene3D=class(Exception);
               type TNode=class;
                    TMesh=class;
                    TScene=class;
-                   TGroupVertices=TpvDynamicArray<TVertex>;
-                   TGroupIndices=TpvDynamicArray<TVkUInt32>;
-                   TGroupJointBlocks=TpvDynamicArray<TJointBlock>;
+                   TGroupVertices=TpvDynamicArrayList<TVertex>;
+                   TFrameGroupVertices=array[0..MaxInFlightFrames-1] of TpvScene3D.TGroup.TGroupVertices;
+                   TGroupIndices=TpvDynamicArrayList<TVkUInt32>;
+                   TGroupJointBlocks=TpvDynamicArrayList<TJointBlock>;
                    TMorphTargetShaderStorageBufferObject=record
                     Count:TpvSizeInt;
                     Size:TpvSizeInt;
@@ -1529,7 +1609,7 @@ type EpvScene3D=class(Exception);
                    TAnimation=class(TGroupObject)
                     public
                      type { TChannel }
-                          TChannel=record
+                          TChannel=class
                            public
                             type TTarget=
                                   (
@@ -1582,6 +1662,7 @@ type EpvScene3D=class(Exception);
                                    PointerMaterialPBRVolumeAttenuationColor,
                                    PointerMaterialPBRAnisotropyStrength,
                                    PointerMaterialPBRAnisotropyRotation,
+                                   PointerMaterialPBRDispersion,
                                    PointerTextureOffset,
                                    PointerTextureRotation,
                                    PointerTextureScale
@@ -1620,6 +1701,7 @@ type EpvScene3D=class(Exception);
                                     TTarget.PointerMaterialPBRVolumeAttenuationColor,
                                     TTarget.PointerMaterialPBRAnisotropyStrength,
                                     TTarget.PointerMaterialPBRAnisotropyRotation,
+                                    TTarget.PointerMaterialPBRDispersion,
                                     TTarget.PointerTextureOffset,
                                     TTarget.PointerTextureRotation,
                                     TTarget.PointerTextureScale
@@ -1630,45 +1712,69 @@ type EpvScene3D=class(Exception);
                                     TTarget.PointerTextureRotation,
                                     TTarget.PointerTextureScale
                                    ];
+                           private
+                            fName:TpvUTF8String;
+                            fTarget:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
+                            fTargetPointer:TpvUTF8String;
+                            fTargetIndex:TpvSizeInt;
+                            fTargetSubIndex:TpvSizeInt;
+                            fTargetInstanceIndex:TpvSizeInt;
+                            fInterpolation:TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation;
+                            fInputTimeArray:TpvDoubleDynamicArray;
+                            fOutputScalarArray:TpvFloatDynamicArray;
+                            fOutputVector2Array:TpvVector2Array;
+                            fOutputVector3Array:TpvVector3Array;
+                            fOutputVector4Array:TpvVector4Array;
                            public
-                            Name:TpvUTF8String;
-                            Target:TTarget;
-                            TargetPointer:TpvUTF8String;
-                            TargetIndex:TpvSizeInt;
-                            TargetSubIndex:TpvSizeInt;
-                            TargetInstanceIndex:TpvSizeInt;
-                            Interpolation:TInterpolation;
-                            InputTimeArray:TpvDoubleDynamicArray;
-                            OutputScalarArray:TpvFloatDynamicArray;
-                            OutputVector2Array:TpvVector2Array;
-                            OutputVector3Array:TpvVector3Array;
-                            OutputVector4Array:TpvVector4Array;
+                            constructor Create; reintroduce;
+                            destructor Destroy; override;
                             procedure SetTarget(const aTargetPath:TpvUTF8String;const aTargetNode:TpvSizeInt);
                             procedure SetInterpolation(const aInterpolation:TpvUTF8String);
-                          end;
-                          PChannel=^TChannel;
-                          TChannels=array of TChannel;
-                          TDefaultChannel=record
+                           published
+                            property Name:TpvUTF8String read fName write fName;
+                            property Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget read fTarget write fTarget;
+                            property TargetPointer:TpvUTF8String read fTargetPointer write fTargetPointer;
+                            property TargetIndex:TpvSizeInt read fTargetIndex write fTargetIndex;
+                            property TargetSubIndex:TpvSizeInt read fTargetSubIndex write fTargetSubIndex;
+                            property TargetInstanceIndex:TpvSizeInt read fTargetInstanceIndex write fTargetInstanceIndex;
+                            property Interpolation:TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation read fInterpolation write fInterpolation;
                            public
-                            Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
-                            TargetIndex:TpvSizeInt;
-                            TargetSubIndex:TpvSizeInt;
-                            TargetInstanceIndex:TpvSizeInt;
+                            property InputTimeArray:TpvDoubleDynamicArray read fInputTimeArray write fInputTimeArray;
+                            property OutputScalarArray:TpvFloatDynamicArray read fOutputScalarArray write fOutputScalarArray;
+                            property OutputVector2Array:TpvVector2Array read fOutputVector2Array write fOutputVector2Array;
+                            property OutputVector3Array:TpvVector3Array read fOutputVector3Array write fOutputVector3Array;
+                            property OutputVector4Array:TpvVector4Array read fOutputVector4Array write fOutputVector4Array;
                           end;
-                          PDefaultChannel=^TDefaultChannel;
-                          TDefaultChannels=array of TDefaultChannel;
+                          TChannels=TpvObjectGenericList<TChannel>;
+                          { TDefaultChannel }
+                          TDefaultChannel=class
+                           private
+                            fTarget:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
+                            fTargetIndex:TpvSizeInt;
+                            fTargetSubIndex:TpvSizeInt;
+                            fTargetInstanceIndex:TpvSizeInt;
+                           public
+                           published
+                            property Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget read fTarget write fTarget;
+                            property TargetIndex:TpvSizeInt read fTargetIndex write fTargetIndex;
+                            property TargetSubIndex:TpvSizeInt read fTargetSubIndex write fTargetSubIndex;
+                            property TargetInstanceIndex:TpvSizeInt read fTargetInstanceIndex write fTargetInstanceIndex;
+                          end;
+                          TDefaultChannels=TpvObjectGenericList<TDefaultChannel>;
                     private
                      fIndex:TpvSizeInt;
-                     fChannels:TChannels;
-                     fDefaultChannels:TDefaultChannels;
+                     fChannels:TpvScene3D.TGroup.TAnimation.TChannels;
+                     fDefaultChannels:TpvScene3D.TGroup.TAnimation.TDefaultChannels;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceAnimation:TPasGLTF.TAnimation);
                      function GetAnimationBeginTime:TpvDouble;
                      function GetAnimationEndTime:TpvDouble;
                     published
                      property Index:TpvSizeInt read fIndex;
+                     property Channels:TpvScene3D.TGroup.TAnimation.TChannels read fChannels;
+                     property DefaultChannels:TpvScene3D.TGroup.TAnimation.TDefaultChannels read fDefaultChannels;
                    end;
                    TAnimations=TpvObjectGenericList<TAnimation>;
                    { TCamera }
@@ -1676,72 +1782,119 @@ type EpvScene3D=class(Exception);
                     private
                      fIndex:TpvSizeInt;
                      fCameraData:TpvScene3D.TCameraData;
+                     fPointerToCameraData:TpvScene3D.PCameraData;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceCamera:TPasGLTF.TCamera);
                     public
-                     property CameraData:TpvScene3D.TCameraData read fCameraData write fCameraData;
+                     property CameraData:TpvScene3D.PCameraData read fPointerToCameraData;
                     published
                      property Index:TpvSizeInt read fIndex;
                    end;
                    TCameras=TpvObjectGenericList<TCamera>;
+                   { TMesh }
                    TMesh=class(TGroupObject)
                     public
-                     type TPrimitive=record
+                     type { TPrimitive }
+                          TPrimitive=class
                            public
-                            type TTarget=record
+                            type { TTarget }
+                                 TTarget=class
                                   public
                                    type TTargetVertex=packed record
                                          Position:TpvVector3;
                                          Normal:TpvVector3;
                                          Tangent:TpvVector3;
-                                         Count:TpvUInt32;
                                         end;
                                         PTargetVertex=^TTargetVertex;
-                                        TTargetVertices=array of TTargetVertex;
+                                        TTargetVertices=TpvDynamicArrayList<TTargetVertex>;
+                                  private
+                                   fVertices:TTargetVertices;
                                   public
-                                   Vertices:TTargetVertices;
+                                   constructor Create; reintroduce;
+                                   destructor Destroy; override;
+                                  published
+                                   property Vertices:TTargetVertices read fVertices;
                                  end;
-                                 PTarget=^TTarget;
-                                 TTargets=array of TTarget;
-                                 TNodeMeshPrimitiveInstance=record
-                                  MorphTargetBaseIndex:TpvSizeUInt;
-                                  StartBufferVertexOffset:TpvSizeUInt;
-                                  StartBufferIndexOffset:TpvSizeUInt;
+                                 TTargets=TpvObjectGenericList<TTarget>;
+                                 { TNodeMeshPrimitiveInstance }
+                                 TNodeMeshPrimitiveInstance=class
+                                  private
+                                   fMorphTargetBaseIndex:TpvSizeUInt;
+                                   fStartBufferVertexOffset:TpvSizeUInt;
+                                   fStartBufferIndexOffset:TpvSizeUInt;
+                                   fGeneration:TpvUInt64;
+                                  published
+                                   property MorphTargetBaseIndex:TpvSizeUInt read fMorphTargetBaseIndex write fMorphTargetBaseIndex;
+                                   property StartBufferVertexOffset:TpvSizeUInt read fStartBufferVertexOffset write fStartBufferVertexOffset;
+                                   property StartBufferIndexOffset:TpvSizeUInt read fStartBufferIndexOffset write fStartBufferIndexOffset;
                                  end;
-                                 PNodeMeshPrimitiveInstance=^TNodeMeshPrimitiveInstance;
-                                 TNodeMeshPrimitiveInstances=TpvDynamicArray<TNodeMeshPrimitiveInstance>;
+                                 TNodeMeshPrimitiveInstances=TpvObjectGenericList<TNodeMeshPrimitiveInstance>;
+                           private
+                            fMesh:TMesh;
+                            fPrimitiveTopology:TpvScene3D.TPrimitiveTopology;
+                            fMaterialID:TpvInt64;
+                            fMaterial:TpvScene3D.TMaterial;
+                            fTargets:TpvScene3D.TGroup.TMesh.TPrimitive.TTargets;
+                            fMorphTargetBaseIndex:TpvSizeUInt;
+                            fStartBufferVertexOffset:TpvSizeUInt;
+                            fStartBufferIndexOffset:TpvSizeUInt;
+                            fCountVertices:TpvSizeUInt;
+                            fCountIndices:TpvSizeUInt;
+                            fNodeMeshPrimitiveInstances:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstances;
+                            fTemporaryVertices:TpvScene3D.TGroup.TGroupVertices;
+                            fTemporaryIndices:TpvScene3D.TGroup.TGroupIndices;
                            public
-                            PrimitiveTopology:TPrimitiveTopology;
-                            MaterialID:TpvInt64;
-                            Material:TMaterial;
-                            Targets:TTargets;
-                            MorphTargetBaseIndex:TpvSizeUInt;
-                            StartBufferVertexOffset:TpvSizeUInt;
-                            StartBufferIndexOffset:TpvSizeUInt;
-                            CountVertices:TpvSizeUInt;
-                            CountIndices:TpvSizeUInt;
-                            NodeMeshPrimitiveInstances:TNodeMeshPrimitiveInstances;
+                            constructor Create(const aMesh:TMesh); reintroduce;
+                            destructor Destroy; override;
+                            function AddDirectVertex(const aVertex:TpvScene3D.TVertex):TpvSizeInt;
+                            function AddDirectIndex(const aIndex:TpvUInt32):TpvSizeInt;
+                            function AddIndirectVertex:TpvScene3D.PVertex;
+                            function AddVertex(const aVertex:TpvScene3D.TVertex):TpvSizeInt;
+                            function AddIndex(const aIndex:TpvUInt32):TpvSizeInt;
+                            procedure Finish;
+                           published
+                            property PrimitiveTopology:TpvScene3D.TPrimitiveTopology read fPrimitiveTopology write fPrimitiveTopology;
+                            property MaterialID:TpvInt64 read fMaterialID write fMaterialID;
+                            property Material:TpvScene3D.TMaterial read fMaterial write fMaterial;
+                            property Targets:TpvScene3D.TGroup.TMesh.TPrimitive.TTargets read fTargets;
+                            property MorphTargetBaseIndex:TpvSizeUInt read fMorphTargetBaseIndex write fMorphTargetBaseIndex;
+                            property StartBufferVertexOffset:TpvSizeUInt read fStartBufferVertexOffset write fStartBufferVertexOffset;
+                            property StartBufferIndexOffset:TpvSizeUInt read fStartBufferIndexOffset write fStartBufferIndexOffset;
+                            property CountVertices:TpvSizeUInt read fCountVertices write fCountVertices;
+                            property CountIndices:TpvSizeUInt read fCountIndices write fCountIndices;
+                            property NodeMeshPrimitiveInstances:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstances read fNodeMeshPrimitiveInstances;
                           end;
-                          PPrimitive=^TPrimitive;
-                          TPrimitives=array of TPrimitive;
-                          TReferencedByNodes=TpvDynamicArray<TPasGLTFSizeInt>;
+                          TPrimitives=TpvObjectGenericList<TPrimitive>;
+                          TReferencedByNodes=TpvDynamicArrayList<TPasGLTFSizeInt>;
                     private
                      fIndex:TpvSizeInt;
-                     fPrimitives:TPrimitives;
+                     fPrimitives:TpvScene3D.TGroup.TMesh.TPrimitives;
                      fBoundingBox:TpvAABB;
-                     fBoundingSphere:TpvSphere;
-                     fWeights:TpvFloatDynamicArray;
+                     fWeights:TpvScene3D.TFloatDynamicArrayList;
+                     fReady:TPasMPBool32;
+                     fGeneration:TpvUInt64;
+                     fUpdatedGeneration:TpvUInt64;
                      fNodeMeshInstances:TpvSizeInt;
-                     fReferencedByNodes:TReferencedByNodes;
+                     fReferencedByNodes:TpvScene3D.TGroup.TMesh.TReferencedByNodes;
                      function CreateNodeMeshInstance(const aNodeIndex,aWeightsOffset,aJointNodeOffset:TpvUInt32):TpvSizeInt;
+                     function UpdateNodeMeshInstances:Boolean;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     function CreatePrimitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+                     procedure CalculateTangentSpace;
+                     procedure Finish;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMesh:TPasGLTF.TMesh;const aMaterialMap:TpvScene3D.TMaterials);
                     published
                      property Index:TpvSizeInt read fIndex;
+                    public
+                     property Primitives:TpvScene3D.TGroup.TMesh.TPrimitives read fPrimitives;
+                     property BoundingBox:TpvAABB read fBoundingBox write fBoundingBox;
+                     property Weights:TpvScene3D.TFloatDynamicArrayList read fWeights;
+                     property NodeMeshInstances:TpvSizeInt read fNodeMeshInstances;
+                     property ReferencedByNodes:TpvScene3D.TGroup.TMesh.TReferencedByNodes read fReferencedByNodes;
                    end;
                    TMeshes=TpvObjectGenericList<TMesh>;
                    TSkin=class(TGroupObject)
@@ -1749,17 +1902,19 @@ type EpvScene3D=class(Exception);
                      fIndex:TpvSizeInt;
                      fSkeleton:TpvSizeInt;
                      fJointMatrixOffset:TPasGLTFSizeInt;
-                     fInverseBindMatrices:TMatrix4x4DynamicArray;
-                     fMatrices:TMatrix4x4DynamicArray;
-                     fJoints:TSizeIntDynamicArray;
-                     fStorageBufferObjectOffset:TpvSizeUInt;
-                     fStorageBufferObjectSize:TpvSizeUInt;
+                     fInverseBindMatrices:TpvScene3D.TMatrix4x4DynamicArrayList;
+                     fMatrices:TpvScene3D.TMatrix4x4DynamicArrayList;
+                     fJoints:TpvScene3D.TSizeIntDynamicArrayList;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSkin:TPasGLTF.TSkin);
                     published
                      property Index:TpvSizeInt read fIndex;
+                     property Skeleton:TpvSizeInt read fSkeleton write fSkeleton;
+                     property InverseBindMatrices:TpvScene3D.TMatrix4x4DynamicArrayList read fInverseBindMatrices;
+                     property Matrices:TpvScene3D.TMatrix4x4DynamicArrayList read fMatrices;
+                     property Joints:TpvScene3D.TSizeIntDynamicArrayList read fJoints;
                    end;
                    TSkins=TpvObjectGenericList<TSkin>;
                    TSkinDynamicArray=TpvDynamicArray<TSkin>;
@@ -1770,7 +1925,7 @@ type EpvScene3D=class(Exception);
                      fIndex:TpvSizeInt;
                      fNodes:TNodes;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceLight:TPasJSONItemObject);
                     public
@@ -1792,7 +1947,6 @@ type EpvScene3D=class(Exception);
                           PNodeFlag=^TNodeFlag;
                           TNodeFlags=set of TNodeFlag;
                           PNodeFlags=^TNodeFlags;
-                          TChildNodeIndices=TpvDynamicArray<TpvSizeInt>;
                           TUsedByScenesList=TpvObjectGenericList<TpvScene3D.TGroup.TScene>;
                           TUsedJoint=record
                            Joint:TpvSizeInt;
@@ -1806,7 +1960,6 @@ type EpvScene3D=class(Exception);
                      fIndex:TpvSizeInt;
                      fFlags:TNodeFlags;
                      fUsedByScenesList:TUsedByScenesList;
-                     fChildNodeIndices:TChildNodeIndices;
                      fChildren:TNodes;
                      fSplittedChildren:TNodes;
                      fMesh:TMesh;
@@ -1814,9 +1967,10 @@ type EpvScene3D=class(Exception);
                      fCamera:TCamera;
                      fSkin:TSkin;
                      fLight:TpvScene3D.TGroup.TLight;
-                     fWeights:TpvFloatDynamicArray;
+                     fWeights:TpvScene3D.TFloatDynamicArrayList;
                      fWeightsOffset:TPasGLTFSizeInt;
                      fJoint:TPasGLTFSizeInt;
+                     fLightIndex:TPasGLTFSizeInt;
                      fMatrix:TpvMatrix4x4;
                      fTranslation:TpvVector3;
                      fRotation:TpvQuaternion;
@@ -1826,17 +1980,18 @@ type EpvScene3D=class(Exception);
                      fUsedJoints:TpvScene3D.TGroup.TNode.TUsedJoints;
                      procedure Finish;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceNode:TPasGLTF.TNode;const aLightMap:TpvScene3D.TGroup.TLights);
                     published
                      property Index:TpvSizeInt read fIndex;
                      property Flags:TNodeFlags read fFlags write fFlags;
                      property Children:TNodes read fChildren;
-                     property Camera:TCamera read fCamera;
-                     property Mesh:TMesh read fMesh;
+                     property Camera:TCamera read fCamera write fCamera;
+                     property Mesh:TMesh read fMesh write fMesh;
                      property NodeMeshInstanceIndex:TPasGLTFSizeInt read fNodeMeshInstanceIndex;
-                     property Skin:TSkin read fSkin;
+                     property Skin:TSkin read fSkin write fSkin;
+                     property Light:TpvScene3D.TGroup.TLight read fLight write fLight;
                    end;
                    { TUsedVisibleDrawNodes }
                    TUsedVisibleDrawNodes=TpvObjectGenericList<TpvScene3D.TGroup.TNode>;
@@ -1868,7 +2023,7 @@ type EpvScene3D=class(Exception);
                      fSkipList:TSkipList;
                      procedure ConstructSkipList;
                     public
-                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
+                     constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceScene:TPasGLTF.TScene);
                     published
@@ -1880,6 +2035,12 @@ type EpvScene3D=class(Exception);
                      property StaticNodes:TpvScene3D.TGroup.TNodes read fStaticNodes;
                    end;
                    TScenes=TpvObjectGenericList<TScene>;
+                   TInstance=class;
+                   { TInstances }
+                   TInstances=class(TpvObjectGenericList<TInstance>)
+                    public
+                     procedure Sort;
+                   end;
                    { TInstance }
                    TInstance=class(TBaseObject)
                     public
@@ -1895,6 +2056,7 @@ type EpvScene3D=class(Exception);
                             fTime:TpvDouble;
                             fLastIndices:TLastIndices;
                             fShadowTime:TpvDouble;
+                            fAdditive:LongBool;
                             fComplete:LongBool;
                             fChannelOverwrites:TChannelOverwrites;
                            public
@@ -1904,6 +2066,7 @@ type EpvScene3D=class(Exception);
                             property Factor:TpvFloat read fFactor write fFactor;
                             property Time:TpvDouble read fTime write fTime;
                             property ShadowTime:TpvDouble read fShadowTime write fShadowTime;
+                            property Additive:LongBool read fAdditive write fAdditive;
                             property Complete:LongBool read fComplete write fComplete;
                           end;
                           TAnimations=array of TpvScene3D.TGroup.TInstance.TAnimation;
@@ -1911,6 +2074,7 @@ type EpvScene3D=class(Exception);
                            public
                             type TNodeOverwriteFlag=
                                   (
+                                   Additive,
                                    Defaults,
                                    DefaultTranslation,
                                    DefaultRotation,
@@ -1950,8 +2114,8 @@ type EpvScene3D=class(Exception);
                             WorkMatrix:TpvMatrix4x4;
                             Light:TpvScene3D.TLight;
                             WorkMatrices:array[0..MaxInFlightFrames-1] of TpvMatrix4x4;
-                            BoundingBoxes:array[0..MaxInFlightFrames-1] of TpvAABB;
-                            BoundingBoxFilled:array[0..MaxInFlightFrames-1] of boolean;
+                            BoundingBoxes:array[-1..MaxInFlightFrames-1] of TpvAABB;
+                            BoundingBoxFilled:array[-1..MaxInFlightFrames-1] of boolean;
                             PotentiallyVisibleSetNodeIndices:array[0..MaxInFlightFrames-1] of TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
                             CacheVerticesGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
                             CacheVerticesGeneration:TpvUInt64;
@@ -1981,6 +2145,7 @@ type EpvScene3D=class(Exception);
                            public
                             type TLightOverwriteFlag=
                                   (
+                                   Additive,
                                    Defaults,
                                    DefaultColor,
                                    DefaultIntensity,
@@ -2030,6 +2195,7 @@ type EpvScene3D=class(Exception);
                            public
                             type TCameraOverwriteFlag=
                                   (
+                                   Additive,
                                    Defaults,
                                    DefaultOrthographicXMag,
                                    DefaultOrthographicYMag,
@@ -2088,6 +2254,7 @@ type EpvScene3D=class(Exception);
                            public
                             type TMaterialOverwriteFlag=
                                   (
+                                   Additive,
                                    Defaults,
                                    DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
                                    DefaultMaterialPBRMetallicRoughnessMetallicFactor,
@@ -2114,6 +2281,7 @@ type EpvScene3D=class(Exception);
                                    DefaultMaterialPBRVolumeAttenuationColor,
                                    DefaultMaterialPBRAnisotropyStrength,
                                    DefaultMaterialPBRAnisotropyRotation,
+                                   DefaultMaterialPBRDispersion,
                                    DefaultTextureOffset,
                                    DefaultTextureRotation,
                                    DefaultTextureScale,
@@ -2142,6 +2310,7 @@ type EpvScene3D=class(Exception);
                                    MaterialPBRVolumeAttenuationColor,
                                    MaterialPBRAnisotropyStrength,
                                    MaterialPBRAnisotropyRotation,
+                                   MaterialPBRDispersion,
                                    TextureOffset,
                                    TextureRotation,
                                    TextureScale
@@ -2178,6 +2347,7 @@ type EpvScene3D=class(Exception);
                                      MaterialPBRVolumeAttenuationColor:TpvVector3;
                                      MaterialPBRAnisotropyStrength:TpvFloat;
                                      MaterialPBRAnisotropyRotation:TpvFloat;
+                                     MaterialPBRDispersion:TpvFloat;
                                     );
                                     0:(
                                      TextureOffset:TpvVector2;
@@ -2278,7 +2448,16 @@ type EpvScene3D=class(Exception);
                     private
                      fGroup:TGroup;
                      fLock:TPasMPSpinLock;
+                     fDependencyLock:TPasMPSpinLock;
+                     fProvidedDependencies:TInstances;
+                     fRequiredDependencies:TInstances;
+                     fAttachmentAppendageLock:TPasMPSpinLock;
+                     fAttachments:TpvScene3D.TGroup.TInstances;
+                     fAppendageInstance:TpvScene3D.TGroup.TInstance;
+                     fAppendageNode:TpvScene3D.TGroup.TNode;
+                     fAppendageTransform:TpvMatrix4x4;
                      fActive:boolean;
+                     fOrder:TpvInt64;
                      fHeadless:boolean;
                      fPreviousActive:boolean;
                      fUseRenderInstances:boolean;
@@ -2305,25 +2484,31 @@ type EpvScene3D=class(Exception);
                      fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
                      fUploaded:boolean;
                      fDirtyCounter:TPasMPInt32;
+                     fPreparedMeshContentGeneration:TpvUInt64;
+                     fFramePreparedMeshContentGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+                     fFrameUploadedMeshContentGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+                     fVisitedState:array[-1..MaxInFlightFrames-1] of TpvUInt32;
                      fModelMatrix:TpvMatrix4x4;
                      fNodeMatrices:TNodeMatrices;
                      fMorphTargetVertexWeights:TMorphTargetVertexWeights;
                      fRenderInstanceLock:TpvInt32;
                      fRenderInstances:TRenderInstances;
+                     fDrawChoreographyBatchItems:TDrawChoreographyBatchItems;
+                     fDrawChoreographyBatchUniqueItems:TDrawChoreographyBatchItems;
                      fPerInFlightFrameRenderInstances:TPerInFlightFrameRenderInstances;
                     public
                      fVulkanPerInFlightFrameFirstInstances:array[0..MaxInFlightFrames-1,0..MaxRendererInstances-1,0..MaxRenderPassIndices-1] of TpvSizeInt;
                      fVulkanPerInFlightFrameInstancesCounts:array[0..MaxInFlightFrames-1,0..MaxRendererInstances-1,0..MaxRenderPassIndices-1] of TpvSizeInt;
                     private
-                     fActiveScenes:array[0..MaxInFlightFrames-1] of TpvScene3D.TGroup.TScene;
-                     fActives:array[0..MaxInFlightFrames-1] of boolean;
-                     fPotentiallyVisibleSetNodeIndices:array[0..MaxInFlightFrames-1] of TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
-                     fCullVisibleBitmapLocks:array[0..MaxInFlightFrames-1] of TPasMPInt32;
+                     fActiveScenes:array[-1..MaxInFlightFrames-1] of TpvScene3D.TGroup.TScene;
+                     fActives:array[-1..MaxInFlightFrames-1] of boolean;
+                     fPotentiallyVisibleSetNodeIndices:array[-1..MaxInFlightFrames-1] of TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
+                     fCullVisibleBitmapLocks:array[-1..MaxInFlightFrames-1] of TPasMPInt32;
                      fCullVisibleBitmaps:TCullVisibleBitmaps;
                      fAABBTreeProxy:TpvSizeInt;
                      fAABBTree:TpvBVHDynamicAABBTree;
-                     fAABBTreeStates:array[0..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
-                     fAABBTreeSkipLists:array[0..MaxInFlightFrames-1] of TAABBTreeSkipList;
+                     fAABBTreeStates:array[-1..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
+                     fAABBTreeSkipLists:array[-1..MaxInFlightFrames-1] of TAABBTreeSkipList;
                      fVulkanVertexBufferOffset:TpvInt64;
                      fVulkanVertexBufferCount:TpvInt64;
                      fVulkanDrawIndexBufferOffset:TpvInt64;
@@ -2380,6 +2565,18 @@ type EpvScene3D=class(Exception);
                      procedure Upload; override;
                      procedure Unload; override;
                      procedure UpdateInvisible;
+                    public
+                     function HasProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                     function AddProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                     function RemoveProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                    public
+                     function HasRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                     function AddRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                     function RemoveRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+                    public
+                     function AttachTo(const aInstance:TpvScene3D.TGroup.TInstance;const aNode:TpvScene3D.TGroup.TNode;const aTransform:TpvMatrix4x4):Boolean;
+                     function DetachFrom:Boolean;
+                    public
                      procedure Check(const aInFlightFrameIndex:TpvSizeInt);
                      procedure Update(const aInFlightFrameIndex:TpvSizeInt);
                      procedure PrepareFrame(const aInFlightFrameIndex:TpvSizeInt);
@@ -2407,10 +2604,12 @@ type EpvScene3D=class(Exception);
                                         const aZFar:PpvFloat=nil;
                                         const aAspectRatio:TpvFloat=0.0):boolean;
                      procedure SetDirty;
+                     function GetOrder:TpvInt64;
                      function CreateRenderInstance:TpvScene3D.TGroup.TInstance.TRenderInstance;
                     published
                      property Group:TGroup read fGroup write fGroup;
                      property Active:boolean read fActive write fActive;
+                     property Order:TpvInt64 read fOrder write fOrder;
                      property UseRenderInstances:boolean read fUseRenderInstances write fUseRenderInstances;
                      property Scene:TpvSizeInt read fScene write SetScene;
                      property Cameras:TpvScene3D.TGroup.TInstance.TCameras read fCameras;
@@ -2421,6 +2620,7 @@ type EpvScene3D=class(Exception);
                      property UserData:pointer read fUserData write fUserData;
                      property ModelMatrix:TpvMatrix4x4 read fModelMatrix write SetModelMatrix;
                      property RenderInstances:TRenderInstances read fRenderInstances;
+                     property BoundingBox:TpvAABB read fBoundingBox;
                     public
                      property Automations[const aIndex:TPasGLTFSizeInt]:TpvScene3D.TGroup.TInstance.TAnimation read GetAutomation;
                     published
@@ -2428,42 +2628,60 @@ type EpvScene3D=class(Exception);
                      property OnNodeMatrixPost:TOnNodeMatrix read fOnNodeMatrixPost write fOnNodeMatrixPost;
                      property OnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter read fOnNodeFilter write fOnNodeFilter;
                    end;
-                   TInstances=TpvObjectGenericList<TInstance>;
                    TMaterialsToDuplicate=TpvObjectGenericList<TpvScene3D.TMaterial>;
-                   TNodeNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
+                   TMaterialIndexHashMap=TpvHashMap<TMaterial,TpvSizeInt>;
+                   TNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
                    TCameraNodeIndices=TpvGenericList<TpvSizeInt>;
-                   TCameraNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
-                   TMeshNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
              private
+              fReady:boolean;
               fCulling:boolean;
               fDynamicAABBTreeCulling:boolean;
               fHeadless:boolean;
+              fOrder:TpvInt64;
               fObjects:TBaseObjects;
               fMaterialsToDuplicate:TpvScene3D.TGroup.TMaterialsToDuplicate;
               fMaterials:TpvScene3D.TMaterials;
               fMaterialMap:TpvScene3D.TGroup.TMaterialMap;
               fMaterialIDMapArrayIndexHashMap:TpvScene3D.TGroup.TMaterialIDMapArrayIndexHashMap;
               fMaterialNameMapArrayIndexHashMap:TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap;
+              fMaterialNameMapArrayIndexHashMapLowerCase:TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap;
               fMaterialIDMapArrays:TpvScene3D.TGroup.TMaterialIDMapArrays;
+              fMaterialIndexHashMap:TpvScene3D.TGroup.TMaterialIndexHashMap;
               fAnimations:TpvScene3D.TGroup.TAnimations;
               fCountInstanceAnimationChannels:TpvSizeInt;
+              fAnimationNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fAnimationNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fCameras:TpvScene3D.TGroup.TCameras;
-              fCameraNameIndexHashMap:TCameraNameIndexHashMap;
+              fCameraNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fCameraNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fMeshes:TpvScene3D.TGroup.TMeshes;
-              fMeshNameIndexHashMap:TMeshNameIndexHashMap;
+              fMeshNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fMeshNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
+              fMeshContentGeneration:TpvUInt64;
+              fUpdatedMeshContentGeneration:TpvUInt64;
+              fFrameUpdatedMeshContentGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
               fSkins:TpvScene3D.TGroup.TSkins;
+              fSkinNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fSkinNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fLights:TpvScene3D.TGroup.TLights;
+              fLightNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fLightNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fNodes:TpvScene3D.TGroup.TNodes;
+              fNodeNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fNodeNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fScenes:TpvScene3D.TGroup.TScenes;
+              fSceneNameIndexHashMap:TpvScene3D.TGroup.TNameIndexHashMap;
+              fSceneNameIndexHashMapLowerCase:TpvScene3D.TGroup.TNameIndexHashMap;
               fScene:TpvScene3D.TGroup.TScene;
-              fVertices:TGroupVertices;
-              fIndices:TGroupIndices;
-              fDrawChoreographyBatchCondensedIndices:TGroupIndices;
-              fDrawChoreographyBatchCondensedUniqueIndices:TGroupIndices;
-              fJointBlocks:TGroupJointBlocks;
+              fVertices:TpvScene3D.TGroup.TGroupVertices;
+              fFrameVertices:TpvScene3D.TGroup.TFrameGroupVertices;
+              fIndices:TpvScene3D.TGroup.TGroupIndices;
+              fDrawChoreographyBatchCondensedIndices:TpvScene3D.TGroup.TGroupIndices;
+              fDrawChoreographyBatchCondensedUniqueIndices:TpvScene3D.TGroup.TGroupIndices;
+              fJointBlocks:TpvScene3D.TGroup.TGroupJointBlocks;
               fJointBlockOffsets:TSizeIntDynamicArrayEx;
-              fMorphTargetVertices:TMorphTargetVertexDynamicArray;
-              fSkinStorageBufferSize:TpvSizeInt;
+              fMorphTargetVertices:TpvScene3D.TMorphTargetVertexDynamicArrayList;
+              fFrameMorphTargetVertices:array[0..MaxInFlightFrames-1] of TpvScene3D.TMorphTargetVertexDynamicArrayList;
               fMorphTargetCount:TpvSizeInt;
               fCountNodeWeights:TpvSizeInt;
               fCountJointNodeMatrices:TpvSizeInt;
@@ -2475,19 +2693,33 @@ type EpvScene3D=class(Exception);
               fUsedVisibleDrawNodes:TUsedVisibleDrawNodes;
               fDrawChoreographyBatchItems:TDrawChoreographyBatchItems;
               fDrawChoreographyBatchUniqueItems:TDrawChoreographyBatchItems;
-              fNodeNameIndexHashMap:TpvScene3D.TGroup.TNodeNameIndexHashMap;
               fCameraNodeIndices:TpvScene3D.TGroup.TCameraNodeIndices;
               fCachedVertexBufferMemoryBarriers:TVkBufferMemoryBarrierArray;
               fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
+              fNewLightMap:TpvScene3D.TGroup.TLights;
+              fNewImageMap:TpvScene3D.TImages;
+              fNewSamplerMap:TpvScene3D.TSamplers;
+              fNewTextureMap:TpvScene3D.TTextures;
+              fNewImages:TpvScene3D.TImages;
+              fNewSamplers:TpvScene3D.TSamplers;
+              fNewTextures:TpvScene3D.TTextures;
               procedure ConstructBuffers;
+              procedure PostProcessSkins;
+              procedure PostProcessNodes;
+              procedure PostProcessAnimations;
               procedure MarkAnimatedElements;
               procedure CollectAllSceneNodesAndSplitNodesIntoAnimatedOrNotAnimatedSubtreesPerScene;
+              procedure CalculateBoundingBox;
               procedure CollectUsedVisibleDrawNodes;
               procedure CollectMaterials;
+              procedure CollectNodeUsedJoints;
               procedure ConstructDrawChoreographyBatchItems;
+              procedure ConstructSkipLists;
               procedure UpdateCachedVertices(const aInFlightFrameIndex:TpvSizeInt);
               function GetNodeIndexByName(const aNodeName:TpvUTF8String):TpvSizeInt;
+              function GetNodeIndexByIgnoreCaseName(const aNodeName:TpvUTF8String):TpvSizeInt;
               function GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
+              function GetNodeByIgnoreCaseName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
               function AssetGetURI(const aURI:TPasGLTFUTF8String):TStream;
              public
               constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
@@ -2498,23 +2730,72 @@ type EpvScene3D=class(Exception);
               procedure LoadData; override;
               procedure Upload; override;
               procedure Unload; override;
+             public
+              function BeginLoad(const aStream:TStream):boolean; override;
+              function EndLoad:boolean; override;
+             public
+              function Usable:boolean; inline;
+             public
               procedure Check(const aInFlightFrameIndex:TpvSizeInt);
               procedure Update(const aInFlightFrameIndex:TpvSizeInt);
               procedure PrepareFrame(const aInFlightFrameIndex:TpvSizeInt);
               procedure UploadFrame(const aInFlightFrameIndex:TpvSizeInt);
+             public
+              procedure CleanUp;
+              procedure Finish;
+             public
+              function GetLightID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetMaterialID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetCameraID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetMeshID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetSkinID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetNodeID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetAnimationID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+              function GetSceneID(const aName:TpvUTF8String;const aIgnoreCase:Boolean=false):TpvSizeInt;
+             public
+              function AddLight(const aLight:TpvScene3D.TGroup.TLight):TpvSizeInt;
+              function AddImage(const aImage:TpvScene3D.TImage;const aForceNew:Boolean=false):TpvSizeInt;
+              function AddSampler(const aSampler:TpvScene3D.TSampler;const aForceNew:Boolean=false):TpvSizeInt;
+              function AddTexture(const aTexture:TpvScene3D.TTexture;const aForceNew:Boolean=false):TpvSizeInt;
+              function AddMaterial(const aMaterial:TpvScene3D.TMaterial;const aForceNew:Boolean=false;const aDoubleCheck:Boolean=false):TpvSizeInt;
+              function AddMesh(const aMesh:TpvScene3D.TGroup.TMesh):TpvSizeInt;
+              function AddSkin(const aSkin:TpvScene3D.TGroup.TSkin):TpvSizeInt;
+              function AddAnimation(const aAnimation:TpvScene3D.TGroup.TAnimation):TpvSizeInt;
+              function AddCamera(const aCamera:TpvScene3D.TGroup.TCamera):TpvSizeInt;
+              function AddNode(const aNode:TpvScene3D.TGroup.TNode):TpvSizeInt;
+              function AddScene(const aScene:TpvScene3D.TGroup.TScene):TpvSizeInt;
+             public
+              function CreateLight(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TLight;
+              function CreateMesh(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TMesh;
+              function CreateSkin(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TSkin;
+              function CreateAnimation(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TAnimation;
+              function CreateCamera(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TCamera;
+              function CreateNode(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TNode;
+              function CreateScene(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TScene;
+             public
+              procedure FinalizeMaterials(const aDoLock:Boolean=true);
+             public
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
-              function BeginLoad(const aStream:TStream):boolean; override;
-              function EndLoad:boolean; override;
+             public
               function CreateInstance(const aHeadless:Boolean=false):TpvScene3D.TGroup.TInstance;
              public
               property BoundingBox:TpvAABB read fBoundingBox;
+             public
+              property Vertices:TpvScene3D.TGroup.TGroupVertices read fVertices;
+              property FrameVertices:TpvScene3D.TGroup.TFrameGroupVertices read fFrameVertices;
+              property Indices:TpvScene3D.TGroup.TGroupIndices read fIndices;
+              property MorphTargetVertices:TpvScene3D.TMorphTargetVertexDynamicArrayList read fMorphTargetVertices;
+             public
               property NodeIndexByName[const aNodeName:TpvUTF8String]:TpvSizeInt read GetNodeIndexByName;
+              property NodeIndexByIgnoreCaseName[const aNodeName:TpvUTF8String]:TpvSizeInt read GetNodeIndexByIgnoreCaseName;
               property NodeByName[const aNodeName:TpvUTF8String]:TpvScene3D.TGroup.TNode read GetNodeByName;
+              property NodeByIgnoreCaseName[const aNodeName:TpvUTF8String]:TpvScene3D.TGroup.TNode read GetNodeByIgnoreCaseName;
               property CameraNodeIndices:TpvScene3D.TGroup.TCameraNodeIndices read fCameraNodeIndices;
              published
               property Culling:boolean read fCulling write fCulling;
               property DynamicAABBTreeCulling:boolean read fDynamicAABBTreeCulling write fDynamicAABBTreeCulling;
               property Headless:boolean read fHeadless write fHeadless;
+              property Order:TpvInt64 read fOrder write fOrder;
               property Objects:TBaseObjects read fObjects;
               property Animations:TAnimations read fAnimations;
               property Cameras:TCameras read fCameras;
@@ -2549,7 +2830,7 @@ type EpvScene3D=class(Exception);
             TGlobalVulkanDescriptorSets=array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
             TVertexStagePushConstantArray=array[0..MaxRenderPassIndices-1] of TpvScene3D.TVertexStagePushConstants;
             TInFlightFrameLights=array[0..MaxInFlightFrames-1] of TpvScene3D.TLights;
-            TCountInFlightFrameLights=array[0..MaxInFlightFrames-1] of TpvSizeInt;
+            TCountInFlightFrameLights=array[-1..MaxInFlightFrames-1] of TpvSizeInt;
             TCachedVertexRange=record
              Offset:TpvSizeInt;
              Count:TpvSizeInt;
@@ -2582,12 +2863,16 @@ type EpvScene3D=class(Exception);
        fHardwareRaytracingSupport:Boolean;
        fAccelerationStructureInputBufferUsageFlags:TVkBufferUsageFlags;
        fDefaultSampler:TSampler;
+       fDefaultMipMapSampler:TSampler;
        fWhiteImage:TImage;
        fWhiteTexture:TTexture;
        fDefaultNormalMapImage:TImage;
        fDefaultNormalMapTexture:TTexture;
        fDefaultParticleImage:TImage;
        fDefaultParticleTexture:TTexture;
+       fGeneralComputeSampler:TpvVulkanSampler;
+       fPlanetDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+       fPlanetCullDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fMeshComputeVulkanDescriptorSet0Layout:TpvVulkanDescriptorSetLayout;
        fMeshComputeVulkanDescriptorSet1Layout:TpvVulkanDescriptorSetLayout;
        fVulkanStagingQueue:TpvVulkanQueue;
@@ -2604,6 +2889,8 @@ type EpvScene3D=class(Exception);
        fGlobalVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fGlobalVulkanDescriptorPool:TpvVulkanDescriptorPool;
        fGlobalVulkanDescriptorSets:TGlobalVulkanDescriptorSets;
+       fVulkanBeginFrameSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
+       fVulkanEndFrameSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
 {      fVulkanLightItemsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanLightTreeStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanLightMetaInfoStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;}
@@ -2649,17 +2936,17 @@ type EpvScene3D=class(Exception);
        fCountLights:TCountInFlightFrameLights;
        fIndirectLights:array[0..MaxInFlightFrames-1,0..MaxVisibleLights-1] of TpvScene3D.TLight;
        fCountIndirectLights:array[0..MaxInFlightFrames-1] of TpvSizeInt;
-       fGroupListLock:TPasMPSlimReaderWriterLock;
+       fGroupListLock:TPasMPCriticalSection;
        fGroups:TGroups;
-       fGroupInstanceListLock:TPasMPSlimReaderWriterLock;
+       fGroupInstanceListLock:TPasMPCriticalSection;
        fGroupInstances:TGroup.TInstances;
        fLightAABBTree:TpvBVHDynamicAABBTree;
        fLightAABBTreeGeneration:TpvUInt64;
-       fLightAABBTreeStates:array[0..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
-       fLightAABBTreeStateGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fLightAABBTreeStates:array[-1..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
+       fLightAABBTreeStateGenerations:array[-1..MaxInFlightFrames-1] of TpvUInt64;
        fLightBuffers:TpvScene3D.TLightBuffers;
        fAABBTree:TpvBVHDynamicAABBTree;
-       fAABBTreeStates:array[0..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
+       fAABBTreeStates:array[-1..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
        fBoundingBox:TpvAABB;
        fInFlightFrameBoundingBoxes:TInFlightFrameAABBs;
        fCountInFlightFrames:TpvSizeInt;
@@ -2682,6 +2969,7 @@ type EpvScene3D=class(Exception);
        fCountInFlightFrameParticleVertices:array[0..MaxInFlightFrames-1] of TpvUInt32;
        fVulkanParticleVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fSkyBoxBrightnessFactor:TpvScalar;
+       fLightIntensityFactor:TpvScalar;
        fBufferRangeAllocatorLock:TPasMPCriticalSection;
        fVulkanDynamicVertexBufferData:TGPUDynamicVertexDynamicArray;
        fVulkanStaticVertexBufferData:TGPUStaticVertexDynamicArray;
@@ -2706,6 +2994,15 @@ type EpvScene3D=class(Exception);
        fVulkanLongTermStaticBuffers:TVulkanLongTermStaticBuffers;
       public
        fVulkanShortTermDynamicBuffers:TVulkanShortTermDynamicBuffers;
+      private
+       fInFlightFrameDataTransferQueues:TpvInFlightFrameTransferQueues;
+      private
+       fPlanets:TpvScene3DPlanets;
+      private
+       fSkyBoxTextureImage:TpvScene3D.TImage;
+       fSkyBoxMode:TpvScene3DEnvironmentMode;
+       fEnvironmentTextureImage:TpvScene3D.TImage;
+       fEnvironmentMode:TpvScene3DEnvironmentMode;
       private
        fCachedVertexRanges:TCachedVertexRanges;
        fMeshGenerationCounter:TpvUInt32;
@@ -2761,10 +3058,11 @@ type EpvScene3D=class(Exception);
        procedure Check(const aInFlightFrameIndex:TpvSizeInt);
        procedure Update(const aInFlightFrameIndex:TpvSizeInt);
        procedure PrepareFrame(const aInFlightFrameIndex:TpvSizeInt);
-       procedure BeginFrame(const aInFlightFrameIndex:TpvSizeInt);
-       procedure EndFrame(const aInFlightFrameIndex:TpvSizeInt);
+       procedure BeginFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence);
+       procedure EndFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence);
 //     procedure FinalizeViews(const aInFlightFrameIndex:TpvSizeInt);
        procedure UploadFrame(const aInFlightFrameIndex:TpvSizeInt);
+       procedure UploadFrameData(const aInFlightFrameIndex:TpvSizeInt;const aCommandBuffer:TpvVulkanCommandBuffer);
        procedure PrepareLights(const aInFlightFrameIndex:TpvSizeInt;
                                const aViewBaseIndex:TpvSizeInt;
                                const aCountViews:TpvSizeInt;
@@ -2780,6 +3078,7 @@ type EpvScene3D=class(Exception);
                          const aCountViews:TpvSizeInt;
                          const aViewPortWidth:TpvInt32;
                          const aViewPortHeight:TpvInt32;
+                         const aMainViewPort:Boolean;
                          const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask];
                          const aLights:boolean=true;
                          const aFrustumCulling:boolean=true;
@@ -2849,6 +3148,8 @@ type EpvScene3D=class(Exception);
                             const aTextureID:TpvUInt32;
                             const aAdditiveBlending:boolean):TpvSizeInt;
       public
+       function CreateGroup(const aName:TpvUTF8String=''):TpvScene3D.TGroup;
+      public
        property BoundingBox:TpvAABB read fBoundingBox;
        property InFlightFrameBoundingBoxes:TInFlightFrameAABBs read fInFlightFrameBoundingBoxes;
        property GlobalVulkanInstanceMatrixBuffers:TGlobalVulkanInstanceMatrixBuffers read fGlobalVulkanInstanceMatrixBuffers;
@@ -2859,11 +3160,15 @@ type EpvScene3D=class(Exception);
        property DebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays read fDebugPrimitiveVertexDynamicArrays;
        property Particles:PParticles read fPointerToParticles;
        property SkyBoxBrightnessFactor:TpvScalar read fSkyBoxBrightnessFactor write fSkyBoxBrightnessFactor;
+       property LightIntensityFactor:TpvScalar read fLightIntensityFactor write fLightIntensityFactor;
       public
+       property DefaultSampler:TSampler read fDefaultSampler;
+       property DefaultMipMapSampler:TSampler read fDefaultMipMapSampler;
        property WhiteImage:TImage read fWhiteImage;
        property WhiteTexture:TTexture read fWhiteTexture;
        property DefaultParticleImage:TImage read fDefaultParticleImage;
        property DefaultParticleTexture:TTexture read fDefaultParticleTexture;
+       property EmptyMaterial:TpvScene3D.TMaterial read fEmptyMaterial;
        property Lights:TInFlightFrameLights read fLights;
        property CountLights:TCountInFlightFrameLights read fCountLights;
       published
@@ -2873,10 +3178,22 @@ type EpvScene3D=class(Exception);
        property VulkanStagingFence:TpvVulkanFence read fVulkanStagingFence;
       public
        property MaxCullObjectID:TpvUInt32 read fMaxCullObjectID;
+      public
+       property InFlightFrameDataTransferQueues:TpvInFlightFrameTransferQueues read fInFlightFrameDataTransferQueues;
+      public
+       property Planets:TpvScene3DPlanets read fPlanets;
+      published
+       property SkyBoxTextureImage:TpvScene3D.TImage read fSkyBoxTextureImage write fSkyBoxTextureImage;
+       property SkyBoxMode:TpvScene3DEnvironmentMode read fSkyBoxMode write fSkyBoxMode;
+       property EnvironmentTextureImage:TpvScene3D.TImage read fEnvironmentTextureImage write fEnvironmentTextureImage;
+       property EnvironmentMode:TpvScene3DEnvironmentMode read fEnvironmentMode write fEnvironmentMode;
       published
        property RendererInstanceIDManager:TRendererInstanceIDManager read fRendererInstanceIDManager;
        property PotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet read fPotentiallyVisibleSet;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
+       property GeneralComputeSampler:TpvVulkanSampler read fGeneralComputeSampler;
+       property PlanetDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fPlanetDescriptorSetLayout;
+       property PlanetCullDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fPlanetCullDescriptorSetLayout;
        property MeshComputeVulkanDescriptorSet0Layout:TpvVulkanDescriptorSetLayout read fMeshComputeVulkanDescriptorSet0Layout;
        property MeshComputeVulkanDescriptorSet1Layout:TpvVulkanDescriptorSetLayout read fMeshComputeVulkanDescriptorSet1Layout;
        property GlobalVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fGlobalVulkanDescriptorSetLayout;
@@ -2901,7 +3218,7 @@ type TAnimationChannelTargetOverwriteGroupMap=array[TpvScene3D.TGroup.TAnimation
 
 var AnimationChannelTargetOverwriteGroupMap:TAnimationChannelTargetOverwriteGroupMap;
 
-function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvScene3D.TInt16Vector2; overload;
+{function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvScene3D.TInt16Vector2; overload;
 var Vector:TpvVector3;
     x,y,s,tx,ty:TpvScalar;
 begin
@@ -2996,7 +3313,7 @@ begin
   BestDot:=Dot;
  end;
 
-end;
+end;}
 
 type { TPOCAScene3DGroupAnimationChannel }
      TPOCAScene3DGroupAnimationChannel=class(TPOCANativeObject)
@@ -3030,17 +3347,17 @@ var Index,SubIndex:TpvSizeInt;
     Time:TpvDouble;
     ArrayValue,SubArrayValue:TPOCAValue;
     Elements:array[0..2] of TpvVector4;
-    Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
     OK:boolean;
 begin
  OK:=false;
  if (aCountArguments>=1) and ((fElementSize>=0) and (fElementSize<=4)) then begin
-  Channel:=@fAnimation.fChannels[fChannelIndex];
+  Channel:=fAnimation.fChannels[fChannelIndex];
   FillChar(Elements,SizeOf(Elements),#0);
   Time:=POCAGetNumberValue(aContext,aArguments^[0]);
   if (aCountArguments>=2) and (POCAGetValueType(aArguments^[1])=pvtARRAY) then begin
    ArrayValue:=aArguments^[1];
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
     if POCAArraySize(ArrayValue)=3 then begin
      OK:=true;
      for Index:=0 to 2 do begin
@@ -3064,7 +3381,7 @@ begin
     end;
    end;
   end else begin
-   if Channel^.Interpolation<>TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+   if Channel.fInterpolation<>TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
     for Index:=0 to Min(Min(aCountArguments-1,fElementSize),4)-1 do begin
      Elements[0].Components[Index]:=POCAGetNumberValue(aContext,aArguments^[1+Index]);
     end;
@@ -3074,77 +3391,77 @@ begin
   if OK then begin
    Index:=fCount;
    inc(fCount);
-   if length(Channel^.InputTimeArray)<=fCount then begin
-    SetLength(Channel^.InputTimeArray,fCount*2);
-    if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+   if length(Channel.fInputTimeArray)<=fCount then begin
+    SetLength(Channel.fInputTimeArray,fCount*2);
+    if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
      case fElementSize of
       2:begin
-       SetLength(Channel^.OutputVector2Array,fCount*6);
+       SetLength(Channel.fOutputVector2Array,fCount*6);
       end;
       3:begin
-       SetLength(Channel^.OutputVector3Array,fCount*6);
+       SetLength(Channel.fOutputVector3Array,fCount*6);
       end;
       4:begin
-       SetLength(Channel^.OutputVector4Array,fCount*6);
+       SetLength(Channel.fOutputVector4Array,fCount*6);
       end;
       else begin
-       SetLength(Channel^.OutputScalarArray,fCount*6);
+       SetLength(Channel.fOutputScalarArray,fCount*6);
       end;
      end;
     end else begin
      case fElementSize of
       2:begin
-       SetLength(Channel^.OutputVector2Array,fCount*2);
+       SetLength(Channel.fOutputVector2Array,fCount*2);
       end;
       3:begin
-       SetLength(Channel^.OutputVector3Array,fCount*2);
+       SetLength(Channel.fOutputVector3Array,fCount*2);
       end;
       4:begin
-       SetLength(Channel^.OutputVector4Array,fCount*2);
+       SetLength(Channel.fOutputVector4Array,fCount*2);
       end;
       else begin
-       SetLength(Channel^.OutputScalarArray,fCount*2);
+       SetLength(Channel.fOutputScalarArray,fCount*2);
       end;
      end;
     end;
    end;
-   Channel^.InputTimeArray[Index]:=Time;
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+   Channel.fInputTimeArray[Index]:=Time;
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
     case fElementSize of
      2:begin
-      Channel^.OutputVector2Array[(Index*3)+0]:=Elements[0].xy;
-      Channel^.OutputVector2Array[(Index*3)+1]:=Elements[1].xy;
-      Channel^.OutputVector2Array[(Index*3)+2]:=Elements[2].xy;
+      Channel.fOutputVector2Array[(Index*3)+0]:=Elements[0].xy;
+      Channel.fOutputVector2Array[(Index*3)+1]:=Elements[1].xy;
+      Channel.fOutputVector2Array[(Index*3)+2]:=Elements[2].xy;
      end;
      3:begin
-      Channel^.OutputVector3Array[(Index*3)+0]:=Elements[0].xyz;
-      Channel^.OutputVector3Array[(Index*3)+1]:=Elements[1].xyz;
-      Channel^.OutputVector3Array[(Index*3)+2]:=Elements[2].xyz;
+      Channel.fOutputVector3Array[(Index*3)+0]:=Elements[0].xyz;
+      Channel.fOutputVector3Array[(Index*3)+1]:=Elements[1].xyz;
+      Channel.fOutputVector3Array[(Index*3)+2]:=Elements[2].xyz;
      end;
      4:begin
-      Channel^.OutputVector4Array[(Index*3)+0]:=Elements[0].xyzw;
-      Channel^.OutputVector4Array[(Index*3)+1]:=Elements[1].xyzw;
-      Channel^.OutputVector4Array[(Index*3)+2]:=Elements[2].xyzw;
+      Channel.fOutputVector4Array[(Index*3)+0]:=Elements[0].xyzw;
+      Channel.fOutputVector4Array[(Index*3)+1]:=Elements[1].xyzw;
+      Channel.fOutputVector4Array[(Index*3)+2]:=Elements[2].xyzw;
      end;
      else begin
-      Channel^.OutputScalarArray[(Index*3)+0]:=Elements[0].x;
-      Channel^.OutputScalarArray[(Index*3)+1]:=Elements[1].x;
-      Channel^.OutputScalarArray[(Index*3)+2]:=Elements[2].x;
+      Channel.fOutputScalarArray[(Index*3)+0]:=Elements[0].x;
+      Channel.fOutputScalarArray[(Index*3)+1]:=Elements[1].x;
+      Channel.fOutputScalarArray[(Index*3)+2]:=Elements[2].x;
      end;
     end;
    end else begin
     case fElementSize of
      2:begin
-      Channel^.OutputVector2Array[Index]:=Elements[0].xy;
+      Channel.fOutputVector2Array[Index]:=Elements[0].xy;
      end;
      3:begin
-      Channel^.OutputVector3Array[Index]:=Elements[0].xyz;
+      Channel.fOutputVector3Array[Index]:=Elements[0].xyz;
      end;
      4:begin
-      Channel^.OutputVector4Array[Index]:=Elements[0].xyzw;
+      Channel.fOutputVector4Array[Index]:=Elements[0].xyzw;
      end;
      else begin
-      Channel^.OutputScalarArray[Index]:=Elements[0].x;
+      Channel.fOutputScalarArray[Index]:=Elements[0].x;
      end;
     end;
    end;
@@ -3158,22 +3475,22 @@ begin
 end;
 
 function TPOCAScene3DGroupAnimationChannel.finish(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
-var Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+var Channel:TpvScene3D.TGroup.TAnimation.TChannel;
     Index:TpvSizeInt;
 begin
- Channel:=@fAnimation.fChannels[fChannelIndex];
- SetLength(Channel^.InputTimeArray,fCount);
+ Channel:=fAnimation.fChannels[fChannelIndex];
+ SetLength(Channel.fInputTimeArray,fCount);
  case fElementSize of
   2:begin
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
-    SetLength(Channel^.OutputVector2Array,fCount*3);
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel.fOutputVector2Array,fCount*3);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+0],Channel^.OutputVector2Array[((Index+1)*3)+0]);
-      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+1],Channel^.OutputVector2Array[((Index+1)*3)+1]);
-      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[(Index*3)+2],Channel^.OutputVector2Array[((Index+1)*3)+2]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector2>.Swap(Channel.fOutputVector2Array[(Index*3)+0],Channel.fOutputVector2Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector2>.Swap(Channel.fOutputVector2Array[(Index*3)+1],Channel.fOutputVector2Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector2>.Swap(Channel.fOutputVector2Array[(Index*3)+2],Channel.fOutputVector2Array[((Index+1)*3)+2]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3184,12 +3501,12 @@ begin
      end;
     end;
    end else begin
-    SetLength(Channel^.OutputVector2Array,fCount);
+    SetLength(Channel.fOutputVector2Array,fCount);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector2>.Swap(Channel^.OutputVector2Array[Index],Channel^.OutputVector2Array[Index+1]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector2>.Swap(Channel.fOutputVector2Array[Index],Channel.fOutputVector2Array[Index+1]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3202,15 +3519,15 @@ begin
    end;
   end;
   3:begin
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
-    SetLength(Channel^.OutputVector3Array,fCount*3);
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel.fOutputVector3Array,fCount*3);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+0],Channel^.OutputVector3Array[((Index+1)*3)+0]);
-      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+1],Channel^.OutputVector3Array[((Index+1)*3)+1]);
-      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[(Index*3)+2],Channel^.OutputVector3Array[((Index+1)*3)+2]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector3>.Swap(Channel.fOutputVector3Array[(Index*3)+0],Channel.fOutputVector3Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector3>.Swap(Channel.fOutputVector3Array[(Index*3)+1],Channel.fOutputVector3Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector3>.Swap(Channel.fOutputVector3Array[(Index*3)+2],Channel.fOutputVector3Array[((Index+1)*3)+2]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3221,12 +3538,12 @@ begin
      end;
     end;
    end else begin
-    SetLength(Channel^.OutputVector3Array,fCount);
+    SetLength(Channel.fOutputVector3Array,fCount);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector3>.Swap(Channel^.OutputVector3Array[Index],Channel^.OutputVector3Array[Index+1]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector3>.Swap(Channel.fOutputVector3Array[Index],Channel.fOutputVector3Array[Index+1]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3239,15 +3556,15 @@ begin
    end;
   end;
   4:begin
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
-    SetLength(Channel^.OutputVector4Array,fCount*3);
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel.fOutputVector4Array,fCount*3);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+0],Channel^.OutputVector4Array[((Index+1)*3)+0]);
-      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+1],Channel^.OutputVector4Array[((Index+1)*3)+1]);
-      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[(Index*3)+2],Channel^.OutputVector4Array[((Index+1)*3)+2]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector4>.Swap(Channel.fOutputVector4Array[(Index*3)+0],Channel.fOutputVector4Array[((Index+1)*3)+0]);
+      TpvSwap<TpvVector4>.Swap(Channel.fOutputVector4Array[(Index*3)+1],Channel.fOutputVector4Array[((Index+1)*3)+1]);
+      TpvSwap<TpvVector4>.Swap(Channel.fOutputVector4Array[(Index*3)+2],Channel.fOutputVector4Array[((Index+1)*3)+2]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3258,12 +3575,12 @@ begin
      end;
     end;
    end else begin
-    SetLength(Channel^.OutputVector4Array,fCount);
+    SetLength(Channel.fOutputVector4Array,fCount);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvVector4>.Swap(Channel^.OutputVector4Array[Index],Channel^.OutputVector4Array[Index+1]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvVector4>.Swap(Channel.fOutputVector4Array[Index],Channel.fOutputVector4Array[Index+1]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3276,15 +3593,15 @@ begin
    end;
   end;
   else begin
-   if Channel^.Interpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
-    SetLength(Channel^.OutputScalarArray,fCount*3);
+   if Channel.fInterpolation=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline then begin
+    SetLength(Channel.fOutputScalarArray,fCount*3);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+0],Channel^.OutputScalarArray[((Index+1)*3)+0]);
-      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+1],Channel^.OutputScalarArray[((Index+1)*3)+1]);
-      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[(Index*3)+2],Channel^.OutputScalarArray[((Index+1)*3)+2]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvFloat>.Swap(Channel.fOutputScalarArray[(Index*3)+0],Channel.fOutputScalarArray[((Index+1)*3)+0]);
+      TpvSwap<TpvFloat>.Swap(Channel.fOutputScalarArray[(Index*3)+1],Channel.fOutputScalarArray[((Index+1)*3)+1]);
+      TpvSwap<TpvFloat>.Swap(Channel.fOutputScalarArray[(Index*3)+2],Channel.fOutputScalarArray[((Index+1)*3)+2]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3295,12 +3612,12 @@ begin
      end;
     end;
    end else begin
-    SetLength(Channel^.OutputScalarArray,fCount);
+    SetLength(Channel.fOutputScalarArray,fCount);
     Index:=0;
     while Index<(fCount-1) do begin
-     if Channel^.InputTimeArray[Index]>Channel^.InputTimeArray[Index+1] then begin
-      TpvSwap<TpvDouble>.Swap(Channel^.InputTimeArray[Index],Channel^.InputTimeArray[Index+1]);
-      TpvSwap<TpvFloat>.Swap(Channel^.OutputScalarArray[Index],Channel^.OutputScalarArray[Index+1]);
+     if Channel.fInputTimeArray[Index]>Channel.fInputTimeArray[Index+1] then begin
+      TpvSwap<TpvDouble>.Swap(Channel.fInputTimeArray[Index],Channel.fInputTimeArray[Index+1]);
+      TpvSwap<TpvFloat>.Swap(Channel.fOutputScalarArray[Index],Channel.fOutputScalarArray[Index+1]);
       if Index>0 then begin
        dec(Index);
       end else begin
@@ -3343,7 +3660,7 @@ function TPOCAScene3DGroupAnimation.createChannel(const aContext:PPOCAContext;co
 var Index,ElementSize:TpvSizeInt;
     Path:TpvUTF8String;
     Interpolation:TpvUTF8String;
-    Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
     POCAScene3DGroupAnimationChannel:TPOCAScene3DGroupAnimationChannel;
 begin
  if aCountArguments=3 then begin
@@ -3351,11 +3668,10 @@ begin
   Interpolation:=POCAGetStringValue(aContext,aArguments^[1]);
   ElementSize:=trunc(POCAGetNumberValue(aContext,aArguments^[2]));
   if ElementSize>0 then begin
-   Index:=length(fAnimation.fChannels);
-   SetLength(fAnimation.fChannels,Index+1);
-   Channel:=@fAnimation.fChannels[Index];
-   Channel^.SetTarget('pointer/'+Path,-1);
-   Channel^.SetInterpolation(Interpolation);
+   Index:=fAnimation.fChannels.Add(TpvScene3D.TGroup.TAnimation.TChannel.Create);
+   Channel:=fAnimation.fChannels[Index];
+   Channel.SetTarget('pointer/'+Path,-1);
+   Channel.SetInterpolation(Interpolation);
    POCAScene3DGroupAnimationChannel:=TPOCAScene3DGroupAnimationChannel.Create(aContext^.Instance,aContext,nil,nil,false);
    POCAScene3DGroupAnimationChannel.fAnimation:=fAnimation;
    POCAScene3DGroupAnimationChannel.fChannelIndex:=Index;
@@ -3378,10 +3694,14 @@ type { TPOCAScene3DGroup }
        constructor Create(const aInstance:PPOCAInstance;const aContext:PPOCAContext;const aPrototype,aConstructor:PPOCAValue;const aExpandable:boolean); override;
        destructor Destroy; override;
       published
+       function getLightID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function getMaterialID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function getCameraID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function getMeshID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getSkinID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function getNodeID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getAnimationID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function getSceneID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function createAnimation(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
      end;
 
@@ -3397,10 +3717,27 @@ begin
  inherited Destroy;
 end;
 
+function TPOCAScene3DGroup.getLightID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fLightNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fLightNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
 function TPOCAScene3DGroup.getMaterialID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
 begin
  if aCountArguments>0 then begin
-  result.Num:=fGroup.fMaterialNameMapArrayIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fMaterialNameMapArrayIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fMaterialNameMapArrayIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
  end else begin
   result.Num:=-1;
  end;
@@ -3409,7 +3746,11 @@ end;
 function TPOCAScene3DGroup.getCameraID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
 begin
  if aCountArguments>0 then begin
-  result.Num:=fGroup.fCameraNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fCameraNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fCameraNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
  end else begin
   result.Num:=-1;
  end;
@@ -3418,7 +3759,24 @@ end;
 function TPOCAScene3DGroup.getMeshID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
 begin
  if aCountArguments>0 then begin
-  result.Num:=fGroup.fMeshNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fMeshNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fMeshNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getSkinID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fSkinNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fSkinNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
  end else begin
   result.Num:=-1;
  end;
@@ -3427,7 +3785,37 @@ end;
 function TPOCAScene3DGroup.getNodeID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
 begin
  if aCountArguments>0 then begin
-  result.Num:=fGroup.fNodeNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fNodeNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fNodeNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getAnimationID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fAnimationNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fAnimationNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
+ end else begin
+  result.Num:=-1;
+ end;
+end;
+
+function TPOCAScene3DGroup.getSceneID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+begin
+ if aCountArguments>0 then begin
+  if (aCountArguments<2) or not POCAGetBooleanValue(aContext,aArguments^[1]) then begin
+   result.Num:=fGroup.fSceneNameIndexHashMap[POCAGetStringValue(aContext,aArguments^[0])];
+  end else begin
+   result.Num:=fGroup.fSceneNameIndexHashMapLowerCase[PUCUUTF8LowerCase(POCAGetStringValue(aContext,aArguments^[0]))];
+  end;
  end else begin
   result.Num:=-1;
  end;
@@ -3443,7 +3831,7 @@ begin
    Animation.fName:=POCAGetStringValue(aContext,aArguments^[0]);
   end;
  finally
-  fGroup.fAnimations.Add(Animation);
+  fGroup.AddAnimation(Animation);
  end;
  POCAScene3DGroupAnimation:=TPOCAScene3DGroupAnimation.Create(aContext^.Instance,aContext,nil,nil,false);
  POCAScene3DGroupAnimation.fAnimation:=Animation;
@@ -3454,22 +3842,27 @@ end;
 
 procedure TpvScene3D.TScalarSum.Clear;
 begin
- x:=0.0;
- FactorSum:=0.0;
+ WeightedX:=0.0;
+ WeightedFactorSum:=0.0;
+ AdditiveX:=0.0;
 end;
 
-procedure TpvScene3D.TScalarSum.Add(const aX,aFactor:TpvDouble);
+procedure TpvScene3D.TScalarSum.Add(const aX,aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aX*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aX*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aX*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
 function TpvScene3D.TScalarSum.Get(const aDefaultX:TpvDouble):TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result:=aDefaultX;
+ if IsZero(WeightedFactorSum) then begin
+  result:=aDefaultX+AdditiveX;
  end else begin
-  result:=x/FactorSum;
+  result:=(WeightedX/WeightedFactorSum)+AdditiveX;
  end;
 end;
 
@@ -3477,47 +3870,59 @@ end;
 
 procedure TpvScene3D.TVector2Sum.Clear;
 begin
- x:=0.0;
- y:=0.0;
- FactorSum:=0.0;
+ WeightedX:=0.0;
+ WeightedY:=0.0;
+ WeightedFactorSum:=0.0;
+ AdditiveX:=0.0;
+ AdditiveY:=0.0;
 end;
 
-procedure TpvScene3D.TVector2Sum.Add(const aX,aY,aFactor:TpvDouble);
+procedure TpvScene3D.TVector2Sum.Add(const aX,aY,aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aX*aFactor);
- y:=y+(aY*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aX*aFactor);
+  AdditiveY:=AdditiveY+(aY*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aX*aFactor);
+  WeightedY:=WeightedY+(aY*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
-procedure TpvScene3D.TVector2Sum.Add(const aVector:TpvVector2;const aFactor:TpvDouble);
+procedure TpvScene3D.TVector2Sum.Add(const aVector:TpvVector2;const aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aVector.x*aFactor);
- y:=y+(aVector.y*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aVector.x*aFactor);
+  AdditiveY:=AdditiveY+(aVector.y*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aVector.x*aFactor);
+  WeightedY:=WeightedY+(aVector.y*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
 function TpvScene3D.TVector2Sum.Get(const aDefaultX:TpvDouble;const aDefaultY:TpvDouble):TpvVector2;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result.x:=aDefaultX;
-  result.y:=aDefaultY;
+ if IsZero(WeightedFactorSum) then begin
+  result.x:=aDefaultX+AdditiveX;
+  result.y:=aDefaultY+AdditiveY;
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
  end;
 end;
 
 function TpvScene3D.TVector2Sum.Get(const aDefault:TpvVector2):TpvVector2;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result:=aDefault;
+ if IsZero(WeightedFactorSum) then begin
+  result:=aDefault+TpvVector2.InlineableCreate(AdditiveX,AdditiveY);
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
  end;
 end;
 
@@ -3525,53 +3930,68 @@ end;
 
 procedure TpvScene3D.TVector3Sum.Clear;
 begin
- x:=0.0;
- y:=0.0;
- z:=0.0;
- FactorSum:=0.0;
+ WeightedX:=0.0;
+ WeightedY:=0.0;
+ WeightedZ:=0.0;
+ WeightedFactorSum:=0.0;
+ AdditiveX:=0.0;
+ AdditiveY:=0.0;
+ AdditiveZ:=0.0;
 end;
 
-procedure TpvScene3D.TVector3Sum.Add(const aX,aY,aZ,aFactor:TpvDouble);
+procedure TpvScene3D.TVector3Sum.Add(const aX,aY,aZ,aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aX*aFactor);
- y:=y+(aY*aFactor);
- z:=z+(aZ*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aX*aFactor);
+  AdditiveY:=AdditiveY+(aY*aFactor);
+  AdditiveZ:=AdditiveZ+(aZ*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aX*aFactor);
+  WeightedY:=WeightedY+(aY*aFactor);
+  WeightedZ:=WeightedZ+(aZ*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
-procedure TpvScene3D.TVector3Sum.Add(const aVector:TpvVector3;const aFactor:TpvDouble);
+procedure TpvScene3D.TVector3Sum.Add(const aVector:TpvVector3;const aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aVector.x*aFactor);
- y:=y+(aVector.y*aFactor);
- z:=z+(aVector.z*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aVector.x*aFactor);
+  AdditiveY:=AdditiveY+(aVector.y*aFactor);
+  AdditiveZ:=AdditiveZ+(aVector.z*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aVector.x*aFactor);
+  WeightedY:=WeightedY+(aVector.y*aFactor);
+  WeightedZ:=WeightedZ+(aVector.z*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
 function TpvScene3D.TVector3Sum.Get(const aDefaultX:TpvDouble;const aDefaultY:TpvDouble;const aDefaultZ:TpvDouble):TpvVector3;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result.x:=aDefaultX;
-  result.y:=aDefaultY;
-  result.z:=aDefaultZ;
+ if IsZero(WeightedFactorSum) then begin
+  result.x:=aDefaultX+AdditiveX;
+  result.y:=aDefaultY+AdditiveY;
+  result.z:=aDefaultZ+AdditiveZ;
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
-  result.z:=z*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
+  result.z:=(WeightedZ*Factor)+AdditiveZ;
  end;
 end;
 
 function TpvScene3D.TVector3Sum.Get(const aDefault:TpvVector3):TpvVector3;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result:=aDefault;
+ if IsZero(WeightedFactorSum) then begin
+  result:=aDefault+TpvVector3.InlineableCreate(AdditiveX,AdditiveY,AdditiveZ);
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
-  result.z:=z*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
+  result.z:=(WeightedZ*Factor)+AdditiveZ;
  end;
 end;
 
@@ -3579,60 +3999,123 @@ end;
 
 procedure TpvScene3D.TVector4Sum.Clear;
 begin
- x:=0.0;
- y:=0.0;
- z:=0.0;
- w:=0.0;
- FactorSum:=0.0;
+ WeightedX:=0.0;
+ WeightedY:=0.0;
+ WeightedZ:=0.0;
+ WeightedW:=0.0;
+ WeightedFactorSum:=0.0;
+ AdditiveX:=0.0;
+ AdditiveY:=0.0;
+ AdditiveZ:=0.0;
+ AdditiveW:=0.0;
 end;
 
-procedure TpvScene3D.TVector4Sum.Add(const aX,aY,aZ,aW,aFactor:TpvDouble);
+procedure TpvScene3D.TVector4Sum.Add(const aX,aY,aZ,aW,aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aX*aFactor);
- y:=y+(aY*aFactor);
- z:=z+(aZ*aFactor);
- w:=w+(aW*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aX*aFactor);
+  AdditiveY:=AdditiveY+(aY*aFactor);
+  AdditiveZ:=AdditiveZ+(aZ*aFactor);
+  AdditiveW:=AdditiveW+(aW*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aX*aFactor);
+  WeightedY:=WeightedY+(aY*aFactor);
+  WeightedZ:=WeightedZ+(aZ*aFactor);
+  WeightedW:=WeightedW+(aW*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
-procedure TpvScene3D.TVector4Sum.Add(const aVector:TpvVector4;const aFactor:TpvDouble);
+procedure TpvScene3D.TVector4Sum.Add(const aVector:TpvVector4;const aFactor:TpvDouble;const aAdditive:Boolean);
 begin
- x:=x+(aVector.x*aFactor);
- y:=y+(aVector.y*aFactor);
- z:=z+(aVector.z*aFactor);
- w:=w+(aVector.w*aFactor);
- FactorSum:=FactorSum+aFactor;
+ if aAdditive then begin
+  AdditiveX:=AdditiveX+(aVector.x*aFactor);
+  AdditiveY:=AdditiveY+(aVector.y*aFactor);
+  AdditiveZ:=AdditiveZ+(aVector.z*aFactor);
+  AdditiveW:=AdditiveW+(aVector.w*aFactor);
+ end else begin
+  WeightedX:=WeightedX+(aVector.x*aFactor);
+  WeightedY:=WeightedY+(aVector.y*aFactor);
+  WeightedZ:=WeightedZ+(aVector.z*aFactor);
+  WeightedW:=WeightedW+(aVector.w*aFactor);
+  WeightedFactorSum:=WeightedFactorSum+aFactor;
+ end;
 end;
 
 function TpvScene3D.TVector4Sum.Get(const aDefaultX:TpvDouble;const aDefaultY:TpvDouble;const aDefaultZ:TpvDouble;const aDefaultW:TpvDouble):TpvVector4;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result.x:=aDefaultX;
-  result.y:=aDefaultY;
-  result.z:=aDefaultZ;
-  result.w:=aDefaultW;
+ if IsZero(WeightedFactorSum) then begin
+  result.x:=aDefaultX+AdditiveX;
+  result.y:=aDefaultY+AdditiveY;
+  result.z:=aDefaultZ+AdditiveZ;
+  result.w:=aDefaultW+AdditiveW;
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
-  result.z:=z*Factor;
-  result.w:=w*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
+  result.z:=(WeightedZ*Factor)+AdditiveZ;
+  result.w:=(WeightedW*Factor)+AdditiveW;
  end;
 end;
 
 function TpvScene3D.TVector4Sum.Get(const aDefault:TpvVector4):TpvVector4;
 var Factor:TpvDouble;
 begin
- if IsZero(FactorSum) then begin
-  result:=aDefault;
+ if IsZero(WeightedFactorSum) then begin
+  result:=aDefault+TpvVector4.InlineableCreate(AdditiveX,AdditiveY,AdditiveZ,AdditiveW);
  end else begin
-  Factor:=1.0/FactorSum;
-  result.x:=x*Factor;
-  result.y:=y*Factor;
-  result.z:=z*Factor;
-  result.w:=w*Factor;
+  Factor:=1.0/WeightedFactorSum;
+  result.x:=(WeightedX*Factor)+AdditiveX;
+  result.y:=(WeightedY*Factor)+AdditiveY;
+  result.z:=(WeightedZ*Factor)+AdditiveZ;
+  result.w:=(WeightedW*Factor)+AdditiveW;
  end;
+end;
+
+{ TpvScene3D.TVertex }
+
+class function TpvScene3D.TVertex.Create:TVertex;
+begin
+ FillChar(result,SizeOf(TpvScene3D.TVertex),#0);
+ result.Color0.x:=1.0;
+ result.Color0.y:=1.0;
+ result.Color0.z:=1.0;
+ result.Color0.w:=1.0;
+ result.MorphTargetVertexBaseIndex:=TpvUInt32($ffffffff);
+end;
+
+procedure TpvScene3D.TVertex.SetNormal(const aNormal:TpvVector3);
+begin
+ Normal:=OctEncode(aNormal);
+end;
+
+procedure TpvScene3D.TVertex.SetTangent(const aTangent:TpvVector3);
+begin
+ Tangent:=OctEncode(aTangent);
+end;
+
+procedure TpvScene3D.TVertex.SetTangentSpaceVectors(const aTangent,aBitangent,aNormal:TpvVector3);
+begin
+ Normal:=OctEncode(aNormal);
+ Tangent:=OctEncode(aTangent);
+ if (OctDecode(Normal).Cross(OctDecode(Tangent))).Dot(aBitangent)<0.0 then begin
+  Flags:=Flags or (1 shl 0);
+ end else begin
+  Flags:=Flags and not (1 shl 0);
+ end;
+end;
+
+procedure TpvScene3D.TVertex.SetTangentSpace(const aTangentSpace:TpvMatrix3x3);
+begin
+ SetTangentSpaceVectors(aTangentSpace.Tangent,aTangentSpace.Bitangent,aTangentSpace.Normal);
+end;
+
+function TpvScene3D.TVertex.GetTangentSpace:TpvMatrix3x3;
+begin
+ result.Tangent:=OctDecode(Tangent);
+ result.Normal:=OctDecode(Normal);
+ result.Bitangent:=result.Normal.Cross(result.Tangent)*IfThen((Flags and (1 shl 0))<>0,-1.0,0.0);
 end;
 
 { TpvScene3D.TDebugPrimitiveVertex }
@@ -4811,6 +5294,7 @@ begin
  result:=false;
  if assigned(aStream) then begin
   try
+   fKind:=TpvScene3D.TImage.TKind.ResourceTexture;
    aStream.Seek(0,soBeginning);
    fResourceDataStream.CopyFrom(aStream,aStream.Size);
    LoadData;
@@ -4859,6 +5343,15 @@ begin
  fName:=#0+'DefaultParticleTexture';
  fKind:=TpvScene3D.TImage.TKind.DefaultParticleTexture;
  fResourceDataStream.Clear;
+end;
+
+procedure TpvScene3D.TImage.AssignFromStream(const aName:TpvUTF8String;const aStream:TStream);
+begin
+ fName:=aName;
+ fKind:=TpvScene3D.TImage.TKind.ResourceTexture;
+ fResourceDataStream.Clear;
+ aStream.Seek(0,soBeginning);
+ fResourceDataStream.CopyFrom(aStream,aStream.Size);
 end;
 
 procedure TpvScene3D.TImage.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
@@ -4941,6 +5434,7 @@ begin
  result.MinFilter:=fMinFilter;
  result.MagFilter:=fMagFilter;
  result.MipmapMode:=fMipmapMode;
+ result.MipmapActive:=fMipmapActive;
  result.AddressModeS:=fAddressModeS;
  result.AddressModeT:=fAddressModeT;
 end;
@@ -4951,6 +5445,18 @@ begin
  fMinFilter:=VK_FILTER_LINEAR;
  fMagFilter:=VK_FILTER_LINEAR;
  fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+ fMipmapActive:=false;
+ fAddressModeS:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
+ fAddressModeT:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
+end;
+
+procedure TpvScene3D.TSampler.AssignFromDefaultMipMap;
+begin
+ fName:='';
+ fMinFilter:=VK_FILTER_LINEAR;
+ fMagFilter:=VK_FILTER_LINEAR;
+ fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_LINEAR;
+ fMipmapActive:=true;
  fAddressModeS:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
  fAddressModeT:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
 end;
@@ -4960,32 +5466,39 @@ begin
  fName:=aSourceSampler.Name;
  case aSourceSampler.MinFilter of
   TPasGLTF.TSampler.TMinFilter.None:begin
-   fMinFilter:=VK_FILTER_NEAREST;
-   fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+   fMinFilter:=VK_FILTER_LINEAR;
+   fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_LINEAR;
+   fMipmapActive:=true;
   end;
   TPasGLTF.TSampler.TMinFilter.Nearest:begin
    fMinFilter:=VK_FILTER_NEAREST;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+   fMipmapActive:=false;
   end;
   TPasGLTF.TSampler.TMinFilter.Linear:begin
    fMinFilter:=VK_FILTER_LINEAR;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+   fMipmapActive:=false;
   end;
   TPasGLTF.TSampler.TMinFilter.NearestMipMapNearest:begin
    fMinFilter:=VK_FILTER_NEAREST;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+   fMipmapActive:=true;
   end;
   TPasGLTF.TSampler.TMinFilter.LinearMipMapNearest:begin
    fMinFilter:=VK_FILTER_LINEAR;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+   fMipmapActive:=true;
   end;
   TPasGLTF.TSampler.TMinFilter.NearestMipMapLinear:begin
    fMinFilter:=VK_FILTER_NEAREST;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_LINEAR;
+   fMipmapActive:=true;
   end;
   TPasGLTF.TSampler.TMinFilter.LinearMipMapLinear:begin
    fMinFilter:=VK_FILTER_LINEAR;
    fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_LINEAR;
+   fMipmapActive:=true;
   end;
   else begin
    Assert(false);
@@ -4993,7 +5506,7 @@ begin
  end;
  case aSourceSampler.MagFilter of
   TPasGLTF.TSampler.TMagFilter.None:begin
-   fMagFilter:=VK_FILTER_NEAREST;
+   fMagFilter:=VK_FILTER_LINEAR;
   end;
   TPasGLTF.TSampler.TMagFilter.Nearest:begin
    fMagFilter:=VK_FILTER_NEAREST;
@@ -5058,12 +5571,12 @@ begin
                                           fAddressModeT,
                                           VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                           0.0,
-                                          fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0,
-                                          Max(1.0,fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),
+                                          fMipmapActive and (fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0),
+                                          IfThen(fMipmapActive,Max(1.0,fSceneInstance.fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),1.0),
                                           false,
                                           VK_COMPARE_OP_ALWAYS,
                                           0.0,
-                                          65535.0,
+                                          IfThen(fMipmapActive,VK_LOD_CLAMP_NONE,0.0),
                                           VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
                                           false);
         if fSampler.Handle<>VK_NULL_HANDLE then begin
@@ -6630,6 +7143,15 @@ begin
    end;
   end;
 
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_dispersion'];
+   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.Dispersion.Active:=true;
+    fData.Dispersion.Dispersion:=TPasJSON.GetNumber(JSONObject.Properties['dispersion'],0.0);
+   end;
+  end;
+
  finally
   fSceneInstance.fTextureListLock.Release;
  end;
@@ -6849,6 +7371,11 @@ begin
   end;
  end;
 
+ if fData.Dispersion.Active then begin
+  fShaderData.Flags:=fShaderData.Flags or (1 shl 14);
+  fShaderData.Dispersion:=fData.Dispersion.Dispersion;
+ end;
+
  TPasMPInterlocked.Increment(fGeneration);
 
  if assigned(fSceneInstance) and (fID>0) and (fID<$10000) then begin
@@ -6868,6 +7395,7 @@ begin
  fAABBTreeProxy:=-1;
  fInstanceLight:=nil;
  fDataPointer:=@fData;
+ fGeneration:=0;
 end;
 
 destructor TpvScene3D.TLight.Destroy;
@@ -6907,6 +7435,7 @@ var Position,Direction:TpvVector3;
     Data:TpvScene3D.PLightData;
 begin
  Data:=fDataPointer;
+ fGeneration:=Data^.fGeneration;
  if Data^.fVisible then begin
   Position:=(fMatrix*TpvVector3.Origin).xyz;
   Direction:=(((fMatrix*DownZ).xyz)-Position).Normalize;
@@ -6921,7 +7450,7 @@ begin
      Radius:=Data^.fRange;
     end else begin
      // lightAttenuation *= 1.0 / (currentDistance * currentDistance);
-     Luminance:=Data^.Color.Dot(LinearRGBLuminance);
+     Luminance:=Data^.fColor.Dot(LinearRGBLuminance)*Data^.fIntensity;
      if Luminance>1e-7 then begin
       Radius:=Threshold/Luminance;
       if Radius>1e-7 then begin
@@ -6968,7 +7497,7 @@ begin
   if fAABBTreeProxy<0 then begin
    fAABBTreeProxy:=fSceneInstance.fLightAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
   end else begin
-   fSceneInstance.fLightAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Create(1.0,1.0,1.0));
+   fSceneInstance.fLightAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Null,TpvVector3.AllAxis);
   end;
   TPasMPInterlocked.Increment(fSceneInstance.fLightAABBTreeGeneration);
  end else begin
@@ -7399,8 +7928,9 @@ begin
           (assigned(fVulkanJointBlockBuffer) and ((Max(1,fSceneInstance.fVulkanJointBlockBufferData.Count)*SizeOf(TJointBlock))<=fVulkanJointBlockBuffer.Size)));
 end;
 
-procedure TpvScene3D.TVulkanLongTermStaticBufferData.Update;
+procedure TpvScene3D.TVulkanLongTermStaticBufferData.Update(const aInFlightFrameIndex:TpvSizeInt);
 var GroupInstance:TpvScene3D.TGroup.TInstance;
+    InFlightFrameDataTransferQueue:TpvTransferQueue;
 begin
 
  if assigned(fSceneInstance) and assigned(fSceneInstance.fVulkanDevice) then begin
@@ -7557,7 +8087,7 @@ begin
     fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
                                                       fSceneInstance.fVulkanStagingCommandBuffer,
                                                       fSceneInstance.fVulkanStagingFence,
-                                                      fSceneInstance.fVulkanMorphTargetVertexBufferData.Items[0],
+                                                      fSceneInstance.fVulkanMorphTargetVertexBufferData.ItemArray[0],
                                                       fVulkanMorphTargetVertexBuffer,
                                                       0,
                                                       fSceneInstance.fVulkanMorphTargetVertexBufferData.Count*SizeOf(TMorphTargetVertex));
@@ -7603,6 +8133,17 @@ begin
     end;
    finally
     fSceneInstance.fNewInstanceListLock.Release;
+   end;
+
+   fSceneInstance.fGroupInstanceListLock.Acquire;
+   try
+    for GroupInstance in fSceneInstance.fGroupInstances do begin
+     if GroupInstance.fGroup.Usable then begin
+      GroupInstance.fFrameUploadedMeshContentGenerations[aInFlightFrameIndex]:=GroupInstance.fFramePreparedMeshContentGenerations[aInFlightFrameIndex];
+     end;
+    end;
+   finally
+    fSceneInstance.fGroupInstanceListLock.Release;
    end;
 
    begin
@@ -7711,7 +8252,7 @@ begin
         fSceneInstance.fVulkanDevice.MemoryStaging.Upload(fSceneInstance.fVulkanStagingQueue,
                                                           fSceneInstance.fVulkanStagingCommandBuffer,
                                                           fSceneInstance.fVulkanStagingFence,
-                                                          fSceneInstance.fVulkanMorphTargetVertexBufferData.Items[GroupInstance.fVulkanMorphTargetVertexBufferOffset],
+                                                          fSceneInstance.fVulkanMorphTargetVertexBufferData.ItemArray[GroupInstance.fVulkanMorphTargetVertexBufferOffset],
                                                           fVulkanMorphTargetVertexBuffer,
                                                           GroupInstance.fVulkanMorphTargetVertexBufferOffset*SizeOf(TMorphTargetVertex),
                                                           GroupInstance.fVulkanMorphTargetVertexBufferCount*SizeOf(TMorphTargetVertex));
@@ -7727,6 +8268,8 @@ begin
                                                           GroupInstance.fVulkanJointBlockBufferCount*SizeOf(TJointBlock));
        end;
 
+       GroupInstance.fFrameUploadedMeshContentGenerations[aInFlightFrameIndex]:=GroupInstance.fFramePreparedMeshContentGenerations[aInFlightFrameIndex];
+
       end;
 
      end;
@@ -7737,6 +8280,85 @@ begin
 
    finally
     fSceneInstance.fNewInstanceListLock.Release;
+   end;
+
+   fSceneInstance.fGroupInstanceListLock.Acquire;
+   try
+
+    for GroupInstance in fSceneInstance.fGroupInstances do begin
+
+     if GroupInstance.fGroup.Usable and
+        (GroupInstance.fFrameUploadedMeshContentGenerations[aInFlightFrameIndex]<>GroupInstance.fFramePreparedMeshContentGenerations[aInFlightFrameIndex]) then begin
+
+      GroupInstance.fFrameUploadedMeshContentGenerations[aInFlightFrameIndex]:=GroupInstance.fFramePreparedMeshContentGenerations[aInFlightFrameIndex];
+
+      InFlightFrameDataTransferQueue:=fSceneInstance.fInFlightFrameDataTransferQueues[aInFlightFrameIndex];
+
+      if GroupInstance.fVulkanVertexBufferCount>0 then begin
+
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanDynamicVertexBufferData.Items[GroupInstance.fVulkanVertexBufferOffset],
+                                            fVulkanDynamicVertexBuffer,
+                                            GroupInstance.fVulkanVertexBufferOffset*SizeOf(TGPUDynamicVertex),
+                                            GroupInstance.fVulkanVertexBufferCount*SizeOf(TGPUDynamicVertex));
+
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanStaticVertexBufferData.Items[GroupInstance.fVulkanVertexBufferOffset],
+                                            fVulkanStaticVertexBuffer,
+                                            GroupInstance.fVulkanVertexBufferOffset*SizeOf(TGPUStaticVertex),
+                                            GroupInstance.fVulkanVertexBufferCount*SizeOf(TGPUStaticVertex));
+      end;
+
+{     if GroupInstance.fVulkanDrawIndexBufferCount>0 then begin
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanDrawIndexBufferData.Items[GroupInstance.fVulkanDrawIndexBufferOffset],
+                                            fVulkanDrawIndexBuffer,
+                                            GroupInstance.fVulkanDrawIndexBufferOffset*SizeOf(TpvUInt32),
+                                            GroupInstance.fVulkanDrawIndexBufferCount*SizeOf(TpvUInt32));
+      end;
+
+      if GroupInstance.fVulkanDrawUniqueIndexBufferCount>0 then begin
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanDrawUniqueIndexBufferData.Items[GroupInstance.fVulkanDrawUniqueIndexBufferOffset],
+                                            fVulkanDrawUniqueIndexBuffer,
+                                            GroupInstance.fVulkanDrawUniqueIndexBufferOffset*SizeOf(TpvUInt32),
+                                            GroupInstance.fVulkanDrawUniqueIndexBufferCount*SizeOf(TpvUInt32));
+      end;
+
+      if GroupInstance.fVulkanMorphTargetVertexBufferCount>0 then begin
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanMorphTargetVertexBufferData.ItemArray[GroupInstance.fVulkanMorphTargetVertexBufferOffset],
+                                            fVulkanMorphTargetVertexBuffer,
+                                            GroupInstance.fVulkanMorphTargetVertexBufferOffset*SizeOf(TMorphTargetVertex),
+                                            GroupInstance.fVulkanMorphTargetVertexBufferCount*SizeOf(TMorphTargetVertex));
+      end;
+
+      if GroupInstance.fVulkanJointBlockBufferCount>0 then begin
+       InFlightFrameDataTransferQueue.Queue(fSceneInstance.fVulkanStagingQueue,
+                                            fSceneInstance.fVulkanStagingCommandBuffer,
+                                            fSceneInstance.fVulkanStagingFence,
+                                            fSceneInstance.fVulkanJointBlockBufferData.Items[GroupInstance.fVulkanJointBlockBufferOffset],
+                                            fVulkanJointBlockBuffer,
+                                            GroupInstance.fVulkanJointBlockBufferOffset*SizeOf(TJointBlock),
+                                            GroupInstance.fVulkanJointBlockBufferCount*SizeOf(TJointBlock));
+      end;}
+
+     end;
+
+    end;
+
+   finally
+    fSceneInstance.fGroupInstanceListLock.Release;
    end;
 
   end;
@@ -7786,7 +8408,7 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvScene3D.TVulkanLongTermStaticBuffers.Update;
+procedure TpvScene3D.TVulkanLongTermStaticBuffers.Update(const aInFlightFrameIndex:TpvSizeInt);
 var Index:TpvSizeInt;
 begin
  if not fBufferDataArray[fCurrentIndex].Check then begin
@@ -7796,7 +8418,7 @@ begin
   end;
  end;
  fBufferData:=fBufferDataArray[fCurrentIndex];
- fBufferData.Update;
+ fBufferData.Update(aInFlightFrameIndex);
  for Index:=0 to MaxInFlightFrames-1 do begin
   if Index<>fCurrentIndex then begin
    fBufferDataArray[Index].UpdateReleaseFrameCounter;
@@ -7854,7 +8476,7 @@ begin
    FreeAndNil(fVulkanComputeDescriptorPool);
 
    for Group in fSceneInstance.fGroups do begin
-    if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
+    if Group.Usable then begin
      for GroupInstance in Group.fInstances do begin
       for GroupInstanceNodeIndex:=0 to length(GroupInstance.fNodes)-1 do begin
        GroupInstanceNode:=@GroupInstance.fNodes[GroupInstanceNodeIndex];
@@ -8203,6 +8825,33 @@ end;
 
 { TpvScene3D.TGroup.TAnimation.TChannel }
 
+constructor TpvScene3D.TGroup.TAnimation.TChannel.Create;
+begin
+ inherited Create;
+ fName:='';
+ fTarget:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget.None;
+ fTargetPointer:='';
+ fTargetIndex:=-1;
+ fTargetSubIndex:=-1;
+ fTargetInstanceIndex:=-1;
+ fInterpolation:=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear;
+ fInputTimeArray:=nil;
+ fOutputScalarArray:=nil;
+ fOutputVector2Array:=nil;
+ fOutputVector3Array:=nil;
+ fOutputVector4Array:=nil;
+end;
+
+destructor TpvScene3D.TGroup.TAnimation.TChannel.Destroy;
+begin
+ fInputTimeArray:=nil;
+ fOutputScalarArray:=nil;
+ fOutputVector2Array:=nil;
+ fOutputVector3Array:=nil;
+ fOutputVector4Array:=nil;
+ inherited Destroy;
+end;
+
 procedure TpvScene3D.TGroup.TAnimation.TChannel.SetTarget(const aTargetPath:TpvUTF8String;const aTargetNode:TpvSizeInt);
 var StringPosition,StartStringPosition:TpvSizeInt;
     TargetPointerString,TargetPointerSubString:TpvUTF8String;
@@ -8211,22 +8860,22 @@ var StringPosition,StartStringPosition:TpvSizeInt;
     TextureRawIndex:TpvScene3D.TTextureIndex;
 begin
 
- TargetIndex:=-1;
+ fTargetIndex:=-1;
 
- TargetSubIndex:=-1;
+ fTargetSubIndex:=-1;
 
  if aTargetPath='translation' then begin
-  Target:=TAnimation.TChannel.TTarget.Translation;
-  TargetIndex:=aTargetNode;
+  fTarget:=TAnimation.TChannel.TTarget.Translation;
+  fTargetIndex:=aTargetNode;
  end else if aTargetPath='rotation' then begin
-  Target:=TAnimation.TChannel.TTarget.Rotation;
-  TargetIndex:=aTargetNode;
+  fTarget:=TAnimation.TChannel.TTarget.Rotation;
+  fTargetIndex:=aTargetNode;
  end else if aTargetPath='scale' then begin
-  Target:=TAnimation.TChannel.TTarget.Scale;
-  TargetIndex:=aTargetNode;
+  fTarget:=TAnimation.TChannel.TTarget.Scale;
+  fTargetIndex:=aTargetNode;
  end else if aTargetPath='weights' then begin
-  Target:=TAnimation.TChannel.TTarget.Weights;
-  TargetIndex:=aTargetNode;
+  fTarget:=TAnimation.TChannel.TTarget.Weights;
+  fTargetIndex:=aTargetNode;
  end else if (length(aTargetPath)>=8) and
              (aTargetPath[1]='p') and
              (aTargetPath[2]='o') and
@@ -8237,11 +8886,11 @@ begin
              (aTargetPath[7]='r') and
              (aTargetPath[8]='/') then begin
   if (length(aTargetPath)>=9) and (aTargetPath[9]='/') then begin
-   TargetPointer:=copy(aTargetPath,9,length(aTargetPath)-8);
+   fTargetPointer:=copy(aTargetPath,9,length(aTargetPath)-8);
   end else begin
-   TargetPointer:=copy(aTargetPath,8,length(aTargetPath)-7);
+   fTargetPointer:=copy(aTargetPath,8,length(aTargetPath)-7);
   end;
-  TargetPointerString:=TargetPointer;
+  TargetPointerString:=fTargetPointer;
   TargetPointerStrings:=nil;
   try
    StringPosition:=1;
@@ -8261,52 +8910,52 @@ begin
    if length(TargetPointerStrings)>0 then begin
     if TargetPointerStrings[0]='nodes' then begin
      if length(TargetPointerStrings)>2 then begin
-      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      fTargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
       if TargetPointerStrings[2]='rotation' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerNodeRotation;
+       fTarget:=TAnimation.TChannel.TTarget.PointerNodeRotation;
       end else if TargetPointerStrings[2]='scale' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerNodeScale;
+       fTarget:=TAnimation.TChannel.TTarget.PointerNodeScale;
       end else if TargetPointerStrings[2]='translation' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerNodeTranslation;
+       fTarget:=TAnimation.TChannel.TTarget.PointerNodeTranslation;
       end else if TargetPointerStrings[2]='weights' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerNodeWeights;
+       fTarget:=TAnimation.TChannel.TTarget.PointerNodeWeights;
       end;
      end;
     end else if TargetPointerStrings[0]='meshes' then begin
      if length(TargetPointerStrings)>2 then begin
-      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      fTargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
       if TargetPointerStrings[2]='weights' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerMeshWeights;
+       fTarget:=TAnimation.TChannel.TTarget.PointerMeshWeights;
       end;
      end;
     end else if TargetPointerStrings[0]='cameras' then begin
      if length(TargetPointerStrings)>3 then begin
-      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      fTargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
       if TargetPointerStrings[2]='orthographic' then begin
        if TargetPointerStrings[3]='xmag' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag;
        end else if TargetPointerStrings[3]='ymag' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraOrthographicYMag;
        end else if TargetPointerStrings[3]='zfar' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZFar;
        end else if TargetPointerStrings[3]='znear' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
        end;
       end else if TargetPointerStrings[2]='perspective' then begin
        if TargetPointerStrings[3]='aspectRatio' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveAspectRatio;
        end else if TargetPointerStrings[3]='yfov' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov;
        end else if TargetPointerStrings[3]='zfar' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar;
        end else if TargetPointerStrings[3]='znear' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear;
+        fTarget:=TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear;
        end;
       end;
      end;
     end else if TargetPointerStrings[0]='materials' then begin
      if length(TargetPointerStrings)>2 then begin
-      TargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
+      fTargetIndex:=StrToIntDef(TargetPointerStrings[1],0);
       if (length(TargetPointerStrings)>4) and
          ((TargetPointerStrings[length(TargetPointerStrings)-3]='extensions') and
           (TargetPointerStrings[length(TargetPointerStrings)-2]='KHR_texture_transform') and
@@ -8391,35 +9040,35 @@ begin
         end;
        end;
        if TextureRawIndex<>TpvScene3D.TTextureIndex.None then begin
-        Target:=ChannelTarget;
-        TargetSubIndex:=TpvSizeInt(TextureRawIndex);
+        fTarget:=ChannelTarget;
+        fTargetSubIndex:=TpvSizeInt(TextureRawIndex);
        end;
       end else if TargetPointerStrings[2]='pbrMetallicRoughness' then begin
        if length(TargetPointerStrings)>3 then begin
         if TargetPointerStrings[3]='baseColorFactor' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor;
+         fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor;
         end else if TargetPointerStrings[3]='metallicFactor' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor;
+         fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor;
         end else if TargetPointerStrings[3]='roughnessFactor' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor;
+         fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor;
         end else if TargetPointerStrings[3]='znear' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
+         fTarget:=TAnimation.TChannel.TTarget.PointerCameraOrthographicZNear;
         end;
        end;
       end else if TargetPointerStrings[2]='alphaCutoff' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff;
+       fTarget:=TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff;
       end else if TargetPointerStrings[2]='emissiveFactor' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor;
+       fTarget:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor;
       end else if TargetPointerStrings[2]='normalTexture' then begin
        if length(TargetPointerStrings)>3 then begin
         if TargetPointerStrings[3]='scale' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale;
+         fTarget:=TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale;
         end;
        end;
       end else if TargetPointerStrings[2]='occlusionTexture' then begin
        if length(TargetPointerStrings)>3 then begin
         if TargetPointerStrings[3]='strength' then begin
-         Target:=TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength;
+         fTarget:=TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength;
         end;
        end;
       end else if TargetPointerStrings[2]='extensions' then begin
@@ -8427,57 +9076,57 @@ begin
         if TargetPointerStrings[3]='KHR_materials_emissive_strength' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='emissiveStrength' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_ior' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='ior' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialIOR;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialIOR;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_transmission' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='transmissionFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_iridescence' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='iridescenceFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor;
           end else if TargetPointerStrings[4]='iridescenceIor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor;
           end else if TargetPointerStrings[4]='iridescenceThicknessMinimum' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum;
           end else if TargetPointerStrings[4]='iridescenceThicknessMaximum' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_volume' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='attenuationColor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor;
           end else if TargetPointerStrings[4]='attenuationDistance' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance;
           end else if TargetPointerStrings[4]='thicknessFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_sheen' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='sheenColorFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor;
           end else if TargetPointerStrings[4]='sheenRoughnessFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_specular' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='specularFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor;
           end else if TargetPointerStrings[4]='specularColorFactor' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor;
           end;
          end;
         end else if TargetPointerStrings[3]='KHR_materials_transform' then begin
@@ -8485,9 +9134,15 @@ begin
         end else if TargetPointerStrings[3]='KHR_materials_anisotropy' then begin
          if length(TargetPointerStrings)>4 then begin
           if TargetPointerStrings[4]='anisotropyStrength' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength;
           end else if TargetPointerStrings[4]='anisotropyRotation' then begin
-           Target:=TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation;
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation;
+          end;
+         end;
+        end else if TargetPointerStrings[3]='KHR_materials_dispersion' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='dispersion' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion;
           end;
          end;
         end;
@@ -8498,18 +9153,18 @@ begin
      if (length(TargetPointerStrings)>4) and
         (TargetPointerStrings[1]='KHR_lights_punctual') and
         (TargetPointerStrings[2]='lights') then begin
-      TargetIndex:=StrToIntDef(TargetPointerStrings[3],0);
+      fTargetIndex:=StrToIntDef(TargetPointerStrings[3],0);
       if TargetPointerStrings[4]='color' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightColor;
+       fTarget:=TAnimation.TChannel.TTarget.PointerPunctualLightColor;
       end else if TargetPointerStrings[4]='intensity' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightIntensity;
+       fTarget:=TAnimation.TChannel.TTarget.PointerPunctualLightIntensity;
       end else if TargetPointerStrings[4]='range' then begin
-       Target:=TAnimation.TChannel.TTarget.PointerPunctualLightRange;
+       fTarget:=TAnimation.TChannel.TTarget.PointerPunctualLightRange;
       end else if (TargetPointerStrings[4]='spot') and (length(TargetPointerStrings)>5) then begin
        if TargetPointerStrings[5]='innerConeAngle' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle;
+        fTarget:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle;
        end else if TargetPointerStrings[5]='outerConeAngle' then begin
-        Target:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle;
+        fTarget:=TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle;
        end;
       end;
      end;
@@ -8527,11 +9182,11 @@ end;
 procedure TpvScene3D.TGroup.TAnimation.TChannel.SetInterpolation(const aInterpolation:TpvUTF8String);
 begin
  if aInterpolation='cubicspline' then begin
-  Interpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
+  fInterpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
  end else if aInterpolation='step' then begin
-  Interpolation:=TAnimation.TChannel.TInterpolation.Step;
+  fInterpolation:=TAnimation.TChannel.TInterpolation.Step;
  end else{if aInterpolation='linear' then}begin
-  Interpolation:=TAnimation.TChannel.TInterpolation.Linear;
+  fInterpolation:=TAnimation.TChannel.TInterpolation.Linear;
  end;
 end;
 
@@ -8541,14 +9196,14 @@ constructor TpvScene3D.TGroup.TAnimation.Create(const aGroup:TGroup;const aIndex
 begin
  inherited Create(aGroup);
  fIndex:=aIndex;
- fChannels:=nil;
- fDefaultChannels:=nil;
+ fChannels:=TpvScene3D.TGroup.TAnimation.TChannels.Create(true);
+ fDefaultChannels:=TpvScene3D.TGroup.TAnimation.TDefaultChannels.Create(true);
 end;
 
 destructor TpvScene3D.TGroup.TAnimation.Destroy;
 begin
- fChannels:=nil;
- fDefaultChannels:=nil;
+ FreeAndNil(fChannels);
+ FreeAndNil(fDefaultChannels);
  inherited Destroy;
 end;
 
@@ -8556,7 +9211,7 @@ procedure TpvScene3D.TGroup.TAnimation.AssignFromGLTF(const aSourceDocument:TPas
 var ChannelIndex,ValueIndex:TPasGLTFSizeInt;
     SourceAnimationChannel:TPasGLTF.TAnimation.TChannel;
     SourceAnimationSampler:TPasGLTF.TAnimation.TSampler;
-    DestinationAnimationChannel:TAnimation.PChannel;
+    DestinationAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
     OutputVector2Array:TPasGLTF.TVector2DynamicArray;
     OutputVector3Array:TPasGLTF.TVector3DynamicArray;
     OutputVector4Array:TPasGLTF.TVector4DynamicArray;
@@ -8567,29 +9222,30 @@ begin
 
  fName:=aSourceAnimation.Name;
 
- SetLength(fChannels,aSourceAnimation.Channels.Count);
+ fChannels.Clear;
 
  for ChannelIndex:=0 to aSourceAnimation.Channels.Count-1 do begin
 
   SourceAnimationChannel:=aSourceAnimation.Channels[ChannelIndex];
 
-  DestinationAnimationChannel:=@fChannels[ChannelIndex];
+  DestinationAnimationChannel:=TpvScene3D.TGroup.TAnimation.TChannel.Create;
+  fChannels.Add(DestinationAnimationChannel);
 
-  DestinationAnimationChannel^.TargetIndex:=-1;
+  DestinationAnimationChannel.fTargetIndex:=-1;
 
-  DestinationAnimationChannel^.TargetSubIndex:=-1;
+  DestinationAnimationChannel.fTargetSubIndex:=-1;
 
   if (SourceAnimationChannel.Target.Path='translation') or
      (SourceAnimationChannel.Target.Path='rotation') or
      (SourceAnimationChannel.Target.Path='scale') or
      (SourceAnimationChannel.Target.Path='weights') then begin
-   DestinationAnimationChannel^.SetTarget(SourceAnimationChannel.Target.Path,SourceAnimationChannel.Target.Node);
+   DestinationAnimationChannel.SetTarget(SourceAnimationChannel.Target.Path,SourceAnimationChannel.Target.Node);
   end else if SourceAnimationChannel.Target.Path='pointer' then begin
-   DestinationAnimationChannel^.Target:=TAnimation.TChannel.TTarget.Pointer_;
+   DestinationAnimationChannel.fTarget:=TAnimation.TChannel.TTarget.Pointer_;
    if assigned(SourceAnimationChannel.Target.Extensions) then begin
     JSONItem:=SourceAnimationChannel.Target.Extensions.Properties['KHR_animation_pointer'];
     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-     DestinationAnimationChannel^.SetTarget('pointer/'+TPasJSON.GetString(TPasJSONItemObject(JSONItem).Properties['pointer'],''),-1);
+     DestinationAnimationChannel.SetTarget('pointer/'+TPasJSON.GetString(TPasJSONItemObject(JSONItem).Properties['pointer'],''),-1);
     end;
    end;
   end else begin
@@ -8600,13 +9256,13 @@ begin
    SourceAnimationSampler:=aSourceAnimation.Samplers[SourceAnimationChannel.Sampler];
    case SourceAnimationSampler.Interpolation of
     TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.Linear:begin
-     DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.Linear;
+     DestinationAnimationChannel.fInterpolation:=TAnimation.TChannel.TInterpolation.Linear;
     end;
     TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.Step:begin
-     DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.Step;
+     DestinationAnimationChannel.fInterpolation:=TAnimation.TChannel.TInterpolation.Step;
     end;
     TPasGLTF.TAnimation.TSampler.TSamplerInterpolationType.CubicSpline:begin
-     DestinationAnimationChannel^.Interpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
+     DestinationAnimationChannel.fInterpolation:=TAnimation.TChannel.TInterpolation.CubicSpline;
     end;
     else begin
      raise EPasGLTF.Create('Non-supported animation sampler interpolation method type');
@@ -8615,22 +9271,22 @@ begin
    begin
     OutputScalar64Array:=aSourceDocument.Accessors[SourceAnimationSampler.Input].DecodeAsDoubleArray(false);
     try
-     SetLength(DestinationAnimationChannel^.InputTimeArray,length(OutputScalar64Array));
+     SetLength(DestinationAnimationChannel.fInputTimeArray,length(OutputScalar64Array));
      if length(OutputScalar64Array)>0 then begin
-      Move(OutputScalar64Array[0],DestinationAnimationChannel^.InputTimeArray[0],length(OutputScalar64Array)*SizeOf(TpvDouble));
+      Move(OutputScalar64Array[0],DestinationAnimationChannel.fInputTimeArray[0],length(OutputScalar64Array)*SizeOf(TpvDouble));
      end;
     finally
      OutputScalar64Array:=nil;
     end;
    end;
-   case DestinationAnimationChannel^.Target of
+   case DestinationAnimationChannel.fTarget of
     TAnimation.TChannel.TTarget.PointerTextureOffset,
     TAnimation.TChannel.TTarget.PointerTextureScale:begin
      OutputVector2Array:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsVector2Array(false);
      try
-      SetLength(DestinationAnimationChannel^.OutputVector2Array,length(OutputVector2Array));
+      SetLength(DestinationAnimationChannel.fOutputVector2Array,length(OutputVector2Array));
       if length(OutputVector2Array)>0 then begin
-       Move(OutputVector2Array[0],DestinationAnimationChannel^.OutputVector2Array[0],length(OutputVector2Array)*SizeOf(TpvVector2));
+       Move(OutputVector2Array[0],DestinationAnimationChannel.fOutputVector2Array[0],length(OutputVector2Array)*SizeOf(TpvVector2));
       end;
      finally
       OutputVector2Array:=nil;
@@ -8647,9 +9303,9 @@ begin
     TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
      OutputVector3Array:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsVector3Array(false);
      try
-      SetLength(DestinationAnimationChannel^.OutputVector3Array,length(OutputVector3Array));
+      SetLength(DestinationAnimationChannel.fOutputVector3Array,length(OutputVector3Array));
       if length(OutputVector3Array)>0 then begin
-       Move(OutputVector3Array[0],DestinationAnimationChannel^.OutputVector3Array[0],length(OutputVector3Array)*SizeOf(TpvVector3));
+       Move(OutputVector3Array[0],DestinationAnimationChannel.fOutputVector3Array[0],length(OutputVector3Array)*SizeOf(TpvVector3));
       end;
      finally
       OutputVector3Array:=nil;
@@ -8660,12 +9316,12 @@ begin
     TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
      OutputVector4Array:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsVector4Array(false);
      try
-      for ValueIndex:=0 to length(DestinationAnimationChannel^.OutputVector4Array)-1 do begin
-       TpvVector4(pointer(@OutputVector4Array[ValueIndex])^):=TpvVector4(pointer(@DestinationAnimationChannel^.OutputVector4Array[ValueIndex])^).Normalize;
+      for ValueIndex:=0 to length(DestinationAnimationChannel.fOutputVector4Array)-1 do begin
+       TpvVector4(pointer(@OutputVector4Array[ValueIndex])^):=TpvVector4(pointer(@DestinationAnimationChannel.fOutputVector4Array[ValueIndex])^).Normalize;
       end;
-      SetLength(DestinationAnimationChannel^.OutputVector4Array,length(OutputVector4Array));
+      SetLength(DestinationAnimationChannel.fOutputVector4Array,length(OutputVector4Array));
       if length(OutputVector4Array)>0 then begin
-       Move(OutputVector4Array[0],DestinationAnimationChannel^.OutputVector4Array[0],length(OutputVector4Array)*SizeOf(TpvVector4));
+       Move(OutputVector4Array[0],DestinationAnimationChannel.fOutputVector4Array[0],length(OutputVector4Array)*SizeOf(TpvVector4));
       end;
      finally
       OutputVector4Array:=nil;
@@ -8706,12 +9362,13 @@ begin
     TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
     TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle,
     TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
-    TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation:begin
+    TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
+    TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion:begin
      OutputScalarArray:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsFloatArray(false);
      try
-      SetLength(DestinationAnimationChannel^.OutputScalarArray,length(OutputScalarArray));
+      SetLength(DestinationAnimationChannel.fOutputScalarArray,length(OutputScalarArray));
       if length(OutputScalarArray)>0 then begin
-       Move(OutputScalarArray[0],DestinationAnimationChannel^.OutputScalarArray[0],length(OutputScalarArray)*SizeOf(TpvFloat));
+       Move(OutputScalarArray[0],DestinationAnimationChannel.fOutputScalarArray[0],length(OutputScalarArray)*SizeOf(TpvFloat));
       end;
      finally
       OutputScalarArray:=nil;
@@ -8731,16 +9388,16 @@ end;
 
 function TpvScene3D.TGroup.TAnimation.GetAnimationBeginTime:TpvDouble;
 var Index:TpvSizeInt;
-    Channel:TAnimation.PChannel;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
 begin
  result:=0.0;
- for Index:=0 to length(fChannels)-1 do begin
-  Channel:=@fChannels[Index];
-  if length(Channel^.InputTimeArray)>0 then begin
+ for Index:=0 to fChannels.Count-1 do begin
+  Channel:=fChannels[Index];
+  if length(Channel.fInputTimeArray)>0 then begin
    if Index=0 then begin
-    result:=Channel^.InputTimeArray[0];
+    result:=Channel.fInputTimeArray[0];
    end else begin
-    result:=Min(result,Channel^.InputTimeArray[0]);
+    result:=Min(result,Channel.fInputTimeArray[0]);
    end;
   end;
  end;
@@ -8748,16 +9405,16 @@ end;
 
 function TpvScene3D.TGroup.TAnimation.GetAnimationEndTime:TpvDouble;
 var Index:TpvSizeInt;
-    Channel:TAnimation.PChannel;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
 begin
  result:=1.0;
- for Index:=0 to length(fChannels)-1 do begin
-  Channel:=@fChannels[Index];
-  if length(Channel^.InputTimeArray)>0 then begin
+ for Index:=0 to fChannels.Count-1 do begin
+  Channel:=fChannels[Index];
+  if length(Channel.fInputTimeArray)>0 then begin
    if Index=0 then begin
-    result:=Channel^.InputTimeArray[length(Channel^.InputTimeArray)-1];
+    result:=Channel.fInputTimeArray[length(Channel.fInputTimeArray)-1];
    end else begin
-    result:=Max(result,Channel^.InputTimeArray[length(Channel^.InputTimeArray)-1]);
+    result:=Max(result,Channel.fInputTimeArray[length(Channel.fInputTimeArray)-1]);
    end;
   end;
  end;
@@ -8769,6 +9426,7 @@ constructor TpvScene3D.TGroup.TCamera.Create(const aGroup:TGroup;const aIndex:Tp
 begin
  inherited Create(aGroup);
  fIndex:=aIndex;
+ fPointerToCameraData:=@fCameraData;
 end;
 
 destructor TpvScene3D.TGroup.TCamera.Destroy;
@@ -8806,6 +9464,136 @@ begin
 
 end;
 
+{ TpvScene3D.TGroup.TMesh.TPrimitive.TTarget }
+
+constructor TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.Create;
+begin
+ inherited Create;
+ fVertices:=TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.TTargetVertices.Create;
+end;
+
+destructor TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.Destroy;
+begin
+ FreeAndNil(fVertices);
+ inherited Destroy;
+end;
+
+{ TpvScene3D.TGroup.TMesh.TPrimitive }
+
+constructor TpvScene3D.TGroup.TMesh.TPrimitive.Create(const aMesh:TMesh);
+begin
+ inherited Create;
+
+ fMesh:=aMesh;
+
+ fMaterial:=nil;
+
+ fMaterialID:=-1;
+
+ fTargets:=TpvScene3D.TGroup.TMesh.TPrimitive.TTargets.Create(true);
+
+ fMorphTargetBaseIndex:=0;
+
+ fStartBufferVertexOffset:=0;
+
+ fStartBufferIndexOffset:=0;
+
+ fCountVertices:=0;
+
+ fCountIndices:=0;
+
+ fNodeMeshPrimitiveInstances:=TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstances.Create(true);
+
+ fTemporaryVertices:=nil;
+
+ fTemporaryIndices:=nil;
+
+end;
+
+destructor TpvScene3D.TGroup.TMesh.TPrimitive.Destroy;
+begin
+
+ FreeAndNil(fTemporaryVertices);
+
+ FreeAndNil(fTemporaryIndices);
+
+ FreeAndNil(fNodeMeshPrimitiveInstances);
+
+ FreeAndNil(fTargets);
+
+ inherited Destroy;
+
+end;
+
+function TpvScene3D.TGroup.TMesh.TPrimitive.AddDirectVertex(const aVertex:TpvScene3D.TVertex):TpvSizeInt;
+begin
+ if fCountVertices=0 then begin
+  fStartBufferVertexOffset:=fMesh.fGroup.fVertices.Count;
+ end;
+ result:=fMesh.fGroup.fVertices.Add(aVertex);
+ inc(fCountVertices);
+end;
+
+function TpvScene3D.TGroup.TMesh.TPrimitive.AddDirectIndex(const aIndex:TpvUInt32):TpvSizeInt;
+begin
+ if fCountIndices=0 then begin
+  fStartBufferIndexOffset:=fMesh.fGroup.fIndices.Count;
+ end;
+ result:=fMesh.fGroup.fIndices.Add(aIndex);
+ inc(fCountIndices);
+end;
+
+function TpvScene3D.TGroup.TMesh.TPrimitive.AddIndirectVertex:TpvScene3D.PVertex;
+begin
+ if not assigned(fTemporaryVertices) then begin
+  fTemporaryVertices:=TpvScene3D.TGroup.TGroupVertices.Create;
+ end;
+ result:=fTemporaryVertices.AddNew;
+end;
+
+function TpvScene3D.TGroup.TMesh.TPrimitive.AddVertex(const aVertex:TpvScene3D.TVertex):TpvSizeInt;
+begin
+ if not assigned(fTemporaryVertices) then begin
+  fTemporaryVertices:=TpvScene3D.TGroup.TGroupVertices.Create;
+ end;
+ result:=fTemporaryVertices.Add(aVertex);
+end;
+
+function TpvScene3D.TGroup.TMesh.TPrimitive.AddIndex(const aIndex:TpvUInt32):TpvSizeInt;
+begin
+ if not assigned(fTemporaryIndices) then begin
+  fTemporaryIndices:=TpvScene3D.TGroup.TGroupIndices.Create;
+ end;
+ result:=fTemporaryIndices.Add(aIndex);
+end;
+
+procedure TpvScene3D.TGroup.TMesh.TPrimitive.Finish;
+var Index:TpvSizeInt;
+begin
+
+ if assigned(fTemporaryVertices) and assigned(fTemporaryIndices) then begin
+
+  StartBufferVertexOffset:=fMesh.fGroup.fVertices.Count;
+  CountVertices:=fTemporaryVertices.Count;
+  fMesh.fGroup.fVertices.Add(fTemporaryVertices);
+
+  StartBufferIndexOffset:=fMesh.fGroup.fIndices.Count;
+  CountIndices:=fTemporaryIndices.Count;
+  if StartBufferVertexOffset>0 then begin
+   for Index:=0 to fTemporaryIndices.Count-1 do begin
+    inc(fTemporaryIndices.ItemArray[Index],StartBufferVertexOffset);
+   end;
+  end;
+  fMesh.fGroup.fIndices.Add(fTemporaryIndices);
+
+ end;
+
+ FreeAndNil(fTemporaryVertices);
+
+ FreeAndNil(fTemporaryIndices);
+
+end;
+
 { TpvScene3D.TGroup.TMesh }
 
 constructor TpvScene3D.TGroup.TMesh.Create(const aGroup:TGroup;const aIndex:TpvSizeInt);
@@ -8813,14 +9601,18 @@ begin
  inherited Create(aGroup);
  fGroup:=aGroup;
  fIndex:=aIndex;
- fPrimitives:=nil;
+ fWeights:=TpvScene3D.TFloatDynamicArrayList.Create;
+ fPrimitives:=TpvScene3D.TGroup.TMesh.TPrimitives.Create(true);
  fNodeMeshInstances:=0;
- fReferencedByNodes.Initialize;
+ fGeneration:=0;
+ fUpdatedGeneration:=High(TpvUInt64)-1;
+ fReady:=false;
+ fReferencedByNodes:=TpvScene3D.TGroup.TMesh.TReferencedByNodes.Create;
 end;
 
 destructor TpvScene3D.TGroup.TMesh.Destroy;
 var Index:TpvSizeInt;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     EmptyMaterial:TpvScene3D.TMaterial;
 begin
  if assigned(fGroup) and assigned(fGroup.fSceneInstance) then begin
@@ -8828,33 +9620,465 @@ begin
  end else begin
   EmptyMaterial:=nil;
  end;
- for Index:=0 to length(fPrimitives)-1 do begin
-  Primitive:=@fPrimitives[Index];
-  if assigned(Primitive^.Material) then begin
+ for Index:=0 to fPrimitives.Count-1 do begin
+  Primitive:=fPrimitives[Index];
+  if assigned(Primitive.fMaterial) then begin
    try
-    if Primitive^.Material<>EmptyMaterial then begin
+    if Primitive.fMaterial<>EmptyMaterial then begin
      if assigned(fGroup.fSceneInstance.fMaterialListLock) then begin
       fGroup.fSceneInstance.fMaterialListLock.Acquire;
       try
-       Primitive^.Material.DecRef;
+       Primitive.fMaterial.DecRef;
       finally
        fGroup.fSceneInstance.fMaterialListLock.Release;
       end;
      end;
     end;
    finally
-    Primitive^.Material:=nil;
+    Primitive.fMaterial:=nil;
    end;
   end;
  end;
- fPrimitives:=nil;
- fReferencedByNodes.Finalize;
+ FreeAndNil(fPrimitives);
+ FreeAndNil(fWeights);
+ FreeAndNil(fReferencedByNodes);
  inherited Destroy;
+end;
+
+function TpvScene3D.TGroup.TMesh.CreatePrimitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+begin
+ result:=TpvScene3D.TGroup.TMesh.TPrimitive.Create(self);
+ fPrimitives.Add(result);
+end;
+
+procedure TpvScene3D.TGroup.TMesh.CalculateTangentSpace;
+var PrimitiveIndex,
+    VertexIndex,
+    IndexIndex,
+    UntilIndexIndex,
+    PrimitiveTargetIndex,
+    VertexIndex0,
+    VertexIndex1,
+    VertexIndex2:TpvSizeInt;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+    PrimitiveTarget:TpvScene3D.TGroup.TMesh.TPrimitive.TTarget;
+    PrimitiveTargetVertex:TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.PTargetVertex;
+    Vertex:TpvScene3D.PVertex;
+    Positions,Normals,Tangents,Bitangents,TargetPositions,TargetNormals,TargetTangents:TpvVector3Array;
+    TexCoords:TpvVector2Array;
+    Area:TpvScalar;
+    Normal,Tangent,Bitangent,p1p0,p2p0:TpvVector3;
+    t1t0,t2t0:TpvVector2;
+    p0,p1,p2:PpvVector3;
+    t0,t1,t2:PpvVector2;
+begin
+
+ Positions:=nil;
+ Normals:=nil;
+ Tangents:=nil;
+ Bitangents:=nil;
+ TexCoords:=nil;
+ TargetPositions:=nil;
+ TargetNormals:=nil;
+ TargetTangents:=nil;
+ try
+
+  for PrimitiveIndex:=0 to fPrimitives.Count-1 do begin
+
+   Primitive:=fPrimitives[PrimitiveIndex];
+
+   if Primitive.PrimitiveTopology=TpvScene3D.TPrimitiveTopology.Triangles then begin
+
+    if length(Positions)<Primitive.CountVertices then begin
+     SetLength(Positions,Primitive.CountVertices*2);
+     SetLength(Normals,Primitive.CountVertices*2);
+     SetLength(Tangents,Primitive.CountVertices*2);
+     SetLength(Bitangents,Primitive.CountVertices*2);
+     SetLength(TexCoords,Primitive.CountVertices*2);
+    end;
+
+    for VertexIndex:=Primitive.StartBufferVertexOffset to (Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+     Vertex:=@Group.Vertices.ItemArray[VertexIndex];
+     Positions[VertexIndex-Primitive.StartBufferVertexOffset]:=Vertex^.Position;
+     Normals[VertexIndex-Primitive.StartBufferVertexOffset]:=TpvVector3.Null;
+     Tangents[VertexIndex-Primitive.StartBufferVertexOffset]:=TpvVector3.Null;
+     Bitangents[VertexIndex-Primitive.StartBufferVertexOffset]:=TpvVector3.Null;
+     TexCoords[VertexIndex-Primitive.StartBufferVertexOffset]:=Vertex^.TexCoord0;
+    end;
+
+    IndexIndex:=Primitive.StartBufferIndexOffset;
+    UntilIndexIndex:=Primitive.StartBufferIndexOffset+Primitive.CountIndices;
+    while (IndexIndex+2)<UntilIndexIndex do begin
+     VertexIndex0:=Group.fIndices.ItemArray[IndexIndex+0]-Primitive.StartBufferVertexOffset;
+     VertexIndex1:=Group.fIndices.ItemArray[IndexIndex+1]-Primitive.StartBufferVertexOffset;
+     VertexIndex2:=Group.fIndices.ItemArray[IndexIndex+2]-Primitive.StartBufferVertexOffset;
+     if (VertexIndex0>=0) and (VertexIndex0<Primitive.fCountVertices) and
+        (VertexIndex1>=0) and (VertexIndex1<Primitive.fCountVertices) and
+        (VertexIndex2>=0) and (VertexIndex2<Primitive.fCountVertices) then begin
+      Normal:=(Positions[VertexIndex1]-Positions[VertexIndex0]).Cross(Positions[VertexIndex2]-Positions[VertexIndex1]); // non-normalized weighted normal
+      Normals[VertexIndex0]:=Normals[VertexIndex0]+Normal;
+      Normals[VertexIndex1]:=Normals[VertexIndex1]+Normal;
+      Normals[VertexIndex2]:=Normals[VertexIndex2]+Normal;
+     end;
+     inc(IndexIndex,3);
+    end;
+
+    for VertexIndex:=0 to Primitive.CountVertices-1 do begin
+     Normals[VertexIndex]:=Normals[VertexIndex].Normalize;
+    end;
+
+    IndexIndex:=Primitive.StartBufferIndexOffset;
+    UntilIndexIndex:=Primitive.StartBufferIndexOffset+Primitive.CountIndices;
+    while (IndexIndex+2)<UntilIndexIndex do begin
+     VertexIndex0:=Group.fIndices.ItemArray[IndexIndex+0]-Primitive.StartBufferVertexOffset;
+     VertexIndex1:=Group.fIndices.ItemArray[IndexIndex+1]-Primitive.StartBufferVertexOffset;
+     VertexIndex2:=Group.fIndices.ItemArray[IndexIndex+2]-Primitive.StartBufferVertexOffset;
+     if (VertexIndex0>=0) and (VertexIndex0<Primitive.fCountVertices) and
+        (VertexIndex1>=0) and (VertexIndex1<Primitive.fCountVertices) and
+        (VertexIndex2>=0) and (VertexIndex2<Primitive.fCountVertices) then begin
+      p0:=@Positions[VertexIndex0];
+      p1:=@Positions[VertexIndex1];
+      p2:=@Positions[VertexIndex2];
+      t0:=@TexCoords[VertexIndex0];
+      t1:=@TexCoords[VertexIndex1];
+      t2:=@TexCoords[VertexIndex2];
+      p1p0:=p1^-p0^;
+      p2p0:=p2^-p0^;
+      t1t0:=t1^-t0^;
+      t2t0:=t2^-t0^;
+      Normal:=(p1p0.Cross(p2p0)).Normalize;
+      if Normals[VertexIndex0].Dot(Normal)<0.0 then begin
+       Normal:=-Normal;
+      end;
+{$if true}
+      Area:=(t2t0[0]*t1t0[1])-(t1t0[0]*t2t0[1]);
+      if IsZero(Area) then begin
+       Tangent[0]:=((t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]));
+       Tangent[1]:=((t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]));
+       Tangent[2]:=((t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]));
+       Bitangent[0]:=((t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]));
+       Bitangent[1]:=((t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]));
+       Bitangent[2]:=((t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]));
+       Tangent:=Tangent.Normalize;
+       Bitangent:=Bitangent.Normalize;
+      end else begin
+       Tangent[0]:=((t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]))/Area;
+       Tangent[1]:=((t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]))/Area;
+       Tangent[2]:=((t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]))/Area;
+       Bitangent[0]:=((t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]))/Area;
+       Bitangent[1]:=((t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]))/Area;
+       Bitangent[2]:=((t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]))/Area;
+      end;
+      if (Tangent.Cross(Bitangent)).Dot(Normal)<0.0 then begin
+       Tangent:=-Tangent;
+       Bitangent:=-Bitangent;
+      end;
+{$else}
+      Tangent[0]:=(t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]);
+      Tangent[1]:=(t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]);
+      Tangent[2]:=(t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]);
+      Bitangent[0]:=(t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]);
+      Bitangent[1]:=(t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]);
+      Bitangent[2]:=(t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]);
+      if (Tangent.Cross(Bitangent)).Dot(Normal)<0.0 then begin
+       Tangent:=-Tangent.xyz;
+       Bitangent:=-Bitangent;
+      end;
+{$ifend}
+      Tangents[VertexIndex0]:=Tangents[VertexIndex0]+Tangent;
+      Tangents[VertexIndex1]:=Tangents[VertexIndex1]+Tangent;
+      Tangents[VertexIndex2]:=Tangents[VertexIndex2]+Tangent;
+      Bitangents[VertexIndex0]:=Bitangents[VertexIndex0]+Bitangent;
+      Bitangents[VertexIndex1]:=Bitangents[VertexIndex1]+Bitangent;
+      Bitangents[VertexIndex2]:=Bitangents[VertexIndex2]+Bitangent;
+     end;
+     inc(IndexIndex,3);
+    end;
+
+    for VertexIndex:=0 to Primitive.CountVertices-1 do begin
+     Normal:=Normals[VertexIndex];
+     Tangent:=Tangents[VertexIndex].xyz;
+     Tangent:=(Tangent-(Normal*Tangent.Dot(Normal))).Normalize;
+     Bitangent:=Bitangents[VertexIndex].xyz;
+     Bitangent:=(Bitangent-(Normal*Bitangent.Dot(Normal))).Normalize;
+     Tangents[VertexIndex]:=Tangent;
+     Bitangents[VertexIndex]:=Bitangent;
+{    if (Normal.Cross(Tangent)).Dot(Bitangent)<0.0 then begin
+      Tangents[VertexIndex].w:=-1.0;
+     end else begin
+      Tangents[VertexIndex].w:=1.0;
+     end;}
+    end;
+
+    for VertexIndex:=0 to Primitive.fCountVertices-1 do begin
+     Vertex:=@Group.Vertices.ItemArray[Primitive.StartBufferVertexOffset+VertexIndex];
+     Vertex^.Normal:=OctEncode(Normals[VertexIndex]);
+     Vertex^.Tangent:=OctEncode(Tangents[VertexIndex]);
+     if (OctDecode(Vertex^.Normal).Cross(OctDecode(Vertex^.Tangent))).Dot(Bitangents[VertexIndex])<0.0 then begin
+      Vertex^.Flags:=Vertex^.Flags or (1 shl 0);
+     end else begin
+      Vertex^.Flags:=Vertex^.Flags and not (1 shl 0);
+     end;
+    end;
+
+   end;
+
+   for PrimitiveTargetIndex:=0 to Primitive.fTargets.Count-1 do begin
+
+    PrimitiveTarget:=Primitive.fTargets[PrimitiveTargetIndex];
+
+    if Primitive.fCountVertices=PrimitiveTarget.fVertices.Count then begin
+
+     if length(TargetPositions)<Primitive.CountVertices then begin
+      SetLength(TargetPositions,Primitive.CountVertices*2);
+      SetLength(TargetNormals,Primitive.CountVertices*2);
+      SetLength(TargetTangents,Primitive.CountVertices*2);
+     end;
+
+     for VertexIndex:=0 to PrimitiveTarget.fVertices.Count-1 do begin
+      PrimitiveTargetVertex:=@PrimitiveTarget.fVertices.ItemArray[VertexIndex];
+      TargetPositions[VertexIndex]:=Positions[VertexIndex]+PrimitiveTargetVertex^.Position;
+      TargetNormals[VertexIndex]:=TpvVector3.Null;
+      TargetTangents[VertexIndex]:=TpvVector3.Null;
+     end;
+
+     IndexIndex:=Primitive.StartBufferIndexOffset;
+     UntilIndexIndex:=Primitive.StartBufferIndexOffset+Primitive.CountIndices;
+     while (IndexIndex+2)<UntilIndexIndex do begin
+      VertexIndex0:=Group.fIndices.ItemArray[IndexIndex+0]-Primitive.StartBufferVertexOffset;
+      VertexIndex1:=Group.fIndices.ItemArray[IndexIndex+1]-Primitive.StartBufferVertexOffset;
+      VertexIndex2:=Group.fIndices.ItemArray[IndexIndex+2]-Primitive.StartBufferVertexOffset;
+      if (VertexIndex0>=0) and (VertexIndex0<Primitive.fCountVertices) and
+         (VertexIndex1>=0) and (VertexIndex1<Primitive.fCountVertices) and
+         (VertexIndex2>=0) and (VertexIndex2<Primitive.fCountVertices) then begin
+       Normal:=(TargetPositions[VertexIndex1]-TargetPositions[VertexIndex0]).Cross(TargetPositions[VertexIndex2]-TargetPositions[VertexIndex1]); // non-normalized weighted normal
+       TargetNormals[VertexIndex0]:=TargetNormals[VertexIndex0]+Normal;
+       TargetNormals[VertexIndex1]:=TargetNormals[VertexIndex1]+Normal;
+       TargetNormals[VertexIndex2]:=TargetNormals[VertexIndex2]+Normal;
+      end;
+      inc(IndexIndex,3);
+     end;
+
+     for VertexIndex:=0 to Primitive.CountVertices-1 do begin
+      TargetNormals[VertexIndex]:=TargetNormals[VertexIndex].Normalize;
+     end;
+
+     IndexIndex:=Primitive.StartBufferIndexOffset;
+     UntilIndexIndex:=Primitive.StartBufferIndexOffset+Primitive.CountIndices;
+     while (IndexIndex+2)<UntilIndexIndex do begin
+      VertexIndex0:=Group.fIndices.ItemArray[IndexIndex+0]-Primitive.StartBufferVertexOffset;
+      VertexIndex1:=Group.fIndices.ItemArray[IndexIndex+1]-Primitive.StartBufferVertexOffset;
+      VertexIndex2:=Group.fIndices.ItemArray[IndexIndex+2]-Primitive.StartBufferVertexOffset;
+      if (VertexIndex0>=0) and (VertexIndex0<Primitive.fCountVertices) and
+         (VertexIndex1>=0) and (VertexIndex1<Primitive.fCountVertices) and
+         (VertexIndex2>=0) and (VertexIndex2<Primitive.fCountVertices) then begin
+       p0:=@TargetPositions[VertexIndex0];
+       p1:=@TargetPositions[VertexIndex1];
+       p2:=@TargetPositions[VertexIndex2];
+       t0:=@TexCoords[VertexIndex0];
+       t1:=@TexCoords[VertexIndex1];
+       t2:=@TexCoords[VertexIndex2];
+       p1p0:=p1^-p0^;
+       p2p0:=p2^-p0^;
+       t1t0:=t1^-t0^;
+       t2t0:=t2^-t0^;
+       Normal:=(p1p0.Cross(p2p0)).Normalize;
+       if TargetNormals[VertexIndex0].Dot(Normal)<0.0 then begin
+        Normal:=-Normal;
+       end;
+{$if true}
+       Area:=(t2t0[0]*t1t0[1])-(t1t0[0]*t2t0[1]);
+       if IsZero(Area) then begin
+        Tangent[0]:=((t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]));
+        Tangent[1]:=((t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]));
+        Tangent[2]:=((t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]));
+        Bitangent[0]:=((t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]));
+        Bitangent[1]:=((t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]));
+        Bitangent[2]:=((t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]));
+        Tangent:=Tangent.Normalize;
+        Bitangent:=Bitangent.Normalize;
+       end else begin
+        Tangent[0]:=((t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]))/Area;
+        Tangent[1]:=((t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]))/Area;
+        Tangent[2]:=((t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]))/Area;
+        Bitangent[0]:=((t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]))/Area;
+        Bitangent[1]:=((t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]))/Area;
+        Bitangent[2]:=((t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]))/Area;
+       end;
+       if (Tangent.Cross(Bitangent)).Dot(Normal)<0.0 then begin
+        Tangent:=-Tangent;
+        Bitangent:=-Bitangent;
+       end;
+{$else}
+       Tangent[0]:=(t1t0[1]*p2p0[0])-(t2t0[1]*p1p0[0]);
+       Tangent[1]:=(t1t0[1]*p2p0[1])-(t2t0[1]*p1p0[1]);
+       Tangent[2]:=(t1t0[1]*p2p0[2])-(t2t0[1]*p1p0[2]);
+       Bitangent[0]:=(t1t0[0]*p2p0[0])-(t2t0[0]*p1p0[0]);
+       Bitangent[1]:=(t1t0[0]*p2p0[1])-(t2t0[0]*p1p0[1]);
+       Bitangent[2]:=(t1t0[0]*p2p0[2])-(t2t0[0]*p1p0[2]);
+       if (Tangent.Cross(Bitangent)).Dot(Normal)<0.0 then begin
+        Tangent:=-Tangent.xyz;
+        Bitangent:=-Bitangent;
+       end;
+{$ifend}
+       TargetTangents[VertexIndex0]:=TargetTangents[VertexIndex0]+Tangent;
+       TargetTangents[VertexIndex1]:=TargetTangents[VertexIndex1]+Tangent;
+       TargetTangents[VertexIndex2]:=TargetTangents[VertexIndex2]+Tangent;
+{      TargetBitangents[VertexIndex0]:=TargetBitangents[VertexIndex0]+Bitangent;
+       TargetBitangents[VertexIndex1]:=TargetBitangents[VertexIndex1]+Bitangent;
+       TargetBitangents[VertexIndex2]:=TargetBitangents[VertexIndex2]+Bitangent;}
+      end;
+      inc(IndexIndex,3);
+     end;
+
+     for VertexIndex:=0 to PrimitiveTarget.fVertices.Count-1 do begin
+      Vertex:=@Group.Vertices.ItemArray[Primitive.StartBufferVertexOffset+VertexIndex];
+      PrimitiveTargetVertex:=@PrimitiveTarget.fVertices.ItemArray[VertexIndex];
+      PrimitiveTargetVertex^.Normal:=TargetNormals[VertexIndex]-OctDecode(Vertex^.Normal);
+      Tangent:=TargetTangents[VertexIndex].Normalize;
+      Tangent:=(Tangent-(Normal*Tangent.Dot(Normal))).Normalize;
+      PrimitiveTargetVertex^.Tangent:=Tangent-OctDecode(Vertex^.Tangent);
+     end;
+
+    end;
+
+   end;
+
+  end;
+
+ finally
+  Positions:=nil;
+  Normals:=nil;
+  Tangents:=nil;
+  Bitangents:=nil;
+  TexCoords:=nil;
+  TargetPositions:=nil;
+  TargetNormals:=nil;
+  TargetTangents:=nil;
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TMesh.Finish;
+var PrimitiveIndex,
+    VertexIndex,
+    TargetIndex:TpvSizeInt;
+    MorphTargetVertexIndex:TpvUInt32;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+    Vertex:TpvScene3D.PVertex;
+    PrimitiveTarget:TMesh.TPrimitive.TTarget;
+    PrimitiveTargetVertex:TMesh.TPrimitive.TTarget.PTargetVertex;
+    MorphTargetVertex:TpvScene3D.PMorphTargetVertex;
+begin
+
+ begin
+
+  fBoundingBox:=TpvAABB.Create(TpvVector3.InlineableCreate(Infinity,Infinity,Infinity),
+                               TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity));
+
+  for PrimitiveIndex:=0 to fPrimitives.Count-1 do begin
+
+   Primitive:=fPrimitives[PrimitiveIndex];
+
+   if not fReady then begin
+
+    if Primitive.fMaterialID<0 then begin
+     if assigned(Primitive.fMaterial) and (Primitive.fMaterial<>fGroup.fSceneInstance.EmptyMaterial) then begin
+      Primitive.fMaterialID:=fGroup.AddMaterial(Primitive.fMaterial,true,true);
+     end else begin
+      Primitive.fMaterialID:=-1;
+     end;
+    end;
+
+    if not assigned(Primitive.fMaterial) then begin
+     if Primitive.fMaterialID<0 then begin
+      Primitive.fMaterial:=fGroup.fSceneInstance.EmptyMaterial;
+     end else begin
+      Primitive.fMaterial:=fGroup.fMaterials[Primitive.fMaterialID];
+      if Primitive.fMaterial<>fGroup.fSceneInstance.EmptyMaterial then begin
+       Primitive.fMaterial.IncRef;
+      end;
+     end;
+    end;
+
+    Primitive.fMorphTargetBaseIndex:=fGroup.fMorphTargetCount;
+
+   end;
+
+   if Primitive.fTargets.Count>0 then begin
+
+    if not fReady then begin
+     inc(fGroup.fMorphTargetCount,Primitive.fTargets.Count);
+    end;
+
+    for VertexIndex:=TpvSizeInt(Primitive.fStartBufferVertexOffset) to TpvSizeInt(Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+     Vertex:=@fGroup.fVertices.ItemArray[VertexIndex];
+     if not fReady then begin
+      Vertex^.MorphTargetVertexBaseIndex:=fGroup.fMorphTargetVertices.Count;
+     end;
+     for TargetIndex:=0 to Primitive.fTargets.Count-1 do begin
+      PrimitiveTarget:=Primitive.fTargets[TargetIndex];
+      PrimitiveTargetVertex:=@PrimitiveTarget.fVertices.ItemArray[VertexIndex-Primitive.fStartBufferVertexOffset];
+      if fReady then begin
+       MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex+TargetIndex;
+      end else begin
+       MorphTargetVertexIndex:=fGroup.fMorphTargetVertices.AddNewIndex;
+      end;
+      MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
+      MorphTargetVertex^.Position:=TpvVector4.InlineableCreate(PrimitiveTargetVertex^.Position,0.0);
+      MorphTargetVertex^.Normal:=TpvVector4.InlineableCreate(PrimitiveTargetVertex^.Normal,0.0);
+      MorphTargetVertex^.Tangent:=TpvVector4.InlineableCreate(PrimitiveTargetVertex^.Tangent,0.0);
+      MorphTargetVertex^.Index:=Primitive.fMorphTargetBaseIndex+TargetIndex;
+      if (TargetIndex+1)<Primitive.fTargets.Count then begin
+       MorphTargetVertex^.Next:=MorphTargetVertexIndex+1;
+      end else begin
+       MorphTargetVertex^.Next:=TpvUInt32($ffffffff);
+      end;
+     end;
+    end;
+
+   end else begin
+
+    if not fReady then begin
+
+     for VertexIndex:=TpvSizeInt(Primitive.fStartBufferVertexOffset) to TpvSizeInt(Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+      Vertex:=@fGroup.fVertices.ItemArray[VertexIndex];
+      Vertex^.MorphTargetVertexBaseIndex:=TpvUInt32($ffffffff);
+     end;
+
+    end;
+
+   end;
+
+   for VertexIndex:=Primitive.StartBufferVertexOffset to (Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+
+    Vertex:=@Group.Vertices.ItemArray[VertexIndex];
+
+    fBoundingBox.DirectCombineVector3(Vertex^.Position);
+
+    MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
+    while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
+     MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
+     fBoundingBox.DirectCombineVector3(Vertex^.Position+MorphTargetVertex^.Position.xyz); // Assume a weight value of 1.0 for an approximate result
+     MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+    end;
+
+   end;
+
+  end;
+
+ end;
+
+ fReady:=true;
+
+ TPasMPInterlocked.Increment(fGeneration);
+
+ TPasMPInterlocked.Increment(fGroup.fMeshContentGeneration);
+
 end;
 
 function TpvScene3D.TGroup.TMesh.CreateNodeMeshInstance(const aNodeIndex,aWeightsOffset,aJointNodeOffset:TpvUInt32):TpvSizeInt;
 var PrimitiveIndex,
-    NodeMeshPrimitiveInstanceIndex,
     VertexIndex,
     NewVertexIndex,
     IndexIndex,
@@ -8863,8 +10087,8 @@ var PrimitiveIndex,
     JointBlockIndex,
     NewJointBlockIndex,
     Old:TpvSizeInt;
-    Primitive:TMesh.PPrimitive;
-    NodeMeshPrimitiveInstance:TMesh.TPrimitive.PNodeMeshPrimitiveInstance;
+    Primitive:TMesh.TPrimitive;
+    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance;
     Vertex:PVertex;
     OldVertex:TVertex;
     MorphTargetVertex:PMorphTargetVertex;
@@ -8879,128 +10103,234 @@ begin
 
  if result=0 then begin
 
-  for PrimitiveIndex:=0 to length(fPrimitives)-1 do begin
-   Primitive:=@fPrimitives[PrimitiveIndex];
-{  if assigned(Primitive^.Material) then begin
-    MaterialID:=Primitive^.Material.ID;
+  for PrimitiveIndex:=0 to fPrimitives.Count-1 do begin
+
+   Primitive:=fPrimitives[PrimitiveIndex];
+
+{  if assigned(Primitive.fMaterial) then begin
+    MaterialID:=Primitive.fMaterial.ID;
    end else begin
     MaterialID:=0;
    end;}
-   MaterialID:=Primitive^.MaterialID+1; // +1 because 0 = empty material
-   NodeMeshPrimitiveInstanceIndex:=Primitive^.NodeMeshPrimitiveInstances.AddNew;
-   NodeMeshPrimitiveInstance:=@Primitive^.NodeMeshPrimitiveInstances.Items[NodeMeshPrimitiveInstanceIndex];
-   NodeMeshPrimitiveInstance^.MorphTargetBaseIndex:=Primitive^.MorphTargetBaseIndex;
-   NodeMeshPrimitiveInstance^.StartBufferVertexOffset:=Primitive^.StartBufferVertexOffset;
-   NodeMeshPrimitiveInstance^.StartBufferIndexOffset:=Primitive^.StartBufferIndexOffset;
-   for VertexIndex:=TpvSizeInt(Primitive^.StartBufferVertexOffset) to TpvSizeInt(Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-    Vertex:=@fGroup.fVertices.Items[VertexIndex];
-    Vertex^.NodeIndex:=aNodeIndex+1;
-    Vertex^.MaterialID:=MaterialID;
-    if Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff) then begin
-     WeightIndex:=0;
-     MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
-     while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
-      MorphTargetVertex:=@fGroup.fMorphTargetVertices.Items[MorphTargetVertexIndex];
-      MorphTargetVertex^.Index:=aWeightsOffset+WeightIndex;
-      inc(WeightIndex);
-      if MorphTargetVertex^.Next=TpvUInt32($ffffffff) then begin
-       break;
-      end else begin
-       MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+   MaterialID:=Primitive.fMaterialID+1; // +1 because 0 = empty material
+
+   NodeMeshPrimitiveInstance:=TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance.Create;
+   try
+
+    NodeMeshPrimitiveInstance.fMorphTargetBaseIndex:=Primitive.fMorphTargetBaseIndex;
+    NodeMeshPrimitiveInstance.fStartBufferVertexOffset:=Primitive.fStartBufferVertexOffset;
+    NodeMeshPrimitiveInstance.fStartBufferIndexOffset:=Primitive.fStartBufferIndexOffset;
+
+    for VertexIndex:=TpvSizeInt(Primitive.fStartBufferVertexOffset) to TpvSizeInt(Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+     Vertex:=@fGroup.fVertices.ItemArray[VertexIndex];
+     Vertex^.NodeIndex:=aNodeIndex+1;
+     Vertex^.MaterialID:=MaterialID;
+     if Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff) then begin
+      WeightIndex:=0;
+      MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
+      while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
+       MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
+       MorphTargetVertex^.Index:=aWeightsOffset+WeightIndex;
+       inc(WeightIndex);
+       if MorphTargetVertex^.Next=TpvUInt32($ffffffff) then begin
+        break;
+       end else begin
+        MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+       end;
       end;
      end;
-    end;
-    if (Vertex^.JointBlockBaseIndex<>TpvUInt32($ffffffff)) and (Vertex^.CountJointBlocks>0) then begin
-     for JointBlockIndex:=0 to TpvSizeInt(Vertex^.CountJointBlocks)-1 do begin
-      NewJointBlockIndex:=Vertex^.JointBlockBaseIndex+JointBlockIndex;
-      if length(fGroup.fJointBlockOffsets)<=NewJointBlockIndex then begin
-       Old:=length(fGroup.fJointBlockOffsets);
-       SetLength(fGroup.fJointBlockOffsets,(NewJointBlockIndex+1)*2);
-       FillChar(fGroup.fJointBlockOffsets[Old],((length(fGroup.fJointBlockOffsets)-Old)+1)*SizeOf(TpvSizeInt),#0);
+
+     if (Vertex^.JointBlockBaseIndex<>TpvUInt32($ffffffff)) and (Vertex^.CountJointBlocks>0) then begin
+      for JointBlockIndex:=0 to TpvSizeInt(Vertex^.CountJointBlocks)-1 do begin
+       NewJointBlockIndex:=Vertex^.JointBlockBaseIndex+JointBlockIndex;
+       if length(fGroup.fJointBlockOffsets)<=NewJointBlockIndex then begin
+        Old:=length(fGroup.fJointBlockOffsets);
+        SetLength(fGroup.fJointBlockOffsets,(NewJointBlockIndex+1)*2);
+        FillChar(fGroup.fJointBlockOffsets[Old],((length(fGroup.fJointBlockOffsets)-Old)+1)*SizeOf(TpvSizeInt),#0);
+       end;
+       fGroup.fJointBlockOffsets[NewJointBlockIndex]:=aJointNodeOffset;
       end;
-      fGroup.fJointBlockOffsets[NewJointBlockIndex]:=aJointNodeOffset;
+     end else begin
+      Vertex^.JointBlockBaseIndex:=TpvUInt32($ffffffff);
+      Vertex^.CountJointBlocks:=0;
      end;
-    end else begin
-     Vertex^.JointBlockBaseIndex:=TpvUInt32($ffffffff);
-     Vertex^.CountJointBlocks:=0;
     end;
+
+    NodeMeshPrimitiveInstance.fGeneration:=fGeneration;
+
+   finally
+    Primitive.fNodeMeshPrimitiveInstances.Add(NodeMeshPrimitiveInstance);
    end;
+
   end;
 
  end else begin
 
-  for PrimitiveIndex:=0 to length(fPrimitives)-1 do begin
+  for PrimitiveIndex:=0 to fPrimitives.Count-1 do begin
 
-   Primitive:=@fPrimitives[PrimitiveIndex];
+   Primitive:=fPrimitives[PrimitiveIndex];
 
-{  if assigned(Primitive^.Material) then begin
-    MaterialID:=Primitive^.Material.ID;
+{  if assigned(Primitive.fMaterial) then begin
+    MaterialID:=Primitive.fMaterial.ID;
    end else begin
     MaterialID:=0;
    end;}
 
-   MaterialID:=Primitive^.MaterialID+1; // +1 because 0 = empty material
+   MaterialID:=Primitive.fMaterialID+1; // +1 because 0 = empty material
 
-   NodeMeshPrimitiveInstanceIndex:=Primitive^.NodeMeshPrimitiveInstances.AddNew;
-   NodeMeshPrimitiveInstance:=@Primitive^.NodeMeshPrimitiveInstances.Items[NodeMeshPrimitiveInstanceIndex];
+   NodeMeshPrimitiveInstance:=TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance.Create;
+   try
 
-   NodeMeshPrimitiveInstance^.MorphTargetBaseIndex:=fGroup.fMorphTargetCount;
-   inc(fGroup.fMorphTargetCount,length(Primitive^.Targets));
+    NodeMeshPrimitiveInstance.fMorphTargetBaseIndex:=fGroup.fMorphTargetCount;
+    inc(fGroup.fMorphTargetCount,Primitive.fTargets.Count);
 
-   NodeMeshPrimitiveInstance^.StartBufferVertexOffset:=fGroup.fVertices.Count;
-   for VertexIndex:=TpvSizeInt(Primitive^.StartBufferVertexOffset) to TpvSizeInt(Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-    OldVertex:=fGroup.fVertices.Items[VertexIndex];
-    NewVertexIndex:=fGroup.fVertices.Add(OldVertex);
-    Vertex:=@fGroup.fVertices.Items[NewVertexIndex];
-    Vertex^.NodeIndex:=aNodeIndex+1;
-    Vertex^.MaterialID:=MaterialID;
-    if Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff) then begin
-     WeightIndex:=0;
-     MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
-     Vertex^.MorphTargetVertexBaseIndex:=fGroup.fMorphTargetVertices.Count;
-     while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
-      NewMorphTargetVertexIndex:=fGroup.fMorphTargetVertices.AddNew;
-      fGroup.fMorphTargetVertices.Items[NewMorphTargetVertexIndex]:=fGroup.fMorphTargetVertices.Items[MorphTargetVertexIndex];
-      MorphTargetVertex:=@fGroup.fMorphTargetVertices.Items[NewMorphTargetVertexIndex];
-//    MorphTargetVertex^.Index:=(MorphTargetVertex^.Index-Primitive^.MorphTargetBaseIndex)+NodeMeshPrimitiveInstance^.MorphTargetBaseIndex;
-      MorphTargetVertex^.Index:=aWeightsOffset+WeightIndex;
-      inc(WeightIndex);
-      if MorphTargetVertex^.Next=TpvUInt32($ffffffff) then begin
-       break;
-      end else begin
-       MorphTargetVertexIndex:=MorphTargetVertex^.Next;
-       MorphTargetVertex^.Next:=fGroup.fMorphTargetVertices.Count;
+    NodeMeshPrimitiveInstance.fStartBufferVertexOffset:=fGroup.fVertices.Count;
+    for VertexIndex:=TpvSizeInt(Primitive.fStartBufferVertexOffset) to TpvSizeInt(Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+     OldVertex:=fGroup.fVertices.ItemArray[VertexIndex];
+     NewVertexIndex:=fGroup.fVertices.Add(OldVertex);
+     Vertex:=@fGroup.fVertices.ItemArray[NewVertexIndex];
+     Vertex^.NodeIndex:=aNodeIndex+1;
+     Vertex^.MaterialID:=MaterialID;
+     if Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff) then begin
+      WeightIndex:=0;
+      MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
+      Vertex^.MorphTargetVertexBaseIndex:=fGroup.fMorphTargetVertices.Count;
+      while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
+       NewMorphTargetVertexIndex:=fGroup.fMorphTargetVertices.AddNewIndex;
+       fGroup.fMorphTargetVertices.Items[NewMorphTargetVertexIndex]:=fGroup.fMorphTargetVertices.Items[MorphTargetVertexIndex];
+       MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[NewMorphTargetVertexIndex];
+ //    MorphTargetVertex^.Index:=(MorphTargetVertex^.Index-Primitive^.MorphTargetBaseIndex)+NodeMeshPrimitiveInstance^.MorphTargetBaseIndex;
+       MorphTargetVertex^.Index:=aWeightsOffset+WeightIndex;
+       inc(WeightIndex);
+       if MorphTargetVertex^.Next=TpvUInt32($ffffffff) then begin
+        break;
+       end else begin
+        MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+        MorphTargetVertex^.Next:=fGroup.fMorphTargetVertices.Count;
+       end;
       end;
+     end else begin
+      Vertex^.MorphTargetVertexBaseIndex:=TpvUInt32($ffffffff);
      end;
-    end else begin
-     Vertex^.MorphTargetVertexBaseIndex:=TpvUInt32($ffffffff);
+
+     if (Vertex^.JointBlockBaseIndex<>TpvUInt32($ffffffff)) and (Vertex^.CountJointBlocks>0) then begin
+      Vertex^.JointBlockBaseIndex:=fGroup.fJointBlocks.Count;
+      for JointBlockIndex:=0 to TpvSizeInt(Vertex^.CountJointBlocks)-1 do begin
+       NewJointBlockIndex:=fGroup.fJointBlocks.AddNewIndex;
+       fGroup.fJointBlocks.ItemArray[NewJointBlockIndex]:=fGroup.fJointBlocks.ItemArray[OldVertex.JointBlockBaseIndex+JointBlockIndex];
+       if length(fGroup.fJointBlockOffsets)<=NewJointBlockIndex then begin
+        Old:=length(fGroup.fJointBlockOffsets);
+        SetLength(fGroup.fJointBlockOffsets,(NewJointBlockIndex+1)*2);
+        FillChar(fGroup.fJointBlockOffsets[Old],((length(fGroup.fJointBlockOffsets)-Old)+1)*SizeOf(TpvSizeInt),#0);
+       end;
+       fGroup.fJointBlockOffsets[NewJointBlockIndex]:=aJointNodeOffset;
+      end;
+     end else begin
+      Vertex^.JointBlockBaseIndex:=TpvUInt32($ffffffff);
+      Vertex^.CountJointBlocks:=0;
+     end;
+
     end;
 
-    if (Vertex^.JointBlockBaseIndex<>TpvUInt32($ffffffff)) and (Vertex^.CountJointBlocks>0) then begin
-     Vertex^.JointBlockBaseIndex:=fGroup.fJointBlocks.Count;
-     for JointBlockIndex:=0 to TpvSizeInt(Vertex^.CountJointBlocks)-1 do begin
-      NewJointBlockIndex:=fGroup.fJointBlocks.AddNew;
-      fGroup.fJointBlocks.Items[NewJointBlockIndex]:=fGroup.fJointBlocks.Items[OldVertex.JointBlockBaseIndex+JointBlockIndex];
-      if length(fGroup.fJointBlockOffsets)<=NewJointBlockIndex then begin
-       Old:=length(fGroup.fJointBlockOffsets);
-       SetLength(fGroup.fJointBlockOffsets,(NewJointBlockIndex+1)*2);
-       FillChar(fGroup.fJointBlockOffsets[Old],((length(fGroup.fJointBlockOffsets)-Old)+1)*SizeOf(TpvSizeInt),#0);
-      end;
-      fGroup.fJointBlockOffsets[NewJointBlockIndex]:=aJointNodeOffset;
-     end;
-    end else begin
-     Vertex^.JointBlockBaseIndex:=TpvUInt32($ffffffff);
-     Vertex^.CountJointBlocks:=0;
+    NodeMeshPrimitiveInstance.fStartBufferIndexOffset:=fGroup.fIndices.Count;
+    for IndexIndex:=TpvSizeInt(Primitive.fStartBufferIndexOffset) to TpvSizeInt(Primitive.fStartBufferIndexOffset+Primitive.fCountIndices)-1 do begin
+     fGroup.fIndices.Add((fGroup.fIndices.Items[IndexIndex]-Primitive.fStartBufferVertexOffset)+NodeMeshPrimitiveInstance.fStartBufferVertexOffset);
     end;
 
-   end;
+    NodeMeshPrimitiveInstance.fGeneration:=fGeneration;
 
-   NodeMeshPrimitiveInstance^.StartBufferIndexOffset:=fGroup.fIndices.Count;
-   for IndexIndex:=TpvSizeInt(Primitive^.StartBufferIndexOffset) to TpvSizeInt(Primitive^.StartBufferIndexOffset+Primitive^.CountIndices)-1 do begin
-    fGroup.fIndices.Add((fGroup.fIndices.Items[IndexIndex]-Primitive^.StartBufferVertexOffset)+NodeMeshPrimitiveInstance^.StartBufferVertexOffset);
+   finally
+    Primitive.fNodeMeshPrimitiveInstances.Add(NodeMeshPrimitiveInstance);
    end;
 
   end;
+
+ end;
+
+end;
+
+function TpvScene3D.TGroup.TMesh.UpdateNodeMeshInstances:Boolean;
+var PrimitiveIndex,VertexIndex:TpvSizeInt;
+    OriginalMorphTargetVertexIndex,
+    MorphTargetVertexIndex,
+    MaterialID:TpvUInt32;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance;
+    OriginalVertex,Vertex:PVertex;
+    OriginalMorphTargetVertex,
+    MorphTargetVertex:PMorphTargetVertex;
+begin
+
+ result:=fUpdatedGeneration<>fGeneration;
+
+ if result then begin
+
+  for PrimitiveIndex:=0 to fPrimitives.Count-1 do begin
+
+   Primitive:=fPrimitives[PrimitiveIndex];
+
+   MaterialID:=Primitive.fMaterialID+1; // +1 because 0 = empty material
+
+   for NodeMeshPrimitiveInstance in Primitive.fNodeMeshPrimitiveInstances do begin
+
+    if NodeMeshPrimitiveInstance.fGeneration<>fGeneration then begin
+
+     if NodeMeshPrimitiveInstance.fStartBufferVertexOffset<>Primitive.fStartBufferVertexOffset then begin
+
+      if Primitive.fCountVertices>0 then begin
+
+       OriginalVertex:=@fGroup.fVertices.ItemArray[Primitive.fStartBufferVertexOffset];
+
+       Vertex:=@fGroup.fVertices.ItemArray[NodeMeshPrimitiveInstance.fStartBufferVertexOffset];
+
+       for VertexIndex:=0 to TpvSizeInt(Primitive.fCountVertices)-1 do begin
+
+        Vertex^.Position:=OriginalVertex^.Position;
+        Vertex^.Normal:=OriginalVertex^.Normal;
+        Vertex^.TexCoord0:=OriginalVertex^.TexCoord0;
+        Vertex^.TexCoord1:=OriginalVertex^.TexCoord1;
+        Vertex^.Color0:=OriginalVertex^.Color0;
+        Vertex^.Flags:=OriginalVertex^.Flags;
+
+        Vertex^.MaterialID:=MaterialID;
+
+        if (OriginalVertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff)) and (Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff)) then begin
+         OriginalMorphTargetVertexIndex:=OriginalVertex^.MorphTargetVertexBaseIndex;
+         MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
+         while (OriginalMorphTargetVertexIndex<>TpvUInt32($ffffffff)) and (MorphTargetVertexIndex<>TpvUInt32($ffffffff)) do begin
+          OriginalMorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[OriginalMorphTargetVertexIndex];
+          MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
+          MorphTargetVertex^.Position:=OriginalMorphTargetVertex^.Position;
+          MorphTargetVertex^.Normal:=OriginalMorphTargetVertex^.Normal;
+          MorphTargetVertex^.Tangent:=OriginalMorphTargetVertex^.Tangent;
+          if (OriginalMorphTargetVertex^.Next=TpvUInt32($ffffffff)) or (MorphTargetVertex^.Next=TpvUInt32($ffffffff)) then begin
+           break;
+          end else begin
+           OriginalMorphTargetVertexIndex:=OriginalMorphTargetVertex^.Next;
+           MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+          end;
+         end;
+        end;
+
+        inc(OriginalVertex);
+
+        inc(Vertex);
+
+       end;
+
+      end;
+
+     end;
+
+     NodeMeshPrimitiveInstance.fGeneration:=fGeneration;
+
+    end;
+
+   end;
+
+  end;
+
+  fUpdatedGeneration:=fGeneration;
 
  end;
 
@@ -9024,8 +10354,8 @@ var Index,
     MaxCountTargets:TpvSizeInt;
     SourceMeshPrimitive:TPasGLTF.TMesh.TPrimitive;
     SourceMeshPrimitiveTarget:TPasGLTF.TAttributes;
-    DestinationMeshPrimitive:TMesh.PPrimitive;
-    DestinationMeshPrimitiveTarget:TMesh.TPrimitive.PTarget;
+    DestinationMeshPrimitive:TMesh.TPrimitive;
+    DestinationMeshPrimitiveTarget:TMesh.TPrimitive.TTarget;
     DestinationMeshPrimitiveTargetVertex:TMesh.TPrimitive.TTarget.PTargetVertex;
     MorphTargetVertex:PMorphTargetVertex;
     TemporaryPositions,
@@ -9067,12 +10397,10 @@ begin
 
   fName:=aSourceMesh.Name;
 
-  SetLength(fPrimitives,aSourceMesh.Primitives.Count);
+  fPrimitives.Clear;
 
   fBoundingBox:=TpvAABB.Create(TpvVector3.InlineableCreate(Infinity,Infinity,Infinity),
                                TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity));
-
-  fBoundingSphere:=TpvSphere.Create(TpvVector3.Origin,Infinity);
 
   BoundingBoxFirst:=true;
 
@@ -9093,19 +10421,20 @@ begin
 
       SourceMeshPrimitive:=aSourceMesh.Primitives.Items[PrimitiveIndex];
 
-      DestinationMeshPrimitive:=@fPrimitives[PrimitiveIndex];
+      DestinationMeshPrimitive:=TMesh.TPrimitive.Create(self);
+      fPrimitives.Add(DestinationMeshPrimitive);
 
       fGroup.fSceneInstance.fMaterialListLock.Acquire;
       try
        if (SourceMeshPrimitive.Material>=0) and (SourceMeshPrimitive.Material<aMaterialMap.Count) then begin
-        DestinationMeshPrimitive^.MaterialID:=SourceMeshPrimitive.Material;
-        DestinationMeshPrimitive^.Material:=aMaterialMap[SourceMeshPrimitive.Material];
-        if assigned(DestinationMeshPrimitive^.Material) then begin
-         DestinationMeshPrimitive^.Material.IncRef;
+        DestinationMeshPrimitive.fMaterialID:=SourceMeshPrimitive.Material;
+        DestinationMeshPrimitive.fMaterial:=aMaterialMap[SourceMeshPrimitive.Material];
+        if assigned(DestinationMeshPrimitive.fMaterial) then begin
+         DestinationMeshPrimitive.fMaterial.IncRef;
         end;
        end else begin
-        DestinationMeshPrimitive^.MaterialID:=-1;
-        DestinationMeshPrimitive^.Material:=fGroup.fSceneInstance.fEmptyMaterial;
+        DestinationMeshPrimitive.fMaterialID:=-1;
+        DestinationMeshPrimitive.fMaterial:=fGroup.fSceneInstance.fEmptyMaterial;
        end;
       finally
        fGroup.fSceneInstance.fMaterialListLock.Release;
@@ -9403,17 +10732,17 @@ begin
        // Primitive mode
        case SourceMeshPrimitiveMode of
         TPasGLTF.TMesh.TPrimitive.TMode.Points:begin
-         DestinationMeshPrimitive^.PrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Points;
+         DestinationMeshPrimitive.fPrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Points;
         end;
         TPasGLTF.TMesh.TPrimitive.TMode.Lines,
         TPasGLTF.TMesh.TPrimitive.TMode.LineLoop,
         TPasGLTF.TMesh.TPrimitive.TMode.LineStrip:begin
-         DestinationMeshPrimitive^.PrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Lines;
+         DestinationMeshPrimitive.fPrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Lines;
         end;
         TPasGLTF.TMesh.TPrimitive.TMode.Triangles,
         TPasGLTF.TMesh.TPrimitive.TMode.TriangleStrip,
         TPasGLTF.TMesh.TPrimitive.TMode.TriangleFan:begin
-         DestinationMeshPrimitive^.PrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Triangles;
+         DestinationMeshPrimitive.fPrimitiveTopology:=TpvScene3D.TPrimitiveTopology.Triangles;
         end;
         else begin
          raise EPasGLTF.Create('Invalid primitive mode');
@@ -9549,15 +10878,16 @@ begin
 
        // Load morph target data
 
-       SetLength(DestinationMeshPrimitive^.Targets,SourceMeshPrimitive.Targets.Count);
+       DestinationMeshPrimitive.fTargets.Clear;
 
-       MaxCountTargets:=Max(MaxCountTargets,length(DestinationMeshPrimitive^.Targets));
+       MaxCountTargets:=Max(MaxCountTargets,SourceMeshPrimitive.Targets.Count);
 
-       for TargetIndex:=0 to length(DestinationMeshPrimitive^.Targets)-1 do begin
+       for TargetIndex:=0 to SourceMeshPrimitive.Targets.Count-1 do begin
 
         SourceMeshPrimitiveTarget:=SourceMeshPrimitive.Targets[TargetIndex];
 
-        DestinationMeshPrimitiveTarget:=@DestinationMeshPrimitive^.Targets[TargetIndex];
+        DestinationMeshPrimitiveTarget:=TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.Create;
+        DestinationMeshPrimitive.fTargets.Add(DestinationMeshPrimitiveTarget);
 
         AccessorIndex:=SourceMeshPrimitiveTarget['POSITION'];
         if AccessorIndex>=0 then begin
@@ -9601,21 +10931,21 @@ begin
         end;
 
         // Construct morph target vertex array
-        SetLength(DestinationMeshPrimitiveTarget^.Vertices,length(DestinationMeshPrimitiveVertices));
-        for VertexIndex:=0 to length(DestinationMeshPrimitiveTarget^.Vertices)-1 do begin
-         DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget^.Vertices[VertexIndex];
-         DestinationMeshPrimitiveTargetVertex^.Position:=TpvVector3(pointer(@TemporaryPositions[VertexIndex])^);
-         DestinationMeshPrimitiveTargetVertex^.Normal.x:=TemporaryNormals[VertexIndex][0];
-         DestinationMeshPrimitiveTargetVertex^.Normal.y:=TemporaryNormals[VertexIndex][1];
-         DestinationMeshPrimitiveTargetVertex^.Normal.z:=TemporaryNormals[VertexIndex][2];
-         DestinationMeshPrimitiveTargetVertex^.Tangent.x:=TemporaryTargetTangents[VertexIndex][0];
-         DestinationMeshPrimitiveTargetVertex^.Tangent.y:=TemporaryTargetTangents[VertexIndex][1];
-         DestinationMeshPrimitiveTargetVertex^.Tangent.z:=TemporaryTargetTangents[VertexIndex][2];
+        DestinationMeshPrimitiveTarget.fVertices.Resize(length(DestinationMeshPrimitiveVertices));
+        for VertexIndex:=0 to DestinationMeshPrimitiveTarget.fVertices.Count-1 do begin
+         DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget.fVertices.ItemArray[VertexIndex];
+         DestinationMeshPrimitiveTargetVertex.Position:=TpvVector3(pointer(@TemporaryPositions[VertexIndex])^);
+         DestinationMeshPrimitiveTargetVertex.Normal.x:=TemporaryNormals[VertexIndex][0];
+         DestinationMeshPrimitiveTargetVertex.Normal.y:=TemporaryNormals[VertexIndex][1];
+         DestinationMeshPrimitiveTargetVertex.Normal.z:=TemporaryNormals[VertexIndex][2];
+         DestinationMeshPrimitiveTargetVertex.Tangent.x:=TemporaryTargetTangents[VertexIndex][0];
+         DestinationMeshPrimitiveTargetVertex.Tangent.y:=TemporaryTargetTangents[VertexIndex][1];
+         DestinationMeshPrimitiveTargetVertex.Tangent.z:=TemporaryTargetTangents[VertexIndex][2];
         end;
 
         if not BoundingBoxFirst then begin
          for VertexIndex:=0 to length(TemporaryPositions)-1 do begin
-          DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget^.Vertices[VertexIndex];
+          DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget.fVertices.ItemArray[VertexIndex];
           Vertex:=@DestinationMeshPrimitiveVertices[VertexIndex];
           TemporaryPosition.x:=Vertex^.Position[0]+DestinationMeshPrimitiveTargetVertex^.Position[0];
           TemporaryPosition.y:=Vertex^.Position[1]+DestinationMeshPrimitiveTargetVertex^.Position[1];
@@ -9638,7 +10968,7 @@ begin
          end;
          if length(TemporaryTriangleIndices)>0 then begin
           for VertexIndex:=0 to length(TemporaryTangents)-1 do begin
-           DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget^.Vertices[VertexIndex];
+           DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget.fVertices.ItemArray[VertexIndex];
            Vertex:=@DestinationMeshPrimitiveVertices[VertexIndex];
            TemporaryPositions[VertexIndex,0]:=Vertex^.Position[0]+DestinationMeshPrimitiveTargetVertex^.Position[0];
            TemporaryPositions[VertexIndex,1]:=Vertex^.Position[1]+DestinationMeshPrimitiveTargetVertex^.Position[1];
@@ -9719,15 +11049,14 @@ begin
            end;
           end;
          end;
-         SetLength(DestinationMeshPrimitiveTarget^.Vertices,length(DestinationMeshPrimitiveVertices));
-         for VertexIndex:=0 to length(DestinationMeshPrimitiveTarget^.Vertices)-1 do begin
-          DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget^.Vertices[VertexIndex];
+         DestinationMeshPrimitiveTarget.fVertices.Resize(length(DestinationMeshPrimitiveVertices));
+         for VertexIndex:=0 to DestinationMeshPrimitiveTarget.fVertices.Count-1 do begin
+          DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget.fVertices.ItemArray[VertexIndex];
           Vertex:=@DestinationMeshPrimitiveVertices[VertexIndex];
           TangentSpaceMatrix.Tangent:=OctDecode(Vertex^.Tangent);
           DestinationMeshPrimitiveTargetVertex^.Tangent.x:=TemporaryTangents[VertexIndex,0]-TangentSpaceMatrix.Tangent.x;
           DestinationMeshPrimitiveTargetVertex^.Tangent.y:=TemporaryTangents[VertexIndex,1]-TangentSpaceMatrix.Tangent.y;
           DestinationMeshPrimitiveTargetVertex^.Tangent.z:=TemporaryTangents[VertexIndex,2]-TangentSpaceMatrix.Tangent.z;
-          DestinationMeshPrimitiveTargetVertex^.Count:=length(DestinationMeshPrimitive^.Targets);
          end;
         end;
 
@@ -9735,36 +11064,38 @@ begin
 
       end;
 
-      DestinationMeshPrimitive^.StartBufferVertexOffset:=fGroup.fVertices.Count;
+      //DestinationMeshPrimitive.fTargets.Finish;
+
+      DestinationMeshPrimitive.fStartBufferVertexOffset:=fGroup.fVertices.Count;
       fGroup.fVertices.Add(DestinationMeshPrimitiveVertices);
-      DestinationMeshPrimitive^.CountVertices:=TpvSizeUInt(fGroup.fVertices.Count)-DestinationMeshPrimitive^.StartBufferVertexOffset;
+      DestinationMeshPrimitive.fCountVertices:=TpvSizeUInt(fGroup.fVertices.Count)-DestinationMeshPrimitive.fStartBufferVertexOffset;
 
-      DestinationMeshPrimitive^.StartBufferIndexOffset:=fGroup.fIndices.Count;
+      DestinationMeshPrimitive.fStartBufferIndexOffset:=fGroup.fIndices.Count;
       fGroup.fIndices.Add(DestinationMeshPrimitiveIndices);
-      for IndexIndex:=TpvSizeInt(DestinationMeshPrimitive^.StartBufferIndexOffset) to fGroup.fIndices.Count-1 do begin
-       inc(fGroup.fIndices.Items[IndexIndex],DestinationMeshPrimitive^.StartBufferVertexOffset);
+      for IndexIndex:=TpvSizeInt(DestinationMeshPrimitive.fStartBufferIndexOffset) to fGroup.fIndices.Count-1 do begin
+       inc(fGroup.fIndices.ItemArray[IndexIndex],DestinationMeshPrimitive.fStartBufferVertexOffset);
       end;
-      DestinationMeshPrimitive^.CountIndices:=TpvSizeUInt(fGroup.fIndices.Count)-DestinationMeshPrimitive^.StartBufferIndexOffset;
+      DestinationMeshPrimitive.fCountIndices:=TpvSizeUInt(fGroup.fIndices.Count)-DestinationMeshPrimitive.fStartBufferIndexOffset;
 
-      DestinationMeshPrimitive^.MorphTargetBaseIndex:=fGroup.fMorphTargetCount;
+      DestinationMeshPrimitive.fMorphTargetBaseIndex:=fGroup.fMorphTargetCount;
 
-      if length(DestinationMeshPrimitive^.Targets)>0 then begin
+      if DestinationMeshPrimitive.fTargets.Count>0 then begin
 
-       inc(fGroup.fMorphTargetCount,length(DestinationMeshPrimitive^.Targets));
+       inc(fGroup.fMorphTargetCount,DestinationMeshPrimitive.fTargets.Count);
 
-       for VertexIndex:=TpvSizeInt(DestinationMeshPrimitive^.StartBufferVertexOffset) to TpvSizeInt(DestinationMeshPrimitive^.StartBufferVertexOffset+DestinationMeshPrimitive^.CountVertices)-1 do begin
-        Vertex:=@fGroup.fVertices.Items[VertexIndex];
+       for VertexIndex:=TpvSizeInt(DestinationMeshPrimitive.fStartBufferVertexOffset) to TpvSizeInt(DestinationMeshPrimitive.fStartBufferVertexOffset+DestinationMeshPrimitive.fCountVertices)-1 do begin
+        Vertex:=@fGroup.fVertices.ItemArray[VertexIndex];
         Vertex^.MorphTargetVertexBaseIndex:=fGroup.fMorphTargetVertices.Count;
-        for TargetIndex:=0 to length(DestinationMeshPrimitive^.Targets)-1 do begin
-         DestinationMeshPrimitiveTarget:=@DestinationMeshPrimitive^.Targets[TargetIndex];
-         DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget^.Vertices[VertexIndex-DestinationMeshPrimitive^.StartBufferVertexOffset];
-         MorphTargetVertexIndex:=fGroup.fMorphTargetVertices.AddNew;
-         MorphTargetVertex:=@fGroup.fMorphTargetVertices.Items[MorphTargetVertexIndex];
+        for TargetIndex:=0 to DestinationMeshPrimitive.fTargets.Count-1 do begin
+         DestinationMeshPrimitiveTarget:=DestinationMeshPrimitive.fTargets[TargetIndex];
+         DestinationMeshPrimitiveTargetVertex:=@DestinationMeshPrimitiveTarget.fVertices.ItemArray[VertexIndex-DestinationMeshPrimitive.fStartBufferVertexOffset];
+         MorphTargetVertexIndex:=fGroup.fMorphTargetVertices.AddNewIndex;
+         MorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
          MorphTargetVertex^.Position:=TpvVector4.Create(DestinationMeshPrimitiveTargetVertex^.Position,0.0);
          MorphTargetVertex^.Normal:=TpvVector4.Create(DestinationMeshPrimitiveTargetVertex^.Normal,0.0);
          MorphTargetVertex^.Tangent:=TpvVector4.Create(DestinationMeshPrimitiveTargetVertex^.Tangent,0.0);
-         MorphTargetVertex^.Index:=DestinationMeshPrimitive^.MorphTargetBaseIndex+TargetIndex;
-         if (TargetIndex+1)<length(DestinationMeshPrimitive^.Targets) then begin
+         MorphTargetVertex^.Index:=DestinationMeshPrimitive.fMorphTargetBaseIndex+TargetIndex;
+         if (TargetIndex+1)<DestinationMeshPrimitive.fTargets.Count then begin
           MorphTargetVertex^.Next:=MorphTargetVertexIndex+1;
          end else begin
           MorphTargetVertex^.Next:=TpvUInt32($ffffffff);
@@ -9773,9 +11104,7 @@ begin
        end;
       end;
 
-      DestinationMeshPrimitive^.NodeMeshPrimitiveInstances.Initialize;
-
-      DestinationMeshPrimitive^.NodeMeshPrimitiveInstances.Clear;
+      DestinationMeshPrimitive.fNodeMeshPrimitiveInstances.Clear;
 
      finally
       DestinationMeshPrimitiveIndices:=nil;
@@ -9793,24 +11122,25 @@ begin
 
   begin
    // Process morph target weights
-   SetLength(fWeights,aSourceMesh.Weights.Count);
-   for WeightIndex:=0 to length(fWeights)-1 do begin
-    fWeights[WeightIndex]:=aSourceMesh.Weights[WeightIndex];
+   fWeights.Resize(aSourceMesh.Weights.Count);
+   for WeightIndex:=0 to fWeights.Count-1 do begin
+    fWeights.Items[WeightIndex]:=aSourceMesh.Weights[WeightIndex];
    end;
-   OldCount:=length(fWeights);
+   OldCount:=fWeights.Count;
    if OldCount<MaxCountTargets then begin
-    SetLength(fWeights,MaxCountTargets);
-    for WeightIndex:=OldCount to length(fWeights)-1 do begin
-     fWeights[WeightIndex]:=0.0;
+    fWeights.Resize(MaxCountTargets);
+    for WeightIndex:=OldCount to fWeights.Count-1 do begin
+     fWeights.Items[WeightIndex]:=0.0;
     end;
    end;
+   fWeights.Finish;
   end;
 
  finally
   FreeMem(MaxJointBlocks);
  end;
 
- fBoundingSphere:=TpvSphere.CreateFromAABB(fBoundingBox);
+ TPasMPInterlocked.Increment(fGeneration);
 
 end;
 
@@ -9821,17 +11151,21 @@ begin
  inherited Create(aGroup);
  fIndex:=aIndex;
  fJointMatrixOffset:=0;
+ fInverseBindMatrices:=TpvScene3D.TMatrix4x4DynamicArrayList.Create;
+ fMatrices:=TpvScene3D.TMatrix4x4DynamicArrayList.Create;
+ fJoints:=TpvScene3D.TSizeIntDynamicArrayList.Create;
 end;
 
 destructor TpvScene3D.TGroup.TSkin.Destroy;
 begin
+ FreeAndNil(fInverseBindMatrices);
+ FreeAndNil(fMatrices);
+ FreeAndNil(fJoints);
  inherited Destroy;
 end;
 
 procedure TpvScene3D.TGroup.TSkin.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSkin:TPasGLTF.TSkin);
 var JointIndex,OldCount:TPasGLTFSizeInt;
-    JSONItem:TPasJSONItem;
-    JSONObject:TPasJSONItemObject;
     InverseBindMatrices:TPasGLTF.TMatrix4x4DynamicArray;
 begin
 
@@ -9839,28 +11173,23 @@ begin
 
  fSkeleton:=aSourceSkin.Skeleton;
 
- fInverseBindMatrices.Initialize;
-
  if aSourceSkin.InverseBindMatrices>=0 then begin
   InverseBindMatrices:=aSourceDocument.Accessors[aSourceSkin.InverseBindMatrices].DecodeAsMatrix4x4Array(false);
   try
-   fInverseBindMatrices.Count:=length(InverseBindMatrices);
-   SetLength(fInverseBindMatrices.Items,fInverseBindMatrices.Count);
+   fInverseBindMatrices.Resize(length(InverseBindMatrices));
    if fInverseBindMatrices.Count>0 then begin
-    Move(InverseBindMatrices[0],fInverseBindMatrices.Items[0],length(InverseBindMatrices)*SizeOf(TpvMatrix4x4));
+    Move(InverseBindMatrices[0],fInverseBindMatrices.ItemArray[0],length(InverseBindMatrices)*SizeOf(TpvMatrix4x4));
    end;
   finally
    InverseBindMatrices:=nil;
   end;
  end;
 
- fMatrices.Initialize;
  fMatrices.Resize(aSourceSkin.Joints.Count);
 
- fJoints.Initialize;
  fJoints.Resize(aSourceSkin.Joints.Count);
  for JointIndex:=0 to fJoints.Count-1 do begin
-  fJoints.Items[JointIndex]:=aSourceSkin.Joints.Items[JointIndex];
+  fJoints.ItemArray[JointIndex]:=aSourceSkin.Joints.Items[JointIndex];
  end;
 
  OldCount:=fInverseBindMatrices.Count;
@@ -9913,6 +11242,7 @@ begin
  fData.fColor.z:=1.0;
  fData.fVisible:=true;
  fData.fCastShadows:=false;
+ fData.fGeneration:=1;
  if assigned(aSourceLight) then begin
   fName:=TPasJSON.GetString(aSourceLight.Properties['name'],'');
   TypeString:=TPasJSON.GetString(aSourceLight.Properties['type'],'');
@@ -9979,9 +11309,9 @@ begin
 
  fIndex:=aIndex;
 
- fChildNodeIndices.Initialize;
-
  fFlags:=[];
+
+ fJoint:=-1;
 
  fChildren:=TNodes.Create;
  fChildren.OwnsObjects:=false;
@@ -9992,6 +11322,8 @@ begin
  fUsedByScenesList:=TUsedByScenesList.Create;
  fUsedByScenesList.OwnsObjects:=false;
 
+ fWeights:=TpvScene3D.TFloatDynamicArrayList.Create;
+
  fUsedJoints.Initialize;
 
  fMesh:=nil;
@@ -10000,7 +11332,17 @@ begin
 
  fSkin:=nil;
 
+ fLightIndex:=-1;
+
  fLight:=nil;
+
+ fMatrix:=TpvMatrix4x4.Identity;
+
+ fTranslation:=TpvVector3.Origin;
+
+ fRotation:=TpvQuaternion.Identity;
+
+ fScale:=TpvVector3.InlineableCreate(1.0,1.0,1.0);
 
  fDrawChoreographyBatchItemIndices.Initialize;
 
@@ -10019,13 +11361,13 @@ begin
 
  fUsedJoints.Finalize;
 
+ FreeAndNil(fWeights);
+
  FreeAndNil(fUsedByScenesList);
 
  FreeAndNil(fSplittedChildren);
 
  FreeAndNil(fChildren);
-
- fChildNodeIndices.Finalize;
 
  fDrawChoreographyBatchItemIndices.Finalize;
 
@@ -10035,9 +11377,56 @@ begin
 
 end;
 
+procedure TpvScene3D.TGroup.TNode.Finish;
+var WeightIndex,Count,JointMatrixOffset:TpvSizeInt;
+begin
+
+ fWeights.Finish;
+
+ if assigned(fMesh) then begin
+
+  if assigned(fSkin) then begin
+   JointMatrixOffset:=fSkin.fJointMatrixOffset;
+  end else begin
+   JointMatrixOffset:=0;
+  end;
+
+  fNodeMeshInstanceIndex:=fMesh.CreateNodeMeshInstance(fIndex,fWeightsOffset,JointMatrixOffset);
+
+  Count:=fWeights.Count;
+
+  if Count<fMesh.fWeights.Count then begin
+
+   fWeights.Resize(fMesh.fWeights.Count);
+
+   for WeightIndex:=Count to fMesh.fWeights.Count-1 do begin
+    fWeights.Items[WeightIndex]:=fMesh.fWeights.Items[WeightIndex];
+   end;
+
+  end;
+
+ end else begin
+
+  fNodeMeshInstanceIndex:=-1;
+
+ end;
+
+ fWeightsOffset:=fGroup.fCountNodeWeights;
+
+ inc(fGroup.fCountNodeWeights,fWeights.Count);
+
+ fFlags:=[];
+ if assigned(fSkin) then begin
+  Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.SkinAnimated);
+ end;
+ if fWeights.Count>0 then begin
+  Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated);
+ end;
+
+end;
+
 procedure TpvScene3D.TGroup.TNode.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceNode:TPasGLTF.TNode;const aLightMap:TpvScene3D.TGroup.TLights);
-var WeightIndex,ChildrenIndex,Count,LightIndex,JointMatrixOffset:TPasGLTFSizeInt;
-    Mesh:TMesh;
+var WeightIndex,ChildrenIndex:TpvSizeInt;
     ExtensionObject:TPasJSONItemObject;
     KHRLightsPunctualItem:TPasJSONItem;
     KHRLightsPunctualObject:TPasJSONItemObject;
@@ -10063,7 +11452,18 @@ begin
   fSkin:=nil;
  end;
 
- fJoint:=-1;
+ ExtensionObject:=aSourceNode.Extensions;
+ if assigned(ExtensionObject) then begin
+  KHRLightsPunctualItem:=ExtensionObject.Properties['KHR_lights_punctual'];
+  if assigned(KHRLightsPunctualItem) and (KHRLightsPunctualItem is TPasJSONItemObject) then begin
+   KHRLightsPunctualObject:=TPasJSONItemObject(KHRLightsPunctualItem);
+   fLightIndex:=TPasJSON.GetInt64(KHRLightsPunctualObject.Properties['light'],-1);
+  end else begin
+   fLightIndex:=-1;
+  end;
+ end else begin
+  fLightIndex:=-1;
+ end;
 
  fMatrix:=TpvMatrix4x4(pointer(@aSourceNode.Matrix)^);
 
@@ -10073,78 +11473,18 @@ begin
 
  fScale:=TpvVector3(pointer(@aSourceNode.Scale)^);
 
- SetLength(fWeights,aSourceNode.Weights.Count);
- for WeightIndex:=0 to length(fWeights)-1 do begin
-  fWeights[WeightIndex]:=aSourceNode.Weights[WeightIndex];
+ fWeights.Resize(aSourceNode.Weights.Count);
+ for WeightIndex:=0 to fWeights.Count-1 do begin
+  fWeights.Items[WeightIndex]:=aSourceNode.Weights.Items[WeightIndex];
  end;
 
- fWeightsOffset:=Group.fCountNodeWeights;
-
- if assigned(fSkin) then begin
-  JointMatrixOffset:=fSkin.fJointMatrixOffset;
+ if (aLightMap.Count>0) and (fLightIndex>=0) and (fLightIndex<aLightMap.Count) then begin
+  aLightMap[fLightIndex].fNodes.Add(self);
+  fLight:=aLightMap[fLightIndex];
  end else begin
-  JointMatrixOffset:=0;
+  fLight:=nil;
  end;
 
- if assigned(fMesh) then begin
-  Mesh:=fMesh;
-  fNodeMeshInstanceIndex:=fMesh.CreateNodeMeshInstance(fIndex,fWeightsOffset,JointMatrixOffset);
-  Count:=length(fWeights);
-  if Count<length(Mesh.fWeights) then begin
-   SetLength(fWeights,length(Mesh.fWeights));
-   for WeightIndex:=Count to length(Mesh.fWeights)-1 do begin
-    fWeights[WeightIndex]:=Mesh.fWeights[WeightIndex];
-   end;
-  end;
- end else begin
-  fNodeMeshInstanceIndex:=-1;
- end;
-
- inc(fGroup.fCountNodeWeights,length(fWeights));
-
- fChildNodeIndices.Initialize;
- fChildNodeIndices.Resize(aSourceNode.Children.Count);
- for ChildrenIndex:=0 to fChildNodeIndices.Count-1 do begin
-  fChildNodeIndices.Items[ChildrenIndex]:=aSourceNode.Children[ChildrenIndex];
- end;
- fChildNodeIndices.Finish;
-
- if aLightMap.Count>0 then begin
-  ExtensionObject:=aSourceNode.Extensions;
-  if assigned(ExtensionObject) then begin
-   KHRLightsPunctualItem:=ExtensionObject.Properties['KHR_lights_punctual'];
-   if assigned(KHRLightsPunctualItem) and (KHRLightsPunctualItem is TPasJSONItemObject) then begin
-    KHRLightsPunctualObject:=TPasJSONItemObject(KHRLightsPunctualItem);
-    LightIndex:=TPasJSON.GetInt64(KHRLightsPunctualObject.Properties['light'],-1);
-    if (LightIndex>=0) and (LightIndex<aLightMap.Count) then begin
-     fLight:=aLightMap[LightIndex];
-     fLight.fNodes.Add(self);
-    end;
-   end;
-  end;
- end;
-
- fFlags:=[];
- if assigned(fSkin) then begin
-  Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.SkinAnimated);
- end;
- if length(fWeights)>0 then begin
-  Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated);
- end;
-
-end;
-
-procedure TpvScene3D.TGroup.TNode.Finish;
-var ChildrenIndex,NodeIndex:TpvSizeInt;
-begin
- for ChildrenIndex:=0 to fChildNodeIndices.Count-1 do begin
-  NodeIndex:=fChildNodeIndices.Items[ChildrenIndex];
-  if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
-   fChildren.Add(fGroup.fNodes[NodeIndex]);
-  end else begin
-   raise EPasGLTFInvalidDocument.Create('Node index out of range');
-  end;
- end;
 end;
 
 { TpvScene3D.TGroup.TScene }
@@ -10300,10 +11640,16 @@ end;
 { TpvScene3D.TGroup }
 
 constructor TpvScene3D.TGroup.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
+var InFlightFrameIndex:TpvSizeInt;
 begin
+
  inherited Create(aResourceManager,aParent,aMetaResource);
 
+ fReady:=false;
+
  fHeadless:=false;
+
+ fOrder:=0;
 
  fMaximumCountInstances:=-1;
 
@@ -10323,6 +11669,9 @@ begin
  fMaterialIDMapArrayIndexHashMap:=TpvScene3D.TGroup.TMaterialIDMapArrayIndexHashMap.Create(-1);
 
  fMaterialNameMapArrayIndexHashMap:=TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap.Create(-1);
+ fMaterialNameMapArrayIndexHashMapLowerCase:=TpvScene3D.TGroup.TMaterialNameMapArrayIndexHashMap.Create(-1);
+
+ fMaterialIndexHashMap:=TpvScene3D.TGroup.TMaterialIndexHashMap.Create(-1);
 
  fMaterialIDMapArrays:=TpvScene3D.TGroup.TMaterialIDMapArrays.Create;
  fMaterialIDMapArrays.OwnsObjects:=true;
@@ -10330,18 +11679,34 @@ begin
  fAnimations:=TAnimations.Create;
  fAnimations.OwnsObjects:=true;
 
+ fAnimationNameIndexHashMap:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+ fAnimationNameIndexHashMapLowerCase:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+
  fCameras:=TCameras.Create;
  fCameras.OwnsObjects:=true;
 
- fCameraNameIndexHashMap:=TCameraNameIndexHashMap.Create(-1);
+ fCameraNameIndexHashMap:=TNameIndexHashMap.Create(-1);
+ fCameraNameIndexHashMapLowerCase:=TNameIndexHashMap.Create(-1);
 
  fMeshes:=TMeshes.Create;
  fMeshes.OwnsObjects:=true;
 
- fMeshNameIndexHashMap:=TMeshNameIndexHashMap.Create(-1);
+ fMeshNameIndexHashMap:=TNameIndexHashMap.Create(-1);
+ fMeshNameIndexHashMapLowerCase:=TNameIndexHashMap.Create(-1);
+
+ fMeshContentGeneration:=0;
+
+ fUpdatedMeshContentGeneration:=High(TpvUInt64)-1;
+
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  fFrameUpdatedMeshContentGenerations[InFlightFrameIndex]:=High(TpvUInt64)-1;
+ end;
 
  fSkins:=TSkins.Create;
  fSkins.OwnsObjects:=true;
+
+ fSkinNameIndexHashMap:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+ fSkinNameIndexHashMapLowerCase:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
 
  fNodes:=TNodes.Create;
  fNodes.OwnsObjects:=true;
@@ -10349,26 +11714,39 @@ begin
  fLights:=TpvScene3D.TGroup.TLights.Create;
  fLights.OwnsObjects:=true;
 
+ fLightNameIndexHashMap:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+ fLightNameIndexHashMapLowerCase:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+
  fScenes:=TScenes.Create;
  fScenes.OwnsObjects:=true;
 
- fVertices.Initialize;
+ fVertices:=TpvScene3D.TGroup.TGroupVertices.Create;
 
- fIndices.Initialize;
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  fFrameVertices[InFlightFrameIndex]:=TpvScene3D.TGroup.TGroupVertices.Create;
+ end;
 
- fDrawChoreographyBatchCondensedIndices.Initialize;
+ fIndices:=TpvScene3D.TGroup.TGroupIndices.Create;
 
- fDrawChoreographyBatchCondensedUniqueIndices.Initialize;
+ fDrawChoreographyBatchCondensedIndices:=TpvScene3D.TGroup.TGroupIndices.Create;
 
- fMorphTargetVertices.Initialize;
+ fDrawChoreographyBatchCondensedUniqueIndices:=TpvScene3D.TGroup.TGroupIndices.Create;
 
- fJointBlocks.Initialize;
+ fMorphTargetVertices:=TpvScene3D.TMorphTargetVertexDynamicArrayList.Create;
+
+ fMorphTargetVertices.Clear;
+
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  fFrameMorphTargetVertices[InFlightFrameIndex]:=TpvScene3D.TMorphTargetVertexDynamicArrayList.Create;
+ end;
+
+ fMorphTargetCount:=0;
+
+ fJointBlocks:=TpvScene3D.TGroup.TGroupJointBlocks.Create;
 
  fJointBlockOffsets:=nil;
 
- fSkinStorageBufferSize:=0;
-
- fMorphTargetCount:=0;
+ fCountJointNodeMatrices:=0;
 
  fCachedVertexBufferMemoryBarriers:=nil;
 
@@ -10390,19 +11768,59 @@ begin
  fInstances:=TInstances.Create;
  fInstances.OwnsObjects:=false;
 
- fNodeNameIndexHashMap:=TpvScene3D.TGroup.TNodeNameIndexHashMap.Create(-1);
+ fNodeNameIndexHashMap:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+ fNodeNameIndexHashMapLowerCase:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+
+ fSceneNameIndexHashMap:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
+ fSceneNameIndexHashMapLowerCase:=TpvScene3D.TGroup.TNameIndexHashMap.Create(-1);
 
  fCameraNodeIndices:=TpvScene3D.TGroup.TCameraNodeIndices.Create;
 
  fOnNodeFilter:=nil;
 
+ fNewLightMap:=TpvScene3D.TGroup.TLights.Create;
+ fNewLightMap.OwnsObjects:=false;
+
+ fNewImageMap:=TpvScene3D.TImages.Create;
+ fNewImageMap.OwnsObjects:=false;
+
+ fNewImages:=TpvScene3D.TImages.Create;
+ fNewImages.OwnsObjects:=false;
+
+ fNewSamplerMap:=TpvScene3D.TSamplers.Create;
+ fNewSamplerMap.OwnsObjects:=false;
+
+ fNewSamplers:=TpvScene3D.TSamplers.Create;
+ fNewSamplers.OwnsObjects:=false;
+
+ fNewTextureMap:=TpvScene3D.TTextures.Create;
+ fNewTextureMap.OwnsObjects:=false;
+
+ fNewTextures:=TpvScene3D.TTextures.Create;
+ fNewTextures.OwnsObjects:=false;
+
 end;
 
 destructor TpvScene3D.TGroup.Destroy;
-var Material:TpvScene3D.TMaterial;
+var InFlightFrameIndex:TpvInt32;
+    Material:TpvScene3D.TMaterial;
 begin
 
  Unload;
+
+ FreeAndNil(fNewLightMap);
+
+ FreeAndNil(fNewImageMap);
+
+ FreeAndNil(fNewImages);
+
+ FreeAndNil(fNewSamplerMap);
+
+ FreeAndNil(fNewSamplers);
+
+ FreeAndNil(fNewTextureMap);
+
+ FreeAndNil(fNewTextures);
 
  while fInstances.Count>0 do begin
   fInstances[fInstances.Count-1].Free;
@@ -10432,9 +11850,20 @@ begin
 
  FreeAndNil(fObjects);
 
+ FreeAndNil(fAnimationNameIndexHashMap);
+ FreeAndNil(fAnimationNameIndexHashMapLowerCase);
+
  FreeAndNil(fCameraNameIndexHashMap);
+ FreeAndNil(fCameraNameIndexHashMapLowerCase);
 
  FreeAndNil(fMeshNameIndexHashMap);
+ FreeAndNil(fMeshNameIndexHashMapLowerCase);
+
+ FreeAndNil(fSkinNameIndexHashMap);
+ FreeAndNil(fSkinNameIndexHashMapLowerCase);
+
+ FreeAndNil(fLightNameIndexHashMap);
+ FreeAndNil(fLightNameIndexHashMapLowerCase);
 
  if not (assigned(fSceneInstance) and ((not assigned(fSceneInstance.fMaterials)) or (fSceneInstance.fMaterials.Count=0))) then begin
   if assigned(fSceneInstance) then begin
@@ -10455,6 +11884,9 @@ begin
  FreeAndNil(fMaterialsToDuplicate);
 
  FreeAndNil(fMaterialNameMapArrayIndexHashMap);
+ FreeAndNil(fMaterialNameMapArrayIndexHashMapLowerCase);
+
+ FreeAndNil(fMaterialIndexHashMap);
 
  FreeAndNil(fMaterialIDMapArrayIndexHashMap);
 
@@ -10462,23 +11894,35 @@ begin
 
  fMaterialMap:=nil;
 
- fDrawChoreographyBatchCondensedIndices.Finalize;
+ FreeAndNil(fDrawChoreographyBatchCondensedIndices);
 
- fDrawChoreographyBatchCondensedUniqueIndices.Finalize;
+ FreeAndNil(fDrawChoreographyBatchCondensedUniqueIndices);
 
- fIndices.Finalize;
+ FreeAndNil(fIndices);
 
- fVertices.Finalize;
+ FreeAndNil(fVertices);
 
- fMorphTargetVertices.Finalize;
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  FreeAndNil(fFrameVertices[InFlightFrameIndex]);
+ end;
 
- fJointBlocks.Finalize;
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  FreeAndNil(fFrameMorphTargetVertices[InFlightFrameIndex]);
+ end;
+
+ FreeAndNil(fMorphTargetVertices);
+
+ FreeAndNil(fJointBlocks);
 
  fJointBlockOffsets:=nil;
 
  fCachedVertexBufferMemoryBarriers:=nil;
 
  FreeAndNil(fNodeNameIndexHashMap);
+ FreeAndNil(fNodeNameIndexHashMapLowerCase);
+
+ FreeAndNil(fSceneNameIndexHashMap);
+ FreeAndNil(fSceneNameIndexHashMapLowerCase);
 
  FreeAndNil(fCameraNodeIndices);
 
@@ -10528,6 +11972,83 @@ begin
  end;
 end;
 
+function TpvScene3D.TGroup.Usable:boolean;
+begin
+ result:=AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done];
+end;
+
+function TpvScene3D.TGroup.GetLightID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fLightNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fLightNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetMaterialID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fMaterialNameMapArrayIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fMaterialNameMapArrayIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetCameraID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fCameraNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fCameraNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetMeshID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fMeshNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fMeshNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetSkinID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fSkinNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fSkinNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetNodeID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fNodeNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fNodeNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetAnimationID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fAnimationNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fAnimationNameIndexHashMap[aName];
+ end;
+end;
+
+function TpvScene3D.TGroup.GetSceneID(const aName:TpvUTF8String;const aIgnoreCase:Boolean):TpvSizeInt;
+begin
+ if aIgnoreCase then begin
+  result:=fSceneNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aName)];
+ end else begin
+  result:=fSceneNameIndexHashMap[aName];
+ end;
+end;
+
 procedure TpvScene3D.TGroup.LoadData;
 begin
 end;
@@ -10536,7 +12057,7 @@ procedure TpvScene3D.TGroup.Upload;
 var Index:TpvSizeInt;
     Node:TpvScene3D.TGroup.TNode;
     Mesh:TpvScene3D.TGroup.TMesh;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     Material:TpvScene3D.TMaterial;
     Instance:TpvScene3D.TGroup.TInstance;
 begin
@@ -10583,10 +12104,10 @@ begin
         for Node in fNodes do begin
          Mesh:=Node.Mesh;
          if assigned(Mesh) then begin
-          for Index:=0 to length(Mesh.fPrimitives)-1 do begin
-           Primitive:=@Mesh.fPrimitives[Index];
-           Material:=Primitive.Material;
-           if assigned(Primitive.Material) then begin
+          for Index:=0 to Mesh.fPrimitives.Count-1 do begin
+           Primitive:=Mesh.fPrimitives[Index];
+           Material:=Primitive.fMaterial;
+           if assigned(Primitive.fMaterial) then begin
             Material.Upload;
            end;
           end;
@@ -10661,29 +12182,339 @@ procedure TpvScene3D.TGroup.ConstructBuffers;
 begin
 end;
 
+procedure TpvScene3D.TGroup.PostProcessSkins;
+var Skin:TpvScene3D.TGroup.TSkin;
+begin
+ fCountJointNodeMatrices:=0;
+ for Skin in fSkins do begin
+  Skin.fJointMatrixOffset:=fCountJointNodeMatrices;
+  inc(fCountJointNodeMatrices,Skin.fJoints.Count);
+ end;
+end;
+
+procedure TpvScene3D.TGroup.PostProcessNodes;
+var Index,Offset:TpvSizeInt;
+    Node:TpvScene3D.TGroup.TNode;
+begin
+
+ fCountNodeWeights:=0;
+
+ for Index:=0 to fNodes.Count-1 do begin
+  fNodes[Index].Finish;
+ end;
+
+ fCameraNodeIndices.Clear;
+
+ for Index:=0 to fNodes.Count-1 do begin
+  Node:=fNodes[Index];
+  if assigned(Node.Camera) then begin
+   fCameraNodeIndices.Add(Index);
+  end;
+ end;
+
+ begin
+
+  Offset:=fNodes.Count+1;
+
+  for Index:=0 to length(fJointBlockOffsets)-1 do begin
+   inc(fJointBlockOffsets[Index],Offset);
+  end;
+
+  for Index:=0 to fSkins.Count-1 do begin
+   inc(fSkins[Index].fJointMatrixOffset,Offset);
+  end;
+
+  for Index:=0 to Min(fJointBlocks.Count,length(fJointBlockOffsets))-1 do begin
+
+   if IsZero(fJointBlocks.ItemArray[Index].Weights.x) then begin
+    fJointBlocks.ItemArray[Index].Joints[0]:=0;
+   end else begin
+    inc(fJointBlocks.ItemArray[Index].Joints[0],fJointBlockOffsets[Index]);
+   end;
+
+   if IsZero(fJointBlocks.ItemArray[Index].Weights.y) then begin
+    fJointBlocks.ItemArray[Index].Joints[1]:=0;
+   end else begin
+    inc(fJointBlocks.ItemArray[Index].Joints[1],fJointBlockOffsets[Index]);
+   end;
+
+   if IsZero(fJointBlocks.ItemArray[Index].Weights.z) then begin
+    fJointBlocks.ItemArray[Index].Joints[2]:=0;
+   end else begin
+    inc(fJointBlocks.ItemArray[Index].Joints[2],fJointBlockOffsets[Index]);
+   end;
+
+   if IsZero(fJointBlocks.ItemArray[Index].Weights.w) then begin
+    fJointBlocks.ItemArray[Index].Joints[3]:=0;
+   end else begin
+    inc(fJointBlocks.ItemArray[Index].Joints[3],fJointBlockOffsets[Index]);
+   end;
+  end;
+
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.PostProcessAnimations;
+type TMaterialHashMap=TpvHashMap<TpvSizeInt,TpvSizeInt>;
+     TMaterialArrayList=TpvDynamicArrayList<TpvSizeInt>;
+     TTargetHashMap=TpvHashMap<TpvUInt64,TpvSizeInt>;
+     TTargetArrayList=TpvDynamicArrayList<TpvUInt64>;
+     TTargetUsedBitmap=array of TpvUInt32;
+var Index,ChannelIndex,TargetIndex,CountDefaultChannels,
+    MaterialArrayIndex,MaterialIDMapArrayIndex,
+    MaterialIndex,InstanceChannelTargetIndex:TpvSizeInt;
+    SourceAnimation:TPasGLTF.TAnimation;
+    Animation:TpvScene3D.TGroup.TAnimation;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
+    DefaultChannel:TpvScene3D.TGroup.TAnimation.TDefaultChannel;
+    MaterialHashMap:TMaterialHashMap;
+    MaterialArrayList:TMaterialArrayList;
+    TargetHashMap:TTargetHashMap;
+    InstanceChannelTargetHashMap:TTargetHashMap;
+    TargetArrayList:TTargetArrayList;
+    TargetUsedBitmap:TTargetUsedBitmap;
+    CompactCode:TpvUInt64;
+    Material,DuplicatedMaterial:TpvScene3D.TMaterial;
+    MaterialIDMapArray:TpvScene3D.TGroup.TMaterialIDMapArray;
+    TextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
+    OK:boolean;
+begin
+ fCountInstanceAnimationChannels:=0;
+ MaterialHashMap:=TMaterialHashMap.Create(-1);
+ try
+  MaterialArrayList:=TMaterialArrayList.Create;
+  try
+   InstanceChannelTargetHashMap:=TTargetHashMap.Create(-1);
+   try
+    TargetHashMap:=TTargetHashMap.Create(-1);
+    try
+     TargetArrayList:=TTargetArrayList.Create;
+     try
+      for Index:=0 to fAnimations.Count-1 do begin
+       Animation:=fAnimations[Index];
+       for ChannelIndex:=0 to Animation.fChannels.Count-1 do begin
+        Channel:=Animation.fChannels[ChannelIndex];
+        Channel.fTargetInstanceIndex:=-1;
+        case Channel.fTarget of
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+          OK:=false;
+          if (Channel.fTargetIndex>=0) and (Channel.fTargetIndex<fMaterials.Count) then begin
+           MaterialIndex:=Channel.fTargetIndex;
+           Material:=fMaterials[MaterialIndex];
+           MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
+           if MaterialIDMapArrayIndex>=0 then begin
+            MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
+            if MaterialIDMapArray.Count>0 then begin
+             if MaterialIDMapArray.Count>=2 then begin
+              fSceneInstance.fMaterialListLock.Acquire;
+              try
+               DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+               try
+                DuplicatedMaterial.Assign(Material);
+                Material.DecRef;
+                Material:=DuplicatedMaterial;
+                Material.IncRef;
+                MaterialIDMapArray.Remove(MaterialIndex);
+                MaterialIDMapArray:=TMaterialIDMapArray.Create;
+                fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
+                MaterialIDMapArray.Add(MaterialIndex);
+               finally
+                fMaterials[MaterialIndex]:=Material;
+                fMaterialMap[Index+1]:=Material.fID;
+               end;
+              finally
+               fSceneInstance.fMaterialListLock.Release;
+              end;
+             end;
+             //Channel^.TargetIndex:=Material.fID;
+             MaterialArrayIndex:=MaterialHashMap[Material.fID];
+             if MaterialArrayIndex<0 then begin
+              MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
+              MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
+              fMaterialsToDuplicate.Add(Material);
+             end;
+             OK:=true;
+            end;
+           end;
+           if assigned(Material) and (Channel.fTargetSubIndex>=0) then begin
+            case Channel.fTarget of
+             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
+             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
+             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
+              Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel.fTargetSubIndex));
+              TextureTransform:=Material.fData.GetTextureTransform(TpvScene3D.TTextureIndex(Channel.fTargetSubIndex));
+              if assigned(TextureTransform) then begin
+               TextureTransform^.Active:=true;
+              end;
+             end;
+            end;
+{           if (Channel.fTarget in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
+               (Channel.fTargetSubIndex>=0) then begin
+             Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel.fTargetSubIndex));
+            end;}
+           end;
+          end;
+          if not OK then begin
+           Channel.fTargetIndex:=-1;
+          end;
+         end;
+        end;
+{       if Channel.fTarget in TpvScene3D.TGroup.TAnimation.TChannel.MaterialTargets then begin
+        end;}
+       end;
+       for ChannelIndex:=0 to Animation.fChannels.Count-1 do begin
+        Channel:=Animation.fChannels[ChannelIndex];
+        if Channel.fTargetIndex>=0 then begin
+         begin
+          CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel.fTarget)) and TpvUInt64($ffff)) shl 48) or
+                       (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                       (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+          TargetIndex:=TargetHashMap[CompactCode];
+          if TargetIndex<0 then begin
+           TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
+          end;
+         end;
+         begin
+          CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[Channel.fTarget])) and TpvUInt64($ffff)) shl 48) or
+                       (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                       (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+          InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
+          if InstanceChannelTargetIndex<0 then begin
+           InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
+           inc(fCountInstanceAnimationChannels);
+           InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
+          end;
+          Channel.fTargetInstanceIndex:=InstanceChannelTargetIndex;
+         end;
+        end;
+       end;
+      end;
+      if TargetArrayList.Count>0 then begin
+       TargetUsedBitmap:=nil;
+       try
+        SetLength(TargetUsedBitmap,(TargetArrayList.Count+31) shr 5);
+        for Index:=0 to fAnimations.Count-1 do begin
+         Animation:=fAnimations[Index];
+         FillChar(TargetUsedBitmap[0],length(TargetUsedBitmap)*SizeOf(TpvUInt32),#0);
+         for ChannelIndex:=0 to Animation.fChannels.Count-1 do begin
+          Channel:=Animation.fChannels[ChannelIndex];
+          if Channel.fTargetIndex>=0 then begin
+           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel.fTarget)) and TpvUInt64($ffff)) shl 48) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                        (TpvUInt64(TpvUInt64(TpvInt64(Channel.fTargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+           TargetIndex:=TargetHashMap[CompactCode];
+           if (TargetIndex>=0) and (TargetIndex<TargetArrayList.Count) then begin
+            TargetUsedBitmap[TargetIndex shr 5]:=TargetUsedBitmap[TargetIndex shr 5] or (TpvUInt32(1) shl (TargetIndex and 31));
+           end;
+          end;
+         end;
+         CountDefaultChannels:=0;
+         for TargetIndex:=0 to TargetArrayList.Count-1 do begin
+          if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
+           inc(CountDefaultChannels);
+          end;
+         end;
+         if CountDefaultChannels>0 then begin
+          Animation.fDefaultChannels.Clear;
+          for TargetIndex:=0 to TargetArrayList.Count-1 do begin
+           if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
+            DefaultChannel:=TpvScene3D.TGroup.TAnimation.TDefaultChannel.Create;
+            Animation.fDefaultChannels.Add(DefaultChannel);
+            begin
+             CompactCode:=TargetArrayList[TargetIndex];
+             DefaultChannel.fTarget:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvInt32(TpvUInt64(TpvUInt64(CompactCode) shr 48)));
+             DefaultChannel.fTargetIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 16) and TpvUInt64($ffffffff)))-1;
+             DefaultChannel.fTargetSubIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 0) and TpvUInt64($ffff)))-1;
+            end;
+            begin
+             CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[DefaultChannel.fTarget])) and TpvUInt64($ffff)) shl 48) or
+                          (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel.fTargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
+                          (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel.fTargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
+             InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
+             if InstanceChannelTargetIndex<0 then begin
+              InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
+              inc(fCountInstanceAnimationChannels);
+              InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
+             end;
+             DefaultChannel.fTargetInstanceIndex:=InstanceChannelTargetIndex;
+            end;
+           end;
+          end;
+         end;
+        end;
+       finally
+        TargetUsedBitmap:=nil;
+       end;
+      end;
+     finally
+      FreeAndNil(TargetArrayList);
+     end;
+    finally
+     FreeAndNil(TargetHashMap);
+    end;
+   finally
+    FreeAndNil(InstanceChannelTargetHashMap);
+   end;
+  finally
+   FreeAndNil(MaterialArrayList);
+  end;
+ finally
+  FreeAndNil(MaterialHashMap);
+ end;
+end;
+
 procedure TpvScene3D.TGroup.MarkAnimatedElements;
 var Animation:TpvScene3D.TGroup.TAnimation;
     AnimationChannelIndex:TpvSizeInt;
-    AnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+    AnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
 begin
  for Animation in Animations do begin
-  for AnimationChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-   AnimationChannel:=@Animation.fChannels[AnimationChannelIndex];
-   case AnimationChannel^.Target of
+  for AnimationChannelIndex:=0 to Animation.fChannels.Count-1 do begin
+   AnimationChannel:=Animation.fChannels[AnimationChannelIndex];
+   case AnimationChannel.fTarget of
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale:begin
-     if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fNodes.Count) then begin
-      Include(fNodes[AnimationChannel^.TargetIndex].fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.TransformAnimated);
+     if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fNodes.Count) then begin
+      Include(fNodes[AnimationChannel.fTargetIndex].fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.TransformAnimated);
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights,
     TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
-     if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fNodes.Count) then begin
-      Include(fNodes[AnimationChannel^.TargetIndex].fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated);
+     if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fNodes.Count) then begin
+      Include(fNodes[AnimationChannel.fTargetIndex].fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated);
      end;
     end;
     else begin
@@ -10775,6 +12606,54 @@ begin
 
 end;
 
+procedure TpvScene3D.TGroup.CalculateBoundingBox;
+var First:boolean;
+ procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMatrix:TpvMatrix4x4);
+ var Index:TpvSizeInt;
+     Matrix:TpvMatrix4x4;
+     Node:TpvScene3D.TGroup.TNode;
+     Visible:boolean;
+     BoundingBox:TpvAABB;
+ begin
+  Node:=fNodes[aNodeIndex];
+  Matrix:=((TpvMatrix4x4.CreateScale(Node.fScale)*
+            (TpvMatrix4x4.CreateFromQuaternion(Node.fRotation)*
+             TpvMatrix4x4.CreateTranslation(Node.fTranslation)))*Node.fMatrix)*aMatrix;
+  if assigned(Node.fMesh) then begin
+   Visible:=false;
+   for Index:=0 to Node.fMesh.fPrimitives.Count-1 do begin
+    if assigned(Node.fMesh.fPrimitives[Index].fMaterial) and Node.fMesh.fPrimitives[Index].fMaterial.fVisible then begin
+     Visible:=true;
+     break;
+    end;
+   end;
+   if Visible then begin
+    BoundingBox:=Node.fMesh.fBoundingBox.HomogenTransform(Matrix);
+    if First then begin
+     First:=false;
+     fBoundingBox:=BoundingBox;
+    end else begin
+     fBoundingBox.DirectCombine(BoundingBox);
+    end;
+   end;
+  end;
+  for Index:=0 to Node.Children.Count-1 do begin
+   ProcessNode(Node.Children[Index].Index,Matrix);
+  end;
+ end;
+var Scene:TpvScene3D.TGroup.TScene;
+    Node:TpvScene3D.TGroup.TNode;
+begin
+ fBoundingBox.Min:=TpvVector3.Origin;
+ fBoundingBox.Max:=TpvVector3.Origin;
+ First:=true;
+ for Scene in fScenes do begin
+  for Node in Scene.fNodes do begin
+   ProcessNode(Node.Index,TpvMatrix4x4.Identity);
+  end;
+ end;
+end;
+
 procedure TpvScene3D.TGroup.CollectUsedVisibleDrawNodes;
 type TNodeStack=TpvDynamicStack<TpvScene3D.TGroup.TNode>;
      TNodeHashMap=TpvHashMap<TpvScene3D.TGroup.TNode,boolean>;
@@ -10783,7 +12662,7 @@ var NodeIndex,PrimitiveIndex:TpvSizeInt;
     NodeStack:TNodeStack;
     Node:TpvScene3D.TGroup.TNode;
     Mesh:TpvScene3D.TGroup.TMesh;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     NodeHashMap:TNodeHashMap;
     SceneNodeHashMap:TNodeHashMap;
 begin
@@ -10807,11 +12686,11 @@ begin
       end;
       Mesh:=Node.fMesh;
       if (not NodeHashMap[Node]) and assigned(Mesh) and (Node.fNodeMeshInstanceIndex>=0) then begin
-       for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-        Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
-        if (Primitive^.CountIndices>0) and
-           assigned(Primitive^.Material) and
-           (Node.fNodeMeshInstanceIndex<Primitive^.NodeMeshPrimitiveInstances.Count) then begin
+       for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+        Primitive:=Mesh.fPrimitives[PrimitiveIndex];
+        if (Primitive.fCountIndices>0) and
+           assigned(Primitive.fMaterial) and
+           (Node.fNodeMeshInstanceIndex<Primitive.fNodeMeshPrimitiveInstances.Count) then begin
          NodeHashMap[Node]:=true;
          fUsedVisibleDrawNodes.Add(Node);
          break;
@@ -10839,17 +12718,17 @@ var PrimitiveIndex:TpvSizeInt;
     Node:TpvScene3D.TGroup.TNode;
     Mesh:TpvScene3D.TGroup.TMesh;
     Scene:TpvScene3D.TGroup.TScene;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     Material:TpvScene3D.TMaterial;
 begin
  for Node in fUsedVisibleDrawNodes do begin
   Mesh:=Node.fMesh;
   if assigned(Mesh) and (Node.fNodeMeshInstanceIndex>=0) then begin
-   for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-    Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
+   for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+    Primitive:=Mesh.fPrimitives[PrimitiveIndex];
     if assigned(Primitive) then begin
-     Material:=Primitive^.Material;
-     if assigned(Material) and (Node.fNodeMeshInstanceIndex<Primitive^.NodeMeshPrimitiveInstances.Count) then begin
+     Material:=Primitive.fMaterial;
+     if assigned(Material) and (Node.fNodeMeshInstanceIndex<Primitive.fNodeMeshPrimitiveInstances.Count) then begin
       for Scene in Node.fUsedByScenesList do begin
       end;
      end;
@@ -10857,6 +12736,145 @@ begin
    end;
   end;
  end;
+end;
+
+procedure TpvScene3D.TGroup.CollectNodeUsedJoints;
+// This procedure goes through all nodes and collects their used joints and their associated used weights and AABBs,
+// for later runtime calculation of a conservative worst-case bounding box for a node with a skinned animated mesh,
+// For that, it identifies and records the joints used by each node. It iterates through all nodes, determining which
+// joints influence the vertices of the node's mesh. A bounding box for each joint will be calculated, accounting for
+// mesh vertices including approximate influences of morph target vertices, and aggregates this information in a list
+// of used joints for each node. This list is later used to approximate the bounding box for skinned animated meshes.
+type TJointIndexHashMap=TpvHashMap<TpvSizeInt,TpvSizeInt>;
+var PrimitiveIndex,VertexIndex,JointBlockIndex,JointIndex,Joint,UsedJointIndex:TpvSizeInt;
+    MorphTargetVertexIndex:TpvUInt32;
+    MorphTargetVertex:TpvScene3D.PMorphTargetVertex;
+    JointIndexHashMap:TJointIndexHashMap;
+    Node:TpvScene3D.TGroup.TNode;
+    Mesh:TpvScene3D.TGroup.TMesh;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+    Vertex:TpvScene3D.PVertex;
+    JointBlock:TpvScene3D.PJointBlock;
+    Weight:TpvScalar;
+    UsedJoint:TpvScene3D.TGroup.TNode.PUsedJoint;
+    AABB:TpvAABB;
+begin
+
+ // Create a hash map to store joint indices
+ JointIndexHashMap:=TJointIndexHashMap.Create(-1);
+ try
+
+  // Iterate over each node
+  for Node in fNodes do begin
+
+   Mesh:=Node.Mesh;
+
+   // Check if the node has a mesh
+   if assigned(Mesh) then begin
+
+    // Reset the list of used joints for the node
+    Node.fUsedJoints.Clear;
+
+    // Clear the hash map of joint indices
+    JointIndexHashMap.Clear;
+
+    // Iterate over each primitive of the mesh
+    for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+
+     Primitive:=Mesh.fPrimitives[PrimitiveIndex];
+
+     // Check if the primitive has vertices
+     if Primitive.fCountVertices>0 then begin
+
+      // Iterate over each vertex of the primitive
+      for VertexIndex:=TpvSizeInt(Primitive.fStartBufferVertexOffset) to TpvSizeInt(Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+
+       Vertex:=@fVertices.ItemArray[VertexIndex];
+
+       // Check if the vertex has joint blocks
+       if Vertex^.CountJointBlocks>0 then begin
+
+        // Initialize the axis-aligned bounding box (AABB) with the vertex position
+        AABB.Min:=Vertex^.Position;
+        AABB.Max:=Vertex^.Position;
+
+        // Process and adjust bounding box for morph target vertices. The loop continues until
+        // it encounters the sentinel value TpvUInt32($ffffffff), which indicates the end of
+        // the morph target vertex chain. This value is used as a marker to signify that
+        // there are no more morph target vertices to process.
+        MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
+        while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
+         MorphTargetVertex:=@fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
+         AABB.DirectCombineVector3(Vertex^.Position+MorphTargetVertex^.Position.xyz); // Assume a weight value of 1.0 for an approximate result
+         MorphTargetVertexIndex:=MorphTargetVertex^.Next;
+        end;
+
+        // Iterate over joint blocks that influence the current vertex
+        for JointBlockIndex:=Vertex^.JointBlockBaseIndex to (Vertex^.JointBlockBaseIndex+Vertex^.CountJointBlocks)-1 do begin
+
+         JointBlock:=@fJointBlocks.ItemArray[JointBlockIndex];
+
+         // Process each joint in the joint block
+         for JointIndex:=0 to 3 do begin
+
+          Joint:=JointBlock^.Joints[JointIndex];
+          Weight:=JointBlock^.Weights[JointIndex];
+
+          // Check if joint is valid and weight is not zero
+          if (Joint>=0) and not IsZero(Weight) then begin
+
+           // Check if joint is already in the used joints list
+           if JointIndexHashMap.TryGet(Joint,UsedJointIndex) then begin
+
+            // If yes, update the data of the used joint
+
+            UsedJoint:=@Node.fUsedJoints.Items[UsedJointIndex];
+            UsedJoint^.Weight:=Max(abs(UsedJoint^.Weight),abs(Weight))*Sign(Weight);
+            UsedJoint^.AABB.DirectCombine(AABB);
+
+           end else begin
+
+            // If no, add the joint to the used joints list with initial data
+
+            UsedJointIndex:=Node.fUsedJoints.AddNewIndex;
+
+            JointIndexHashMap.Add(Joint,UsedJointIndex);
+
+            UsedJoint:=@Node.fUsedJoints.Items[UsedJointIndex];
+            UsedJoint^.Joint:=Joint;
+            UsedJoint^.Weight:=Weight;
+            UsedJoint^.AABB:=AABB;
+
+           end;
+
+          end;
+
+         end;
+
+        end;
+
+       end;
+
+      end;
+
+     end;
+
+    end;
+
+    // Finalize the list of used joints for the node (freezing the dynamic allocated array to its final size)
+    Node.fUsedJoints.Finish;
+
+   end;
+
+  end;
+
+ finally
+
+  // Release resources for the joint index hash map
+  FreeAndNil(JointIndexHashMap);
+
+ end;
+
 end;
 
 procedure TpvScene3D.TGroup.ConstructDrawChoreographyBatchItems;
@@ -10868,9 +12886,9 @@ var NodeIndex,PrimitiveIndex,StartIndex,DrawChoreographyBatchItemIndex,
     NodeStack:TNodeStack;
     Node:TpvScene3D.TGroup.TNode;
     Mesh:TpvScene3D.TGroup.TMesh;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     Material:TpvScene3D.TMaterial;
-    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.PNodeMeshPrimitiveInstance;
+    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance;
     DrawChoreographyBatchItem,OtherDrawChoreographyBatchItem:TDrawChoreographyBatchItem;
     IndexBitmap:TIndexBitmap;
 begin
@@ -10880,26 +12898,26 @@ begin
  for Node in fUsedVisibleDrawNodes do begin
   Mesh:=Node.fMesh;
   if assigned(Mesh) and (Node.fNodeMeshInstanceIndex>=0) then begin
-   for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-    Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
+   for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+    Primitive:=Mesh.fPrimitives[PrimitiveIndex];
     if assigned(Primitive) then begin
-     Material:=Primitive^.Material;
-     if assigned(Material) and (Node.fNodeMeshInstanceIndex<Primitive^.NodeMeshPrimitiveInstances.Count) then begin
-      NodeMeshPrimitiveInstance:=@Primitive^.NodeMeshPrimitiveInstances.Items[Node.fNodeMeshInstanceIndex];
-      if Primitive^.CountIndices>0 then begin
+     Material:=Primitive.fMaterial;
+     if assigned(Material) and (Node.fNodeMeshInstanceIndex<Primitive.fNodeMeshPrimitiveInstances.Count) then begin
+      NodeMeshPrimitiveInstance:=Primitive.fNodeMeshPrimitiveInstances[Node.fNodeMeshInstanceIndex];
+      if Primitive.fCountIndices>0 then begin
        DrawChoreographyBatchItem:=TDrawChoreographyBatchItem.Create;
        try
         DrawChoreographyBatchItem.fGroup:=self;
         DrawChoreographyBatchItem.fGroupInstance:=nil;
         DrawChoreographyBatchItem.fAlphaMode:=Material.fData.AlphaMode;
-        DrawChoreographyBatchItem.fPrimitiveTopology:=Primitive^.PrimitiveTopology;
+        DrawChoreographyBatchItem.fPrimitiveTopology:=Primitive.fPrimitiveTopology;
         DrawChoreographyBatchItem.fDoubleSided:=Material.fData.DoubleSided;
         DrawChoreographyBatchItem.fMaterial:=Material;
         DrawChoreographyBatchItem.fNode:=Node;
         DrawChoreographyBatchItem.fMesh:=Mesh;
         DrawChoreographyBatchItem.fMeshPrimitive:=PrimitiveIndex;
-        DrawChoreographyBatchItem.fStartIndex:=NodeMeshPrimitiveInstance^.StartBufferIndexOffset;
-        DrawChoreographyBatchItem.fCountIndices:=Primitive^.CountIndices;
+        DrawChoreographyBatchItem.fStartIndex:=NodeMeshPrimitiveInstance.fStartBufferIndexOffset;
+        DrawChoreographyBatchItem.fCountIndices:=Primitive.fCountIndices;
        finally
         fDrawChoreographyBatchItems.Add(DrawChoreographyBatchItem);
        end;
@@ -10916,7 +12934,7 @@ begin
  for DrawChoreographyBatchItem in fDrawChoreographyBatchItems do begin
   StartIndex:=DrawChoreographyBatchItem.fStartIndex;
   DrawChoreographyBatchItem.fStartIndex:=fDrawChoreographyBatchCondensedIndices.Count;
-  fDrawChoreographyBatchCondensedIndices.Add(copy(fIndices.Items,StartIndex,DrawChoreographyBatchItem.fCountIndices));
+  fDrawChoreographyBatchCondensedIndices.Add(copy(fIndices.ItemArray,StartIndex,DrawChoreographyBatchItem.fCountIndices));
  end;
  fDrawChoreographyBatchCondensedIndices.Finish;
 
@@ -11013,6 +13031,14 @@ begin
 
 end;
 
+procedure TpvScene3D.TGroup.ConstructSkipLists;
+var Scene:TpvScene3D.TGroup.TScene;
+begin
+ for Scene in fScenes do begin
+  Scene.ConstructSkipList;
+ end;
+end;
+
 function TpvScene3D.TGroup.AssetGetURI(const aURI:TPasGLTFUTF8String):TStream;
 var FileName:TPasGLTFUTF8String;
 begin
@@ -11024,172 +13050,574 @@ begin
  end;
 end;
 
-procedure TpvScene3D.TGroup.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
-var LightMap:TpvScene3D.TGroup.TLights;
-    ImageMap:TpvScene3D.TImages;
-    SamplerMap:TpvScene3D.TSamplers;
-    TextureMap:TpvScene3D.TTextures;
-    NewImages:TpvScene3D.TImages;
-    NewSamplers:TpvScene3D.TSamplers;
-    NewTextures:TpvScene3D.TTextures;
-    //MaterialMap:TpvScene3D.TMaterials;
-    HasLights:boolean;
-    POCACodeString:TpvUTF8String;
- procedure ProcessImages;
- var Index:TpvSizeInt;
-     SourceImage:TPasGLTF.TImage;
-     Image,
-     HashedImage,
-     CurrentImage:TImage;
-     HashData:TImage.THashData;
- begin
-  for Index:=0 to aSourceDocument.Images.Count-1 do begin
-   SourceImage:=aSourceDocument.Images[Index];
-   Image:=TImage.Create(ResourceManager,fSceneInstance);
-   try
-    fSceneInstance.fImageListLock.Acquire;
+procedure TpvScene3D.TGroup.CleanUp;
+var Texture:TpvScene3D.TTexture;
+    Sampler:TpvScene3D.TSampler;
+    Image:TpvScene3D.TImage;
+begin
+
+ try
+
+  try
+   if assigned(fNewTextures) then begin
     try
-     Image.AssignFromGLTF(aSourceDocument,SourceImage);
-     HashData:=Image.GetHashData;
+     fSceneInstance.fTextureListLock.Acquire;
+     try
+      for Texture in fNewTextures do begin
+       Texture.DecRef;
+      end;
+     finally
+      fSceneInstance.fTextureListLock.Release;
+     end;
+    finally
+     FreeAndNil(fNewTextures);
+    end;
+   end;
+  finally
+   FreeAndNil(fNewTextureMap);
+  end;
+
+ finally
+
+  try
+
+   try
+    if assigned(fNewSamplers) then begin
+     try
+      fSceneInstance.fSamplerListLock.Acquire;
+      try
+       for Sampler in fNewSamplers do begin
+        Sampler.DecRef;
+       end;
+      finally
+       fSceneInstance.fSamplerListLock.Release;
+      end;
+     finally
+      FreeAndNil(fNewSamplers);
+     end;
+    end;
+   finally
+    FreeAndNil(fNewSamplerMap);
+   end;
+
+  finally
+
+   try
+
+    try
+     if assigned(fNewImages) then begin
+      try
+       fSceneInstance.fImageListLock.Acquire;
+       try
+        for Image in fNewImages do begin
+         Image.DecRef;
+        end;
+       finally
+        fSceneInstance.fImageListLock.Release;
+       end;
+      finally
+       FreeAndNil(fNewImages);
+      end;
+     end;
+    finally
+     FreeAndNil(fNewImageMap);
+    end;
+
+   finally
+    FreeAndNil(fNewLightMap);
+   end;
+
+  end;
+
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.Finish;
+var InFlightFrameIndex:TpvSizeInt;
+begin
+
+ if not fReady then begin
+
+  FinalizeMaterials(true);
+
+  PostProcessSkins;
+
+  PostProcessNodes;
+
+  PostProcessAnimations;
+
+  MarkAnimatedElements;
+
+  CollectAllSceneNodesAndSplitNodesIntoAnimatedOrNotAnimatedSubtreesPerScene;
+
+  CalculateBoundingBox;
+
+  ConstructBuffers;
+
+  CollectUsedVisibleDrawNodes;
+
+  CollectMaterials;
+
+  CollectNodeUsedJoints;
+
+  ConstructDrawChoreographyBatchItems;
+
+  ConstructSkipLists;
+
+  fUpdatedMeshContentGeneration:=fMeshContentGeneration;
+
+  for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+   fFrameUpdatedMeshContentGenerations[InFlightFrameIndex]:=fMeshContentGeneration;
+  end;
+
+  fReady:=true;
+
+ end;
+
+end;
+
+function TpvScene3D.TGroup.AddLight(const aLight:TpvScene3D.TGroup.TLight):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aLight) then begin
+  result:=fLights.Add(aLight);
+  if aLight.fIndex<0 then begin
+   aLight.fIndex:=result;
+  end else if aLight.Index<>result then begin
+   raise EpvScene3D.Create('Light index mismatch');
+  end;
+  if length(trim(aLight.fName))>0 then begin
+   if not fLightNameIndexHashMap.ExistKey(aLight.fName) then begin
+    fLightNameIndexHashMap.Add(aLight.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aLight.fName);
+   if not fLightNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fLightNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.AddImage(const aImage:TpvScene3D.TImage;const aForceNew:Boolean):TpvSizeInt;
+var Image,HashedImage,CurrentImage:TpvScene3D.TImage;
+    HashData:TpvScene3D.TImage.THashData;
+begin
+ Image:=aImage;
+ if assigned(Image) then begin
+  try
+   fSceneInstance.fImageListLock.Acquire;
+   try
+    HashData:=Image.GetHashData;
+    if aForceNew then begin
+     if not fSceneInstance.fImageHashMap.ExistKey(HashData) then begin
+      fSceneInstance.fImageHashMap[HashData]:=Image;
+     end;
+     result:=fNewImageMap.Add(Image);
+     CurrentImage:=Image;
+     Image:=nil;
+    end else begin
      HashedImage:=fSceneInstance.fImageHashMap[HashData];
      if assigned(HashedImage) then begin
-      ImageMap.Add(HashedImage);
+      result:=fNewImageMap.Add(HashedImage);
       CurrentImage:=HashedImage;
      end else begin
       Image.fHashData:=HashData;
       fSceneInstance.fImageHashMap[HashData]:=Image;
-      ImageMap.Add(Image);
+      result:=fNewImageMap.Add(Image);
       CurrentImage:=Image;
       Image:=nil;
      end;
-     if assigned(CurrentImage) and (NewImages.IndexOf(CurrentImage)<0) then begin
-      CurrentImage.IncRef;
-      CurrentImage.LoadData;
-      NewImages.Add(CurrentImage);
-     end;
-    finally
-     fSceneInstance.fImageListLock.Release;
+    end;
+    if assigned(CurrentImage) and (fNewImages.IndexOf(CurrentImage)<0) then begin
+     CurrentImage.IncRef;
+     CurrentImage.LoadData;
+     fNewImages.Add(CurrentImage);
     end;
    finally
-    FreeAndNil(Image);
+    fSceneInstance.fImageListLock.Release;
    end;
+  finally
+   FreeAndNil(Image);
   end;
+ end else begin
+  result:=-1;
  end;
- procedure ProcessSamplers;
- var Index:TpvSizeInt;
-     SourceSampler:TPasGLTF.TSampler;
-     Sampler,
-     HashedSampler,
-     CurrentSampler:TSampler;
-     HashData:TSampler.THashData;
- begin
-  for Index:=0 to aSourceDocument.Samplers.Count-1 do begin
-   SourceSampler:=aSourceDocument.Samplers[Index];
-   Sampler:=TSampler.Create(ResourceManager,fSceneInstance);
+end;
+
+function TpvScene3D.TGroup.AddSampler(const aSampler:TpvScene3D.TSampler;const aForceNew:Boolean):TpvSizeInt;
+var Sampler,HashedSampler,CurrentSampler:TSampler;
+    HashData:TSampler.THashData;
+begin
+ Sampler:=aSampler;
+ if assigned(Sampler) then begin
+  try
+   fSceneInstance.fSamplerListLock.Acquire;
    try
-    fSceneInstance.fSamplerListLock.Acquire;
-    try
-     Sampler.AssignFromGLTF(aSourceDocument,SourceSampler);
-     HashData:=Sampler.GetHashData;
+    HashData:=Sampler.GetHashData;
+    if aForceNew then begin
+     if not fSceneInstance.fSamplerHashMap.ExistKey(HashData) then begin
+      fSceneInstance.fSamplerHashMap[HashData]:=Sampler;
+     end;
+     result:=fNewSamplerMap.Add(Sampler);
+     CurrentSampler:=Sampler;
+     Sampler:=nil;
+    end else begin
      HashedSampler:=fSceneInstance.fSamplerHashMap[HashData];
      if assigned(HashedSampler) then begin
-      SamplerMap.Add(HashedSampler);
+      result:=fNewSamplerMap.Add(HashedSampler);
       CurrentSampler:=HashedSampler;
      end else begin
       fSceneInstance.fSamplerHashMap[HashData]:=Sampler;
-      SamplerMap.Add(Sampler);
+      result:=fNewSamplerMap.Add(Sampler);
       CurrentSampler:=Sampler;
       Sampler:=nil;
      end;
-     if assigned(CurrentSampler) and (NewSamplers.IndexOf(CurrentSampler)<0) then begin
-      CurrentSampler.IncRef;
-      NewSamplers.Add(CurrentSampler);
-     end;
-    finally
-     fSceneInstance.fSamplerListLock.Release;
+    end;
+    if assigned(CurrentSampler) and (fNewSamplers.IndexOf(CurrentSampler)<0) then begin
+     CurrentSampler.IncRef;
+     fNewSamplers.Add(CurrentSampler);
     end;
    finally
-    FreeAndNil(Sampler);
+    fSceneInstance.fSamplerListLock.Release;
    end;
+  finally
+   FreeAndNil(Sampler);
   end;
+ end else begin
+  result:=-1;
  end;
- procedure ProcessTextures;
- var Index:TpvSizeInt;
-     SourceTexture:TPasGLTF.TTexture;
-     Texture,
-     HashedTexture,
-     CurrentTexture:TTexture;
+end;
+
+function TpvScene3D.TGroup.AddTexture(const aTexture:TpvScene3D.TTexture;const aForceNew:Boolean):TpvSizeInt;
+var Texture,HashedTexture,CurrentTexture:TTexture;
      HashData:TTexture.THashData;
- begin
-  for Index:=0 to aSourceDocument.Textures.Count-1 do begin
-   SourceTexture:=aSourceDocument.Textures[Index];
-   Texture:=TTexture.Create(ResourceManager,fSceneInstance);
+begin
+ Texture:=aTexture;
+ if assigned(Texture) then begin
+  try
+   fSceneInstance.fTextureListLock.Acquire;
    try
-    fSceneInstance.fTextureListLock.Acquire;
-    try
-     Texture.AssignFromGLTF(aSourceDocument,SourceTexture,ImageMap,SamplerMap);
-     HashData:=Texture.GetHashData;
+    HashData:=Texture.GetHashData;
+    if aForceNew then begin
+     if not fSceneInstance.fTextureHashMap.ExistKey(HashData) then begin
+      fSceneInstance.fTextureHashMap[HashData]:=Texture;
+     end;
+     result:=fNewTextureMap.Add(Texture);
+     CurrentTexture:=Texture;
+     Texture:=nil;
+    end else begin
      HashedTexture:=fSceneInstance.fTextureHashMap[HashData];
      if assigned(HashedTexture) then begin
-      TextureMap.Add(HashedTexture);
+      result:=fNewTextureMap.Add(HashedTexture);
       CurrentTexture:=HashedTexture;
      end else begin
       fSceneInstance.fTextureHashMap[HashData]:=Texture;
-      TextureMap.Add(Texture);
+      result:=fNewTextureMap.Add(Texture);
       CurrentTexture:=Texture;
       Texture:=nil;
      end;
-     if assigned(CurrentTexture) and (NewTextures.IndexOf(CurrentTexture)<0) then begin
-      CurrentTexture.IncRef;
-      NewTextures.Add(CurrentTexture);
-     end;
-    finally
-     fSceneInstance.fTextureListLock.Release;
+    end;
+    if assigned(CurrentTexture) and (fNewTextures.IndexOf(CurrentTexture)<0) then begin
+     CurrentTexture.IncRef;
+     fNewTextures.Add(CurrentTexture);
     end;
    finally
-    FreeAndNil(Texture);
+    fSceneInstance.fTextureListLock.Release;
+   end;
+  finally
+   FreeAndNil(Texture);
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.AddMaterial(const aMaterial:TpvScene3D.TMaterial;const aForceNew:Boolean;const aDoubleCheck:Boolean):TpvSizeInt;
+var Material,HashedMaterial:TpvScene3D.TMaterial;
+    HashData:TpvScene3D.TMaterial.THashData;
+    s:TPUCUUTF8String;
+begin
+ Material:=aMaterial;
+ if assigned(Material) then begin
+  if aDoubleCheck and fMaterialIndexHashMap.TryGet(Material,result) then begin
+   exit;
+  end;
+  try
+   HashData:=Material.fData;
+   if aForceNew then begin
+    if not fSceneInstance.fMaterialHashMap.ExistKey(HashData) then begin
+     fSceneInstance.fMaterialHashMap[HashData]:=Material;
+    end;
+    result:=fMaterials.Add(Material);
+    fMaterialIndexHashMap.Add(Material,result);
+    Material:=nil;
+   end else begin
+    HashedMaterial:=fSceneInstance.fMaterialHashMap[HashData];
+    if assigned(HashedMaterial) then begin
+     result:=fMaterials.Add(HashedMaterial);
+     fMaterialIndexHashMap.Add(HashedMaterial,result);
+    end else begin
+     fSceneInstance.fMaterialHashMap[HashData]:=Material;
+     result:=fMaterials.Add(Material);
+     fMaterialIndexHashMap.Add(Material,result);
+     Material:=nil;
+    end;
+   end;
+   if length(trim(aMaterial.fName))>0 then begin
+    if not fMaterialNameMapArrayIndexHashMap.ExistKey(aMaterial.fName) then begin
+     fMaterialNameMapArrayIndexHashMap.Add(aMaterial.fName,result);
+    end;
+    s:=PUCUUTF8LowerCase(aMaterial.fName);
+    if not fMaterialNameMapArrayIndexHashMapLowerCase.ExistKey(s) then begin
+     fMaterialNameMapArrayIndexHashMapLowerCase.Add(s,result);
+    end;
+   end;
+  finally
+   FreeAndNil(Material);
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.AddMesh(const aMesh:TpvScene3D.TGroup.TMesh):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aMesh) then begin
+  result:=fMeshes.Add(aMesh);
+  if aMesh.fIndex<0 then begin
+   aMesh.fIndex:=result;
+  end else if aMesh.Index<>result then begin
+   raise EpvScene3D.Create('Mesh index mismatch');
+  end;
+  if length(trim(aMesh.fName))>0 then begin
+   if not fMeshNameIndexHashMap.ExistKey(aMesh.fName) then begin
+    fMeshNameIndexHashMap.Add(aMesh.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aMesh.fName);
+   if not fMeshNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fMeshNameIndexHashMapLowerCase.Add(s,result);
    end;
   end;
+ end else begin
+  result:=-1;
  end;
- procedure ProcessMaterials;
- var Index,MaterialIDMapArrayIndex:TpvSizeInt;
-     SourceMaterial:TPasGLTF.TMaterial;
-     Material,
-     HashedMaterial:TpvScene3D.TMaterial;
-     HashData:TpvScene3D.TMaterial.THashData;
-     MaterialIDMapArray:TMaterialIDMapArray;
- begin
+end;
 
-  SetLength(fMaterialMap,aSourceDocument.Materials.Count+1);
+function TpvScene3D.TGroup.AddSkin(const aSkin:TpvScene3D.TGroup.TSkin):TpvSizeInt;
+var Skin:TpvScene3D.TGroup.TSkin;
+    s:TPUCUUTF8String;
+begin
+ Skin:=aSkin;
+ if assigned(Skin) then begin
+  result:=fSkins.Add(Skin);
+  if aSkin.fIndex<0 then begin
+   aSkin.fIndex:=result;
+  end else if aSkin.Index<>result then begin
+   raise EpvScene3D.Create('Skin index mismatch');
+  end;
+  if length(trim(aSkin.fName))>0 then begin
+   if not fSkinNameIndexHashMap.ExistKey(aSkin.fName) then begin
+    fSkinNameIndexHashMap.Add(aSkin.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aSkin.fName);
+   if not fSkinNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fSkinNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
 
-  fMaterialMap[0]:=fSceneInstance.fEmptyMaterial.fID;
+function TpvScene3D.TGroup.AddAnimation(const aAnimation:TpvScene3D.TGroup.TAnimation):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aAnimation) then begin
+  result:=fAnimations.Add(aAnimation);
+  if aAnimation.fIndex<0 then begin
+   aAnimation.fIndex:=result;
+  end else if aAnimation.Index<>result then begin
+   raise EpvScene3D.Create('Animation index mismatch');
+  end;
+  if length(trim(aAnimation.fName))>0 then begin
+   if not fAnimationNameIndexHashMap.ExistKey(aAnimation.fName) then begin
+    fAnimationNameIndexHashMap.Add(aAnimation.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aAnimation.fName);
+   if not fAnimationNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fAnimationNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
 
-  fSceneInstance.fMaterialListLock.Acquire;
+function TpvScene3D.TGroup.AddCamera(const aCamera:TpvScene3D.TGroup.TCamera):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aCamera) then begin
+  result:=fCameras.Add(aCamera);
+  if aCamera.fIndex<0 then begin
+   aCamera.fIndex:=result;
+  end else if aCamera.Index<>result then begin
+   raise EpvScene3D.Create('Camera index mismatch');
+  end;
+  if length(trim(aCamera.fName))>0 then begin
+   if not fCameraNameIndexHashMap.ExistKey(aCamera.fName) then begin
+    fCameraNameIndexHashMap.Add(aCamera.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aCamera.fName);
+   if not fCameraNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fCameraNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.AddNode(const aNode:TpvScene3D.TGroup.TNode):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aNode) then begin
+  result:=fNodes.Add(aNode);
+  if aNode.fIndex<0 then begin
+   aNode.fIndex:=result;
+  end else if aNode.Index<>result then begin
+   raise EpvScene3D.Create('Node index mismatch');
+  end;
+  if length(trim(aNode.fName))>0 then begin
+   if not fNodeNameIndexHashMap.ExistKey(aNode.fName) then begin
+    fNodeNameIndexHashMap.Add(aNode.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aNode.fName);
+   if not fNodeNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fNodeNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.AddScene(const aScene:TpvScene3D.TGroup.TScene):TpvSizeInt;
+var s:TPUCUUTF8String;
+begin
+ if assigned(aScene) then begin
+  result:=fScenes.Add(aScene);
+  if aScene.fIndex<0 then begin
+   aScene.fIndex:=result;
+  end else if aScene.Index<>result then begin
+   raise EpvScene3D.Create('Scene index mismatch');
+  end;
+  if length(trim(aScene.fName))>0 then begin
+   if not fSceneNameIndexHashMap.ExistKey(aScene.fName) then begin
+    fSceneNameIndexHashMap.Add(aScene.fName,result);
+   end;
+   s:=PUCUUTF8LowerCase(aScene.fName);
+   if not fSceneNameIndexHashMapLowerCase.ExistKey(s) then begin
+    fSceneNameIndexHashMapLowerCase.Add(s,result);
+   end;
+  end;
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateLight(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TLight;
+begin
+ result:=TpvScene3D.TGroup.TLight.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddLight(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateMesh(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TMesh;
+begin
+ result:=TpvScene3D.TGroup.TMesh.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddMesh(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateSkin(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TSkin;
+begin
+ result:=TpvScene3D.TGroup.TSkin.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddSkin(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateAnimation(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TAnimation;
+begin
+ result:=TpvScene3D.TGroup.TAnimation.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddAnimation(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateCamera(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TCamera;
+begin
+ result:=TpvScene3D.TGroup.TCamera.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddCamera(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateNode(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TNode;
+begin
+ result:=TpvScene3D.TGroup.TNode.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddNode(result);
+ end;
+end;
+
+function TpvScene3D.TGroup.CreateScene(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TScene;
+begin
+ result:=TpvScene3D.TGroup.TScene.Create(self);
+ try
+  result.fName:=aName;
+ finally
+  AddScene(result);
+ end;
+end;
+
+procedure TpvScene3D.TGroup.FinalizeMaterials(const aDoLock:Boolean);
+var Index,MaterialIDMapArrayIndex:TpvSizeInt;
+    Material:TpvScene3D.TMaterial;
+    MaterialIDMapArray:TMaterialIDMapArray;
+    s:TPUCUUTF8String;
+begin
+
+ if length(fMaterialMap)=0 then begin
+
+  if aDoLock then begin
+   fSceneInstance.fMaterialListLock.Acquire;
+  end;
   try
 
-   for Index:=0 to aSourceDocument.Materials.Count-1 do begin
+   SetLength(fMaterialMap,fMaterials.Count+1);
 
-    SourceMaterial:=aSourceDocument.Materials[Index];
+   fMaterialMap[0]:=fSceneInstance.fEmptyMaterial.fID;
 
-    Material:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
-    try
-
-     Material.AssignFromGLTF(aSourceDocument,SourceMaterial,TextureMap);
-
-     HashData:=Material.fData;
-
-     HashedMaterial:=fSceneInstance.fMaterialHashMap[HashData];
-     if assigned(HashedMaterial) then begin
-      fMaterials.Add(HashedMaterial);
-     end else begin
-      fSceneInstance.fMaterialHashMap[HashData]:=Material;
-      fMaterials.Add(Material);
-      Material:=nil;
-     end;
-
-    finally
-     FreeAndNil(Material);
-    end;
+   for Index:=0 to fMaterials.Count-1 do begin
 
     Material:=fMaterials[Index];
     try
@@ -11197,7 +13625,13 @@ var LightMap:TpvScene3D.TGroup.TLights;
      fMaterialMap[Index+1]:=Material.fID;
 
      if length(trim(Material.fName))>0 then begin
-      fMaterialNameMapArrayIndexHashMap.Add(Material.fName,Index);
+      if not fMaterialNameMapArrayIndexHashMap.ExistKey(Material.fName) then begin
+       fMaterialNameMapArrayIndexHashMap.Add(Material.fName,Index);
+      end;
+      s:=PUCUUTF8LowerCase(Material.fName);
+      if not fMaterialNameMapArrayIndexHashMapLowerCase.ExistKey(s) then begin
+       fMaterialNameMapArrayIndexHashMapLowerCase.Add(s,Index);
+      end;
      end;
 
      MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
@@ -11217,22 +13651,119 @@ var LightMap:TpvScene3D.TGroup.TLights;
    end;
 
   finally
-   fSceneInstance.fMaterialListLock.Release;
+   if aDoLock then begin
+    fSceneInstance.fMaterialListLock.Release;
+   end;
   end;
 
  end;
+
+end;
+
+procedure TpvScene3D.TGroup.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
+var POCACodeString:TpvUTF8String;
+ procedure ProcessLights;
+ var Index:TpvSizeInt;
+     Light:TpvScene3D.TGroup.TLight;
+     ExtensionObject:TPasJSONItemObject;
+     KHRLightsPunctualItem,LightsItem,LightItem:TPasJSONItem;
+     KHRLightsPunctualObject:TPasJSONItemObject;
+     LightsArray:TPasJSONItemArray;
+ begin
+  ExtensionObject:=aSourceDocument.Extensions;
+  if assigned(ExtensionObject) then begin
+   KHRLightsPunctualItem:=ExtensionObject.Properties['KHR_lights_punctual'];
+   if assigned(KHRLightsPunctualItem) and (KHRLightsPunctualItem is TPasJSONItemObject) then begin
+    KHRLightsPunctualObject:=TPasJSONItemObject(KHRLightsPunctualItem);
+    LightsItem:=KHRLightsPunctualObject.Properties['lights'];
+    if assigned(LightsItem) and (LightsItem is TPasJSONItemArray) then begin
+     LightsArray:=TPasJSONItemArray(LightsItem);
+     for Index:=0 to LightsArray.Count-1 do begin
+      LightItem:=LightsArray.Items[Index];
+      if assigned(LightItem) and (LightItem is TPasJSONItemObject) then begin
+       Light:=TpvScene3D.TGroup.TLight.Create(self,Index);
+       try
+        Light.AssignFromGLTF(aSourceDocument,TPasJSONItemObject(LightItem));
+       finally
+        AddLight(Light);
+       end;
+      end else begin
+       Light:=nil;
+      end;
+      fNewLightMap.Add(Light);
+     end;
+    end;
+   end;
+  end;
+ end;
+ procedure ProcessImages;
+ var Index:TpvSizeInt;
+     Image:TpvScene3D.TImage;
+ begin
+  for Index:=0 to aSourceDocument.Images.Count-1 do begin
+   Image:=TImage.Create(ResourceManager,fSceneInstance);
+   try
+    Image.AssignFromGLTF(aSourceDocument,aSourceDocument.Images[Index]);
+   finally
+    AddImage(Image,false);
+   end;
+  end;
+ end;
+ procedure ProcessSamplers;
+ var Index:TpvSizeInt;
+     Sampler:TSampler;
+ begin
+  for Index:=0 to aSourceDocument.Samplers.Count-1 do begin
+   Sampler:=TSampler.Create(ResourceManager,fSceneInstance);
+   try
+    Sampler.AssignFromGLTF(aSourceDocument,aSourceDocument.Samplers[Index]);
+   finally
+    AddSampler(Sampler,false);
+   end;
+  end;
+ end;
+ procedure ProcessTextures;
+ var Index:TpvSizeInt;
+     Texture:TTexture;
+ begin
+  for Index:=0 to aSourceDocument.Textures.Count-1 do begin
+   Texture:=TTexture.Create(ResourceManager,fSceneInstance);
+   try
+    Texture.AssignFromGLTF(aSourceDocument,aSourceDocument.Textures[Index],fNewImageMap,fNewSamplerMap);
+   finally
+    AddTexture(Texture,false);
+   end;
+  end;
+ end;
+ procedure ProcessMaterials;
+ var Index:TpvSizeInt;
+     Material:TpvScene3D.TMaterial;
+ begin
+  fSceneInstance.fMaterialListLock.Acquire;
+  try
+   for Index:=0 to aSourceDocument.Materials.Count-1 do begin
+    Material:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+    try
+     Material.AssignFromGLTF(aSourceDocument,aSourceDocument.Materials[Index],fNewTextureMap);
+    finally
+     AddMaterial(Material,false,false);
+    end;
+   end;
+   FinalizeMaterials(false);
+  finally
+   fSceneInstance.fMaterialListLock.Release;
+  end;
+ end;
  procedure ProcessAnimations;
  var Index:TpvSizeInt;
-     SourceAnimation:TPasGLTF.TAnimation;
      Animation:TpvScene3D.TGroup.TAnimation;
  begin
   for Index:=0 to aSourceDocument.Animations.Count-1 do begin
-   SourceAnimation:=aSourceDocument.Animations[Index];
    Animation:=TAnimation.Create(self,Index);
    try
-    Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
+    Animation.AssignFromGLTF(aSourceDocument,aSourceDocument.Animations[Index]);
    finally
-    fAnimations.Add(Animation);
+    AddAnimation(Animation);
    end;
   end;
  end;
@@ -11282,242 +13813,6 @@ var LightMap:TpvScene3D.TGroup.TLights;
    end;
   end;
  end;
- procedure PostProcessAnimations;
- type TMaterialHashMap=TpvHashMap<TpvSizeInt,TpvSizeInt>;
-      TMaterialArrayList=TpvDynamicArrayList<TpvSizeInt>;
-      TTargetHashMap=TpvHashMap<TpvUInt64,TpvSizeInt>;
-      TTargetArrayList=TpvDynamicArrayList<TpvUInt64>;
-      TTargetUsedBitmap=array of TpvUInt32;
- var Index,ChannelIndex,TargetIndex,CountDefaultChannels,
-     MaterialArrayIndex,MaterialIDMapArrayIndex,
-     MaterialIndex,InstanceChannelTargetIndex:TpvSizeInt;
-     SourceAnimation:TPasGLTF.TAnimation;
-     Animation:TpvScene3D.TGroup.TAnimation;
-     Channel:TpvScene3D.TGroup.TAnimation.PChannel;
-     DefaultChannel:TpvScene3D.TGroup.TAnimation.PDefaultChannel;
-     MaterialHashMap:TMaterialHashMap;
-     MaterialArrayList:TMaterialArrayList;
-     TargetHashMap:TTargetHashMap;
-     InstanceChannelTargetHashMap:TTargetHashMap;
-     TargetArrayList:TTargetArrayList;
-     TargetUsedBitmap:TTargetUsedBitmap;
-     CompactCode:TpvUInt64;
-     Material,DuplicatedMaterial:TpvScene3D.TMaterial;
-     MaterialIDMapArray:TpvScene3D.TGroup.TMaterialIDMapArray;
-     TextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
-     OK:boolean;
- begin
-  fCountInstanceAnimationChannels:=0;
-  MaterialHashMap:=TMaterialHashMap.Create(-1);
-  try
-   MaterialArrayList:=TMaterialArrayList.Create;
-   try
-    InstanceChannelTargetHashMap:=TTargetHashMap.Create(-1);
-    try
-     TargetHashMap:=TTargetHashMap.Create(-1);
-     try
-      TargetArrayList:=TTargetArrayList.Create;
-      try
-       for Index:=0 to fAnimations.Count-1 do begin
-        Animation:=fAnimations[Index];
-        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-         Channel:=@Animation.fChannels[ChannelIndex];
-         Channel^.TargetInstanceIndex:=-1;
-         case Channel^.Target of
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessMetallicFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessRoughnessFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialAlphaCutOff,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialNormalTextureScale,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialOcclusionTextureStrength,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRClearCoatRoughnessFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialEmissiveStrength,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialIOR,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceIor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMinimum,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRIridescenceMaximum,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSheenRoughnessFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRTransmissionFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeThicknessFactor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationDistance,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
-          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-           OK:=false;
-           if (Channel^.TargetIndex>=0) and (Channel^.TargetIndex<fMaterials.Count) then begin
-            MaterialIndex:=Channel^.TargetIndex;
-            Material:=fMaterials[MaterialIndex];
-            MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
-            if MaterialIDMapArrayIndex>=0 then begin
-             MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
-             if MaterialIDMapArray.Count>0 then begin
-              if MaterialIDMapArray.Count>=2 then begin
-               fSceneInstance.fMaterialListLock.Acquire;
-               try
-                DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
-                try
-                 DuplicatedMaterial.Assign(Material);
-                 Material.DecRef;
-                 Material:=DuplicatedMaterial;
-                 Material.IncRef;
-                 MaterialIDMapArray.Remove(MaterialIndex);
-                 MaterialIDMapArray:=TMaterialIDMapArray.Create;
-                 fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
-                 MaterialIDMapArray.Add(MaterialIndex);
-                finally
-                 fMaterials[MaterialIndex]:=Material;
-                 fMaterialMap[Index+1]:=Material.fID;
-                end;
-               finally
-                fSceneInstance.fMaterialListLock.Release;
-               end;
-              end;
-              //Channel^.TargetIndex:=Material.fID;
-              MaterialArrayIndex:=MaterialHashMap[Material.fID];
-              if MaterialArrayIndex<0 then begin
-               MaterialArrayIndex:=MaterialArrayList.Add(Material.fID);
-               MaterialHashMap.Add(Material.fID,MaterialArrayIndex);
-               fMaterialsToDuplicate.Add(Material);
-              end;
-              OK:=true;
-             end;
-            end;
-            if assigned(Material) and (Channel^.TargetSubIndex>=0) then begin
-             case Channel^.Target of
-              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
-              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
-              TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-               Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
-               TextureTransform:=Material.fData.GetTextureTransform(TpvScene3D.TTextureIndex(Channel^.TargetSubIndex));
-               if assigned(TextureTransform) then begin
-                TextureTransform^.Active:=true;
-               end;
-              end;
-             end;
-{            if (Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.TextureTargets) and
-                (Channel^.TargetSubIndex>=0) then begin
-              Material.fData.AnimatedTextureMask:=Material.fData.AnimatedTextureMask or (TpvUInt64(1) shl TpvSizeInt(Channel^.TargetSubIndex));
-             end;}
-            end;
-           end;
-           if not OK then begin
-            Channel^.TargetIndex:=-1;
-           end;
-          end;
-         end;
-{         if Channel^.Target in TpvScene3D.TGroup.TAnimation.TChannel.MaterialTargets then begin
-         end;}
-        end;
-        for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-         Channel:=@Animation.fChannels[ChannelIndex];
-         if Channel^.TargetIndex>=0 then begin
-          begin
-           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-           TargetIndex:=TargetHashMap[CompactCode];
-           if TargetIndex<0 then begin
-            TargetHashMap[CompactCode]:=TargetArrayList.Add(CompactCode);
-           end;
-          end;
-          begin
-           CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[Channel^.Target])) and TpvUInt64($ffff)) shl 48) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                        (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-           InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
-           if InstanceChannelTargetIndex<0 then begin
-            InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
-            inc(fCountInstanceAnimationChannels);
-            InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
-           end;
-           Channel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
-          end;
-         end;
-        end;
-       end;
-       if TargetArrayList.Count>0 then begin
-        TargetUsedBitmap:=nil;
-        try
-         SetLength(TargetUsedBitmap,(TargetArrayList.Count+31) shr 5);
-         for Index:=0 to fAnimations.Count-1 do begin
-          Animation:=fAnimations[Index];
-          FillChar(TargetUsedBitmap[0],length(TargetUsedBitmap)*SizeOf(TpvUInt32),#0);
-          for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
-           Channel:=@Animation.fChannels[ChannelIndex];
-           if Channel^.TargetIndex>=0 then begin
-            CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(Channel^.Target)) and TpvUInt64($ffff)) shl 48) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                         (TpvUInt64(TpvUInt64(TpvInt64(Channel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-            TargetIndex:=TargetHashMap[CompactCode];
-            if (TargetIndex>=0) and (TargetIndex<TargetArrayList.Count) then begin
-             TargetUsedBitmap[TargetIndex shr 5]:=TargetUsedBitmap[TargetIndex shr 5] or (TpvUInt32(1) shl (TargetIndex and 31));
-            end;
-           end;
-          end;
-          CountDefaultChannels:=0;
-          for TargetIndex:=0 to TargetArrayList.Count-1 do begin
-           if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
-            inc(CountDefaultChannels);
-           end;
-          end;
-          if CountDefaultChannels>0 then begin
-           SetLength(Animation.fDefaultChannels,CountDefaultChannels);
-           CountDefaultChannels:=0;
-           for TargetIndex:=0 to TargetArrayList.Count-1 do begin
-            if (TargetUsedBitmap[TargetIndex shr 5] and (TpvUInt32(1) shl (TargetIndex and 31)))=0 then begin
-             DefaultChannel:=@Animation.fDefaultChannels[CountDefaultChannels];
-             inc(CountDefaultChannels);
-             begin
-              CompactCode:=TargetArrayList[TargetIndex];
-              DefaultChannel^.Target:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvInt32(TpvUInt64(TpvUInt64(CompactCode) shr 48)));
-              DefaultChannel^.TargetIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 16) and TpvUInt64($ffffffff)))-1;
-              DefaultChannel^.TargetSubIndex:=TpvSizeInt(TpvUInt64(TpvUInt64(TpvUInt64(CompactCode) shr 0) and TpvUInt64($ffff)))-1;
-             end;
-             begin
-              CompactCode:=(TpvUInt64(TpvUInt64(TpvInt32(AnimationChannelTargetOverwriteGroupMap[DefaultChannel^.Target])) and TpvUInt64($ffff)) shl 48) or
-                           (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel^.TargetIndex)+1) and TpvUInt64($ffffffff)) shl 16) or
-                           (TpvUInt64(TpvUInt64(TpvInt64(DefaultChannel^.TargetSubIndex)+1) and TpvUInt64($ffff)) shl 0);
-              InstanceChannelTargetIndex:=InstanceChannelTargetHashMap[CompactCode];
-              if InstanceChannelTargetIndex<0 then begin
-               InstanceChannelTargetIndex:=fCountInstanceAnimationChannels;
-               inc(fCountInstanceAnimationChannels);
-               InstanceChannelTargetHashMap[CompactCode]:=InstanceChannelTargetIndex;
-              end;
-              DefaultChannel^.TargetInstanceIndex:=InstanceChannelTargetIndex;
-             end;
-            end;
-           end;
-          end;
-         end;
-        finally
-         TargetUsedBitmap:=nil;
-        end;
-       end;
-      finally
-       FreeAndNil(TargetArrayList);
-      end;
-     finally
-      FreeAndNil(TargetHashMap);
-     end;
-    finally
-     FreeAndNil(InstanceChannelTargetHashMap);
-    end;
-   finally
-    FreeAndNil(MaterialArrayList);
-   end;
-  finally
-   FreeAndNil(MaterialHashMap);
-  end;
- end;
  procedure ProcessCameras;
  var Index:TpvSizeInt;
      SourceCamera:TPasGLTF.TCamera;
@@ -11527,202 +13822,142 @@ var LightMap:TpvScene3D.TGroup.TLights;
    SourceCamera:=aSourceDocument.Cameras[Index];
    Camera:=TCamera.Create(self,Index);
    try
-    if length(trim(Camera.fName))>0 then begin
-     fCameraNameIndexHashMap.Add(Camera.fName,Index);
-    end;
     Camera.AssignFromGLTF(aSourceDocument,SourceCamera);
    finally
-    fCameras.Add(Camera);
+    AddCamera(Camera);
    end;
   end;
  end;
  procedure ProcessMeshes;
  var Index:TpvSizeInt;
-     SourceMesh:TPasGLTF.TMesh;
      Mesh:TMesh;
  begin
-  fMorphTargetVertices.Clear;
-  fMorphTargetCount:=0;
   for Index:=0 to aSourceDocument.Meshes.Count-1 do begin
-   SourceMesh:=aSourceDocument.Meshes[Index];
    Mesh:=TMesh.Create(self,Index);
    try
-    if length(trim(Mesh.fName))>0 then begin
-     fMeshNameIndexHashMap.Add(Mesh.fName,Index);
-    end;
-    Mesh.AssignFromGLTF(aSourceDocument,SourceMesh,fMaterials);
+    Mesh.AssignFromGLTF(aSourceDocument,aSourceDocument.Meshes[Index],fMaterials);
    finally
-    fMeshes.Add(Mesh);
+    AddMesh(Mesh);
    end;
   end;
  end;
  procedure ProcessSkins;
  var Index:TpvSizeInt;
-     SourceSkin:TPasGLTF.TSkin;
      Skin:TSkin;
  begin
-  fCountJointNodeMatrices:=0;
-  fSkinStorageBufferSize:=0;
   for Index:=0 to aSourceDocument.Skins.Count-1 do begin
-   SourceSkin:=aSourceDocument.Skins[Index];
    Skin:=TSkin.Create(self,Index);
    try
-    Skin.AssignFromGLTF(aSourceDocument,SourceSkin);
+    Skin.AssignFromGLTF(aSourceDocument,aSourceDocument.Skins[Index]);
    finally
-    fSkins.Add(Skin);
-   end;
-   Skin.fJointMatrixOffset:=fCountJointNodeMatrices;
-   inc(fCountJointNodeMatrices,Skin.fJoints.Count);
-   Skin.fStorageBufferObjectOffset:=fSkinStorageBufferSize;
-   if Skin.fJoints.Count>0 then begin
-    Skin.fStorageBufferObjectSize:=Skin.fJoints.Count*SizeOf(TpvMatrix4x4);
-    inc(fSkinStorageBufferSize,Skin.fStorageBufferObjectSize);
-   end else begin
-    Skin.fStorageBufferObjectSize:=0;
-   end;
-  end;
- end;
- procedure ProcessLights;
- var Index:TpvSizeInt;
-     Light:TpvScene3D.TGroup.TLight;
-     ExtensionObject:TPasJSONItemObject;
-     KHRLightsPunctualItem,LightsItem,LightItem:TPasJSONItem;
-     KHRLightsPunctualObject:TPasJSONItemObject;
-     LightsArray:TPasJSONItemArray;
- begin
-  if HasLights then begin
-   ExtensionObject:=aSourceDocument.Extensions;
-   if assigned(ExtensionObject) then begin
-    KHRLightsPunctualItem:=ExtensionObject.Properties['KHR_lights_punctual'];
-    if assigned(KHRLightsPunctualItem) and (KHRLightsPunctualItem is TPasJSONItemObject) then begin
-     KHRLightsPunctualObject:=TPasJSONItemObject(KHRLightsPunctualItem);
-     LightsItem:=KHRLightsPunctualObject.Properties['lights'];
-     if assigned(LightsItem) and (LightsItem is TPasJSONItemArray) then begin
-      LightsArray:=TPasJSONItemArray(LightsItem);
-      for Index:=0 to LightsArray.Count-1 do begin
-       LightItem:=LightsArray.Items[Index];
-       if assigned(LightItem) and (LightItem is TPasJSONItemObject) then begin
-        Light:=TpvScene3D.TGroup.TLight.Create(self,Index);
-        try
-         Light.AssignFromGLTF(aSourceDocument,TPasJSONItemObject(LightItem));
-        finally
-         fLights.Add(Light);
-        end;
-       end else begin
-        Light:=nil;
-       end;
-       LightMap.Add(Light);
-      end;
-     end;
-    end;
+    AddSkin(Skin);
    end;
   end;
  end;
  procedure ProcessNodes;
  type TPOCAFileHashMap=TpvStringHashMap<Boolean>;
- var Index,Offset:TpvSizeInt;
+      TChildNodeIndices=TpvDynamicArray<TpvSizeInt>;
+      PChildNodeIndices=^TChildNodeIndices;
+      TNodeChildNodeIndices=TpvDynamicArray<TChildNodeIndices>;
+ var Index,NodeIndex,ChildrenIndex:TpvSizeInt;
      SourceNode:TPasGLTF.TNode;
      Node:TNode;
      TemporaryString:TPasJSONUTF8String;
      TemporaryStream:TStream;
      POCAFileHashMap:TPOCAFileHashMap;
+     NodeChildNodeIndices:TNodeChildNodeIndices;
+     ChildNodeIndices:PChildNodeIndices;
+
  begin
-  POCAFileHashMap:=TPOCAFileHashMap.Create(false);
+
+  NodeChildNodeIndices.Initialize;
   try
-   fCountNodeWeights:=0;
-   fNodes.Clear;
-   for Index:=0 to aSourceDocument.Nodes.Count-1 do begin
-    SourceNode:=aSourceDocument.Nodes[Index];
-    Node:=TNode.Create(self,Index);
-    try
-     Node.AssignFromGLTF(aSourceDocument,SourceNode,LightMap);
-     if assigned(SourceNode.Extras) then begin
+
+   POCAFileHashMap:=TPOCAFileHashMap.Create(false);
+   try
+
+    fNodes.Clear;
+    for Index:=0 to aSourceDocument.Nodes.Count-1 do begin
+     SourceNode:=aSourceDocument.Nodes[Index];
+     Node:=TNode.Create(self,Index);
+     try
+      Node.AssignFromGLTF(aSourceDocument,SourceNode,fNewLightMap);
       begin
-       TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocacode'],'');
-       if length(TemporaryString)>0 then begin
-        TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
-        POCACodeString:=POCACodeString+TemporaryString;
-       end else begin
-        TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocafile'],'');
+       NodeIndex:=NodeChildNodeIndices.AddNewIndex;
+       ChildNodeIndices:=@NodeChildNodeIndices.Items[NodeIndex];
+       ChildNodeIndices^.Initialize;
+       ChildNodeIndices^.Resize(SourceNode.Children.Count);
+       for ChildrenIndex:=0 to ChildNodeIndices^.Count-1 do begin
+        ChildNodeIndices^.Items[ChildrenIndex]:=SourceNode.Children[ChildrenIndex];
+       end;
+       ChildNodeIndices^.Finish;
+      end;
+      if assigned(SourceNode.Extras) then begin
+       begin
+        TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocacode'],'');
         if length(TemporaryString)>0 then begin
-         if not POCAFileHashMap.ExistKey(TemporaryString) then begin
-          POCAFileHashMap.Add(TemporaryString,true);
-          if pvApplication.Assets.ExistAsset(TemporaryString) then begin
-           TemporaryStream:=pvApplication.Assets.GetAssetStream(TemporaryString);
-          end else begin
-           TemporaryStream:=nil;
-          end;
-          if not assigned(TemporaryStream) then begin
-           TemporaryStream:=aSourceDocument.GetURI(TemporaryString);
-          end;
-          if assigned(TemporaryStream) then begin
-           try
-            TemporaryString:='';
-            if TemporaryStream.Size>0 then begin
-             SetLength(TemporaryString,TemporaryStream.Size);
-             TemporaryStream.ReadBuffer(TemporaryString[1],TemporaryStream.Size);
-             TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
-             POCACodeString:=POCACodeString+TemporaryString;
+         TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
+         POCACodeString:=POCACodeString+TemporaryString;
+        end else begin
+         TemporaryString:=TPasJSON.GetString(SourceNode.Extras.Properties['pocafile'],'');
+         if length(TemporaryString)>0 then begin
+          if not POCAFileHashMap.ExistKey(TemporaryString) then begin
+           POCAFileHashMap.Add(TemporaryString,true);
+           if pvApplication.Assets.ExistAsset(TemporaryString) then begin
+            TemporaryStream:=pvApplication.Assets.GetAssetStream(TemporaryString);
+           end else begin
+            TemporaryStream:=nil;
+           end;
+           if not assigned(TemporaryStream) then begin
+            TemporaryStream:=aSourceDocument.GetURI(TemporaryString);
+           end;
+           if assigned(TemporaryStream) then begin
+            try
+             TemporaryString:='';
+             if TemporaryStream.Size>0 then begin
+              SetLength(TemporaryString,TemporaryStream.Size);
+              TemporaryStream.ReadBuffer(TemporaryString[1],TemporaryStream.Size);
+              TemporaryString:='(function(){'+#13#10+TemporaryString+#13#10+'})();'+#13#10;
+              POCACodeString:=POCACodeString+TemporaryString;
+             end;
+            finally
+             FreeAndNil(TemporaryStream);
             end;
-           finally
-            FreeAndNil(TemporaryStream);
            end;
           end;
          end;
         end;
        end;
       end;
+     finally
+      AddNode(Node);
+     end;
+    end;
+   finally
+    FreeAndNil(POCAFileHashMap);
+   end;
+
+   for Index:=0 to fNodes.Count-1 do begin
+    Node:=fNodes[Index];
+    ChildNodeIndices:=@NodeChildNodeIndices.Items[Index];
+    try
+     for ChildrenIndex:=0 to ChildNodeIndices^.Count-1 do begin
+      NodeIndex:=ChildNodeIndices^.Items[ChildrenIndex];
+      if (NodeIndex>=0) and (NodeIndex<fNodes.Count) then begin
+       Node.fChildren.Add(fNodes[NodeIndex]);
+      end else begin
+       raise EPasGLTFInvalidDocument.Create('Node index out of range');
+      end;
      end;
     finally
-     fNodes.Add(Node);
+     ChildNodeIndices^.Finalize;
     end;
    end;
+
   finally
-   FreeAndNil(POCAFileHashMap);
+   NodeChildNodeIndices.Finalize;
   end;
-  fNodeNameIndexHashMap.Clear;
-  fCameraNodeIndices.Clear;
-  for Index:=0 to fNodes.Count-1 do begin
-   Node:=fNodes[Index];
-   Node.Finish;
-   fNodeNameIndexHashMap.Add(Node.fName,Index);
-   if assigned(Node.Camera) then begin
-    fCameraNodeIndices.Add(Index);
-   end;
-  end;
-  begin
-   Offset:=fNodes.Count+1;
-   for Index:=0 to length(fJointBlockOffsets)-1 do begin
-    inc(fJointBlockOffsets[Index],Offset);
-   end;
-   for Index:=0 to fSkins.Count-1 do begin
-    inc(fSkins[Index].fJointMatrixOffset,Offset);
-   end;
-   for Index:=0 to Min(fJointBlocks.Count,length(fJointBlockOffsets))-1 do begin
-    if IsZero(fJointBlocks.Items[Index].Weights.x) then begin
-     fJointBlocks.Items[Index].Joints[0]:=0;
-    end else begin
-     inc(fJointBlocks.Items[Index].Joints[0],fJointBlockOffsets[Index]);
-    end;
-    if IsZero(fJointBlocks.Items[Index].Weights.y) then begin
-     fJointBlocks.Items[Index].Joints[1]:=0;
-    end else begin
-     inc(fJointBlocks.Items[Index].Joints[1],fJointBlockOffsets[Index]);
-    end;
-    if IsZero(fJointBlocks.Items[Index].Weights.z) then begin
-     fJointBlocks.Items[Index].Joints[2]:=0;
-    end else begin
-     inc(fJointBlocks.Items[Index].Joints[2],fJointBlockOffsets[Index]);
-    end;
-    if IsZero(fJointBlocks.Items[Index].Weights.w) then begin
-     fJointBlocks.Items[Index].Joints[3]:=0;
-    end else begin
-     inc(fJointBlocks.Items[Index].Joints[3],fJointBlockOffsets[Index]);
-    end;
-   end;
-  end;
-{ if fCountNodeWeights=fMorphTargetCount then begin
-  end;}
+
  end;
  procedure ProcessScenes;
  var Index:TpvSizeInt;
@@ -11735,355 +13970,55 @@ var LightMap:TpvScene3D.TGroup.TLights;
    try
     Scene.AssignFromGLTF(aSourceDocument,SourceScene);
    finally
-    fScenes.Add(Scene);
+    AddScene(Scene);
    end;
   end;
  end;
- procedure CalculateBoundingBox;
- var First:boolean;
-  procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMatrix:TpvMatrix4x4);
-  var Index:TpvSizeInt;
-      Matrix:TpvMatrix4x4;
-      Node:TpvScene3D.TGroup.TNode;
-      Visible:boolean;
-      BoundingBox:TpvAABB;
-  begin
-   Node:=fNodes[aNodeIndex];
-   Matrix:=((TpvMatrix4x4.CreateScale(Node.fScale)*
-             (TpvMatrix4x4.CreateFromQuaternion(Node.fRotation)*
-              TpvMatrix4x4.CreateTranslation(Node.fTranslation)))*Node.fMatrix)*aMatrix;
-   if assigned(Node.fMesh) then begin
-    Visible:=false;
-    for Index:=0 to length(Node.fMesh.fPrimitives)-1 do begin
-     if assigned(Node.fMesh.fPrimitives[Index].Material) and Node.fMesh.fPrimitives[Index].Material.fVisible then begin
-      Visible:=true;
-      break;
-     end;
-    end;
-    if Visible then begin
-     BoundingBox:=Node.fMesh.fBoundingBox.Transform(Matrix);
-     if First then begin
-      First:=false;
-      fBoundingBox:=BoundingBox;
-     end else begin
-      fBoundingBox:=fBoundingBox.Combine(BoundingBox);
-     end;
-    end;
-   end;
-   for Index:=0 to Node.Children.Count-1 do begin
-    ProcessNode(Node.Children[Index].Index,Matrix);
-   end;
-  end;
- var Scene:TpvScene3D.TGroup.TScene;
-     Node:TpvScene3D.TGroup.TNode;
- begin
-  fBoundingBox.Min:=TpvVector3.Origin;
-  fBoundingBox.Max:=TpvVector3.Origin;
-  First:=true;
-  for Scene in fScenes do begin
-   for Node in Scene.fNodes do begin
-    ProcessNode(Node.Index,TpvMatrix4x4.Identity);
-   end;
-  end;
- end;
- procedure CollectNodeUsedJoints;
- // This procedure goes through all nodes and collects their used joints and their associated used weights and AABBs,
- // for later runtime calculation of a conservative worst-case bounding box for a node with a skinned animated mesh,
- // For that, it identifies and records the joints used by each node. It iterates through all nodes, determining which
- // joints influence the vertices of the node's mesh. A bounding box for each joint will be calculated, accounting for
- // mesh vertices including approximate influences of morph target vertices, and aggregates this information in a list
- // of used joints for each node. This list is later used to approximate the bounding box for skinned animated meshes.
- type TJointIndexHashMap=TpvHashMap<TpvSizeInt,TpvSizeInt>;
- var PrimitiveIndex,VertexIndex,JointBlockIndex,JointIndex,Joint,UsedJointIndex:TpvSizeInt;
-     MorphTargetVertexIndex:TpvUInt32;
-     MorphTargetVertex:TpvScene3D.PMorphTargetVertex;
-     JointIndexHashMap:TJointIndexHashMap;
-     Node:TpvScene3D.TGroup.TNode;
-     Mesh:TpvScene3D.TGroup.TMesh;
-     Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
-     Vertex:TpvScene3D.PVertex;
-     JointBlock:TpvScene3D.PJointBlock;
-     Weight:TpvScalar;
-     UsedJoint:TpvScene3D.TGroup.TNode.PUsedJoint;
-     AABB:TpvAABB;
- begin
-
-  // Create a hash map to store joint indices
-  JointIndexHashMap:=TJointIndexHashMap.Create(-1);
-  try
-
-   // Iterate over each node
-   for Node in fNodes do begin
-
-    Mesh:=Node.Mesh;
-
-    // Check if the node has a mesh
-    if assigned(Mesh) then begin
-
-     // Reset the list of used joints for the node
-     Node.fUsedJoints.Clear;
-
-     // Clear the hash map of joint indices
-     JointIndexHashMap.Clear;
-
-     // Iterate over each primitive of the mesh
-     for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-
-      Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
-
-      // Check if the primitive has vertices
-      if Primitive^.CountVertices>0 then begin
-
-       // Iterate over each vertex of the primitive
-       for VertexIndex:=TpvSizeInt(Primitive^.StartBufferVertexOffset) to TpvSizeInt(Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-
-        Vertex:=@fVertices.Items[VertexIndex];
-
-        // Check if the vertex has joint blocks
-        if Vertex^.CountJointBlocks>0 then begin
-
-         // Initialize the axis-aligned bounding box (AABB) with the vertex position
-         AABB.Min:=Vertex^.Position;
-         AABB.Max:=Vertex^.Position;
-
-         // Process and adjust bounding box for morph target vertices. The loop continues until
-         // it encounters the sentinel value TpvUInt32($ffffffff), which indicates the end of
-         // the morph target vertex chain. This value is used as a marker to signify that
-         // there are no more morph target vertices to process.
-         MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
-         while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
-          MorphTargetVertex:=@fMorphTargetVertices.Items[MorphTargetVertexIndex];
-          AABB.DirectCombineVector3(Vertex^.Position+MorphTargetVertex^.Position.xyz); // Assume a weight value of 1.0 for an approximate result
-          MorphTargetVertexIndex:=MorphTargetVertex^.Next;
-         end;
-
-         // Iterate over joint blocks that influence the current vertex
-         for JointBlockIndex:=Vertex^.JointBlockBaseIndex to (Vertex^.JointBlockBaseIndex+Vertex^.CountJointBlocks)-1 do begin
-
-          JointBlock:=@fJointBlocks.Items[JointBlockIndex];
-
-          // Process each joint in the joint block
-          for JointIndex:=0 to 3 do begin
-
-           Joint:=JointBlock^.Joints[JointIndex];
-           Weight:=JointBlock^.Weights[JointIndex];
-
-           // Check if joint is valid and weight is not zero
-           if (Joint>=0) and not IsZero(Weight) then begin
-
-            // Check if joint is already in the used joints list
-            if JointIndexHashMap.TryGet(Joint,UsedJointIndex) then begin
-
-             // If yes, update the data of the used joint
-
-             UsedJoint:=@Node.fUsedJoints.Items[UsedJointIndex];
-             UsedJoint^.Weight:=Max(abs(UsedJoint^.Weight),abs(Weight))*Sign(Weight);
-             UsedJoint^.AABB.DirectCombine(AABB);
-
-            end else begin
-
-             // If no, add the joint to the used joints list with initial data 
-
-             UsedJointIndex:=Node.fUsedJoints.AddNew;
-
-             JointIndexHashMap.Add(Joint,UsedJointIndex);
-
-             UsedJoint:=@Node.fUsedJoints.Items[UsedJointIndex];
-             UsedJoint^.Joint:=Joint;
-             UsedJoint^.Weight:=Weight;
-             UsedJoint^.AABB:=AABB;
-
-            end;
-
-           end;
-
-          end;
-
-         end;
-
-        end;
-
-       end;
-
-      end;
-
-     end;
-
-     // Finalize the list of used joints for the node (freezing the dynamic allocated array to its final size) 
-     Node.fUsedJoints.Finish; 
-
-    end;
-
-   end;
-
-  finally
-
-   // Release resources for the joint index hash map
-   FreeAndNil(JointIndexHashMap);
-   
-  end;
-
- end;
-var Image:TpvScene3D.TImage;
-    Sampler:TpvScene3D.TSampler;
-    Texture:TpvScene3D.TTexture;
-    Scene:TpvScene3D.TGroup.TScene;
 begin
 
  POCACodeString:='';
 
- HasLights:=aSourceDocument.ExtensionsUsed.IndexOf('KHR_lights_punctual')>=0;
-
- LightMap:=TpvScene3D.TGroup.TLights.Create;
- LightMap.OwnsObjects:=false;
  try
 
-  ProcessLights;
+  if aSourceDocument.ExtensionsUsed.IndexOf('KHR_lights_punctual')>=0 then begin
+   ProcessLights;
+  end;
 
-  ImageMap:=TpvScene3D.TImages.Create;
-  ImageMap.OwnsObjects:=false;
-  try
+  ProcessImages;
 
-   NewImages:=TpvScene3D.TImages.Create;
-   NewImages.OwnsObjects:=false;
-   try
+  ProcessSamplers;
 
-    ProcessImages;
+  ProcessTextures;
 
-    SamplerMap:=TpvScene3D.TSamplers.Create;
-    SamplerMap.OwnsObjects:=false;
-    try
+  ProcessMaterials;
 
-     NewSamplers:=TpvScene3D.TSamplers.Create;
-     NewSamplers.OwnsObjects:=false;
-     try
+  ProcessCameras;
 
-      ProcessSamplers;
+  ProcessMeshes;
 
-      TextureMap:=TpvScene3D.TTextures.Create;
-      TextureMap.OwnsObjects:=false;
-      try
+  ProcessSkins;
 
-       NewTextures:=TpvScene3D.TTextures.Create;
-       NewTextures.OwnsObjects:=false;
-       try
+  ProcessNodes;
 
-        ProcessTextures;
+  ProcessScenes;
 
-   {    MaterialMap:=TpvScene3D.TMaterials.Create;
-        MaterialMap.OwnsObjects:=false;}
-        try
+  ProcessAnimations;
 
-         ProcessMaterials;
+  ExecuteCode;
 
-         ProcessCameras;
-
-         ProcessMeshes;
-
-         ProcessSkins;
-
-         ProcessNodes;
-
-         ProcessScenes;
-
-         ProcessAnimations;
-
-         ExecuteCode;
-
-         PostProcessAnimations;
-
-         MarkAnimatedElements;
-
-         CollectAllSceneNodesAndSplitNodesIntoAnimatedOrNotAnimatedSubtreesPerScene;
-
-         if (aSourceDocument.Scene>=0) and (aSourceDocument.Scene<fScenes.Count) then begin
-          fScene:=fScenes[aSourceDocument.Scene];
-         end else if fScenes.Count>0 then begin
-          fScene:=fScenes[0];
-         end else begin
-          fScene:=nil;
-         end;
-
-         CalculateBoundingBox;
-
-        finally
-   //    FreeAndNil(MaterialMap);
-        end;
-
-       finally
-        try
-         fSceneInstance.fTextureListLock.Acquire;
-         try
-          for Texture in NewTextures do begin
-           Texture.DecRef;
-          end;
-         finally
-          fSceneInstance.fTextureListLock.Release;
-         end;
-        finally
-         FreeAndNil(NewTextures);
-        end;
-       end;
-
-      finally
-       FreeAndNil(TextureMap);
-      end;
-
-     finally
-      try
-       fSceneInstance.fSamplerListLock.Acquire;
-       try
-        for Sampler in NewSamplers do begin
-         Sampler.DecRef;
-        end;
-       finally
-        fSceneInstance.fSamplerListLock.Release;
-       end;
-      finally
-       FreeAndNil(NewSamplers);
-      end;
-     end;
-
-    finally
-     FreeAndNil(SamplerMap);
-    end;
-
-   finally
-    try
-     fSceneInstance.fImageListLock.Acquire;
-     try
-      for Image in NewImages do begin
-       Image.DecRef;
-      end;
-     finally
-      fSceneInstance.fImageListLock.Release;
-     end;
-    finally
-     FreeAndNil(NewImages);
-    end;
-   end;
-
-  finally
-   FreeAndNil(ImageMap);
+  if (aSourceDocument.Scene>=0) and (aSourceDocument.Scene<fScenes.Count) then begin
+   fScene:=fScenes[aSourceDocument.Scene];
+  end else if fScenes.Count>0 then begin
+   fScene:=fScenes[0];
+  end else begin
+   fScene:=nil;
   end;
 
  finally
-  FreeAndNil(LightMap);
+  CleanUp;
  end;
 
- ConstructBuffers;
-
- CollectUsedVisibleDrawNodes;
-
- CollectMaterials;
-
- CollectNodeUsedJoints;
-
- ConstructDrawChoreographyBatchItems;
-
- for Scene in fScenes do begin
-  Scene.ConstructSkipList;
- end;
+ Finish;
 
 end;
 
@@ -12150,11 +14085,52 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.Update(const aInFlightFrameIndex:TpvSizeInt);
-var Instance:TpvScene3D.TGroup.TInstance;
+var NodeIndex:TpvSizeInt;
+    Instance:TpvScene3D.TGroup.TInstance;
+    Mesh:TpvScene3D.TGroup.TMesh;
+    Updated:boolean;
 begin
- for Instance in fInstances do begin
-  Instance.Update(aInFlightFrameIndex);
+
+ if fUpdatedMeshContentGeneration<>fMeshContentGeneration then begin
+
+  Updated:=false;
+
+  for Mesh in fMeshes do begin
+   if Mesh.UpdateNodeMeshInstances then begin
+    Updated:=true;
+   end;
+  end;
+
+  if Updated then begin
+   for Instance in fInstances do begin
+    for NodeIndex:=0 to length(Instance.fNodes)-1 do begin
+     inc(Instance.fNodes[NodeIndex].CacheVerticesGeneration);
+    end;
+   end;
+  end;
+
+  fUpdatedMeshContentGeneration:=fMeshContentGeneration;
+
  end;
+
+ if fFrameUpdatedMeshContentGenerations[aInFlightFrameIndex]<>fMeshContentGeneration then begin
+
+  if assigned(fFrameVertices[aInFlightFrameIndex]) then begin
+   fFrameVertices[aInFlightFrameIndex].FastAssign(fVertices);
+  end;
+
+  if assigned(fFrameMorphTargetVertices[aInFlightFrameIndex]) then begin
+   fFrameMorphTargetVertices[aInFlightFrameIndex].FastAssign(fMorphTargetVertices);
+  end;
+
+  fFrameUpdatedMeshContentGenerations[aInFlightFrameIndex]:=fMeshContentGeneration;
+
+ end;
+
+{for Instance in fInstances do begin
+  Instance.Update(aInFlightFrameIndex);
+ end;}
+
 end;
 
 procedure TpvScene3D.TGroup.PrepareFrame(const aInFlightFrameIndex:TpvSizeInt);
@@ -12201,10 +14177,26 @@ begin
  result:=fNodeNameIndexHashMap[aNodeName];
 end;
 
+function TpvScene3D.TGroup.GetNodeIndexByIgnoreCaseName(const aNodeName:TpvUTF8String):TpvSizeInt;
+begin
+ result:=fNodeNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aNodeName)];
+end;
+
 function TpvScene3D.TGroup.GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
 var NodeIndex:TpvSizeInt;
 begin
  NodeIndex:=fNodeNameIndexHashMap[aNodeName];
+ if NodeIndex>=0 then begin
+  result:=fNodes[NodeIndex];
+ end else begin
+  result:=nil;
+ end;
+end;
+
+function TpvScene3D.TGroup.GetNodeByIgnoreCaseName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
+var NodeIndex:TpvSizeInt;
+begin
+ NodeIndex:=fNodeNameIndexHashMapLowerCase[PUCUUTF8LowerCase(aNodeName)];
  if NodeIndex>=0 then begin
   result:=fNodes[NodeIndex];
  end else begin
@@ -12242,6 +14234,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TLight.Update;
 var Index:TpvSizeInt;
     Factor:TpvDouble;
+    Additive:Boolean;
     Overwrite:TpvScene3D.TGroup.TInstance.TLight.PLightOverwrite;
     ColorSum:TpvScene3D.TVector3Sum;
     IntensitySum:TpvScene3D.TScalarSum;
@@ -12264,47 +14257,48 @@ begin
   for Index:=0 to fCountOverwrites-1 do begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
+   Additive:=TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Additive in Overwrite^.Flags;
    if not IsZero(Factor) then begin
     if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Defaults in Overwrite^.Flags then begin
-     ColorSum.Add(fData.fColor,Factor);
-     IntensitySum.Add(fData.fIntensity,Factor);
-     RangeSum.Add(fData.fRange,Factor);
-     SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor);
-     SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor);
+     ColorSum.Add(fData.fColor,Factor,Additive);
+     IntensitySum.Add(fData.fIntensity,Factor,Additive);
+     RangeSum.Add(fData.fRange,Factor,Additive);
+     SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor,Additive);
+     SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor,Additive);
     end else begin
      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color in Overwrite^.Flags then begin
       if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultColor in Overwrite^.Flags then begin
-       ColorSum.Add(fData.fColor,Factor);
+       ColorSum.Add(fData.fColor,Factor,Additive);
       end else begin
-       ColorSum.Add(Overwrite^.Color,Factor);
+       ColorSum.Add(Overwrite^.Color,Factor,Additive);
       end;
      end;
      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Intensity in Overwrite^.Flags then begin
       if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultIntensity in Overwrite^.Flags then begin
-       IntensitySum.Add(fData.fIntensity,Factor);
+       IntensitySum.Add(fData.fIntensity,Factor,Additive);
       end else begin
-       IntensitySum.Add(Overwrite^.Intensity,Factor);
+       IntensitySum.Add(Overwrite^.Intensity,Factor,Additive);
       end;
      end;
      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Range in Overwrite^.Flags then begin
       if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultRange in Overwrite^.Flags then begin
-       RangeSum.Add(fData.fRange,Factor);
+       RangeSum.Add(fData.fRange,Factor,Additive);
       end else begin
-       RangeSum.Add(Overwrite^.Range,Factor);
+       RangeSum.Add(Overwrite^.Range,Factor,Additive);
       end;
      end;
      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotInnerConeAngle in Overwrite^.Flags then begin
       if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotInnerConeAngle in Overwrite^.Flags then begin
-       SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor);
+       SpotInnerConeAngleSum.Add(fData.fInnerConeAngle,Factor,Additive);
       end else begin
-       SpotInnerConeAngleSum.Add(Overwrite^.SpotInnerConeAngle,Factor);
+       SpotInnerConeAngleSum.Add(Overwrite^.SpotInnerConeAngle,Factor,Additive);
       end;
      end;
      if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.SpotOuterConeAngle in Overwrite^.Flags then begin
       if TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultSpotOuterConeAngle in Overwrite^.Flags then begin
-       SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor);
+       SpotOuterConeAngleSum.Add(fData.fOuterConeAngle,Factor,Additive);
       end else begin
-       SpotOuterConeAngleSum.Add(Overwrite^.SpotOuterConeAngle,Factor);
+       SpotOuterConeAngleSum.Add(Overwrite^.SpotOuterConeAngle,Factor,Additive);
       end;
      end;
     end;
@@ -12341,6 +14335,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TCamera.Update;
 var Index:TpvSizeInt;
     Factor:TpvDouble;
+    Additive:Boolean;
     Overwrite:TpvScene3D.TGroup.TInstance.TCamera.PCameraOverwrite;
     OrthographicXMagSum:TpvScene3D.TScalarSum;
     OrthographicYMagSum:TpvScene3D.TScalarSum;
@@ -12369,20 +14364,21 @@ begin
   for Index:=0 to fCountOverwrites-1 do begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
+   Additive:=TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Additive in Overwrite^.Flags;
    if not IsZero(Factor) then begin
     if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Defaults in Overwrite^.Flags then begin
      case fData.Type_ of
       TpvScene3D.TCameraData.TCameraType.Orthographic:begin
-       OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor);
-       OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor);
-       OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor);
-       OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor);
+       OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor,Additive);
+       OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor,Additive);
+       OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor,Additive);
+       OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor,Additive);
       end;
       TpvScene3D.TCameraData.TCameraType.Perspective:begin
-       PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor);
-       PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor);
-       PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor);
-       PerspectiveZNearSum.Add(fData.Perspective.ZNear,Factor);
+       PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor,Additive);
+       PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor,Additive);
+       PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor,Additive);
+       PerspectiveZNearSum.Add(fData.Perspective.ZNear,Factor,Additive);
       end;
       else begin
       end;
@@ -12392,60 +14388,60 @@ begin
       TpvScene3D.TCameraData.TCameraType.Orthographic:begin
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicXMag in Overwrite^.Flags then begin
-         OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor);
+         OrthographicXMagSum.Add(fData.Orthographic.XMag,Factor,Additive);
         end else begin
-         OrthographicXMagSum.Add(Overwrite^.OrthographicXMag,Factor);
+         OrthographicXMagSum.Add(Overwrite^.OrthographicXMag,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicYMag in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicYMag in Overwrite^.Flags then begin
-         OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor);
+         OrthographicYMagSum.Add(fData.Orthographic.YMag,Factor,Additive);
         end else begin
-         OrthographicYMagSum.Add(Overwrite^.OrthographicYMag,Factor);
+         OrthographicYMagSum.Add(Overwrite^.OrthographicYMag,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZFar in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZFar in Overwrite^.Flags then begin
-         OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor);
+         OrthographicZFarSum.Add(fData.Orthographic.ZFar,Factor,Additive);
         end else begin
-         OrthographicZFarSum.Add(Overwrite^.OrthographicZFar,Factor);
+         OrthographicZFarSum.Add(Overwrite^.OrthographicZFar,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicZNear in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicZNear in Overwrite^.Flags then begin
-         OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor);
+         OrthographicZNearSum.Add(fData.Orthographic.ZNear,Factor,Additive);
         end else begin
-         OrthographicZNearSum.Add(Overwrite^.OrthographicZNear,Factor);
+         OrthographicZNearSum.Add(Overwrite^.OrthographicZNear,Factor,Additive);
         end;
        end;
       end;
       TpvScene3D.TCameraData.TCameraType.Perspective:begin
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveAspectRatio in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveAspectRatio in Overwrite^.Flags then begin
-         PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor);
+         PerspectiveAspectRatioSum.Add(fData.Perspective.AspectRatio,Factor,Additive);
         end else begin
-         PerspectiveAspectRatioSum.Add(Overwrite^.PerspectiveAspectRatio,Factor);
+         PerspectiveAspectRatioSum.Add(Overwrite^.PerspectiveAspectRatio,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveYFov in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveYFov in Overwrite^.Flags then begin
-         PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor);
+         PerspectiveYFovSum.Add(fData.Perspective.YFoV,Factor,Additive);
         end else begin
-         PerspectiveYFovSum.Add(Overwrite^.PerspectiveYFov,Factor);
+         PerspectiveYFovSum.Add(Overwrite^.PerspectiveYFov,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZFar in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZFar in Overwrite^.Flags then begin
-         PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor);
+         PerspectiveZFarSum.Add(fData.Perspective.ZFar,Factor,Additive);
         end else begin
-         PerspectiveZFarSum.Add(Overwrite^.PerspectiveZFar,Factor);
+         PerspectiveZFarSum.Add(Overwrite^.PerspectiveZFar,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.PerspectiveZNear in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultPerspectiveZNear in Overwrite^.Flags then begin
-         PerspectiveZNearSum.Add(fData.Perspective.ZNear,Factor);
+         PerspectiveZNearSum.Add(fData.Perspective.ZNear,Factor,Additive);
         end else begin
-         PerspectiveZNearSum.Add(Overwrite^.PerspectiveZNear,Factor);
+         PerspectiveZNearSum.Add(Overwrite^.PerspectiveZNear,Factor,Additive);
         end;
        end;
       end;
@@ -12497,6 +14493,7 @@ end;
 procedure TpvScene3D.TGroup.TInstance.TMaterial.Update;
 var Index,AnimatedTextureIndex:TpvSizeInt;
     Factor:TpvDouble;
+    Additive:Boolean;
     Overwrite:TpvScene3D.TGroup.TInstance.TMaterial.PMaterialOverwrite;
     MaterialPBRMetallicRoughnessBaseColorFactorSum:TpvScene3D.TVector4Sum;
     MaterialPBRMetallicRoughnessMetallicFactorSum:TpvScene3D.TScalarSum;
@@ -12523,6 +14520,7 @@ var Index,AnimatedTextureIndex:TpvSizeInt;
     MaterialPBRVolumeAttenuationColorSum:TpvScene3D.TVector3Sum;
     MaterialPBRAnisotropyStrengthSum:TpvScene3D.TScalarSum;
     MaterialPBRAnisotropyRotationSum:TpvScene3D.TScalarSum;
+    MaterialPBRDispersionSum:TpvScene3D.TScalarSum;
     AnimatedTextureMask:TpvUInt64;
     TextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
     WorkTextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
@@ -12562,6 +14560,7 @@ begin
   MaterialPBRVolumeAttenuationColorSum.Clear;
   MaterialPBRAnisotropyStrengthSum.Clear;
   MaterialPBRAnisotropyRotationSum.Clear;
+  MaterialPBRDispersionSum.Clear;
   begin
    AnimatedTextureMask:=fData.AnimatedTextureMask;
    while AnimatedTextureMask<>0 do begin
@@ -12575,42 +14574,44 @@ begin
   for Index:=0 to fCountOverwrites-1 do begin
    Overwrite:=@fOverwrites[Index];
    Factor:=Overwrite.Factor;
+   Additive:=TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.Additive in Overwrite^.Flags;
    if not IsZero(Factor) then begin
     if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.Defaults in Overwrite^.Flags then begin
      if Overwrite^.SubIndex<0 then begin
       // Material
-      MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor);
-      MaterialPBRMetallicRoughnessMetallicFactorSum.Add(fData.PBRMetallicRoughness.MetallicFactor,Factor);
-      MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(fData.PBRMetallicRoughness.RoughnessFactor,Factor);
-      MaterialAlphaCutOffSum.Add(fData.AlphaCutOff,Factor);
-      MaterialEmissiveFactorSum.Add(fData.EmissiveFactor.xyz,Factor);
-      MaterialNormalTextureScaleSum.Add(fData.NormalTextureScale,Factor);
-      MaterialOcclusionTextureStrengthSum.Add(fData.OcclusionTextureStrength,Factor);
-      MaterialPBRClearCoatFactorSum.Add(fData.PBRClearCoat.Factor,Factor);
-      MaterialPBRClearCoatRoughnessFactorSum.Add(fData.PBRClearCoat.RoughnessFactor,Factor);
-      MaterialEmissiveStrengthSum.Add(fData.EmissiveFactor[3],Factor);
-      MaterialIORSum.Add(fData.IOR,Factor);
-      MaterialPBRIridescenceFactorSum.Add(fData.Iridescence.Factor,Factor);
-      MaterialPBRIridescenceIorSum.Add(fData.Iridescence.Ior,Factor);
-      MaterialPBRIridescenceMinimumSum.Add(fData.Iridescence.ThicknessMinimum,Factor);
-      MaterialPBRIridescenceMaximumSum.Add(fData.Iridescence.ThicknessMaximum,Factor);
-      MaterialPBRSheenColorFactorSum.Add(fData.PBRSheen.ColorFactor,Factor);
-      MaterialPBRSheenRoughnessFactorSum.Add(fData.PBRSheen.RoughnessFactor,Factor);
-      MaterialPBRSpecularFactorSum.Add(fData.PBRMetallicRoughness.SpecularFactor,Factor);
-      MaterialPBRSpecularColorFactorSum.Add(fData.PBRMetallicRoughness.SpecularColorFactor,Factor);
-      MaterialPBRTransmissionFactorSum.Add(fData.Transmission.Factor,Factor);
-      MaterialPBRVolumeThicknessFactorSum.Add(fData.Volume.ThicknessFactor,Factor);
-      MaterialPBRVolumeAttenuationColorSum.Add(fData.Volume.AttenuationColor,Factor);
-      MaterialPBRVolumeAttenuationDistanceSum.Add(fData.Volume.AttenuationDistance,Factor);
-      MaterialPBRAnisotropyStrengthSum.Add(fData.Anisotropy.AnisotropyStrength,Factor);
-      MaterialPBRAnisotropyRotationSum.Add(fData.Anisotropy.AnisotropyRotation,Factor);
+      MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor,Additive);
+      MaterialPBRMetallicRoughnessMetallicFactorSum.Add(fData.PBRMetallicRoughness.MetallicFactor,Factor,Additive);
+      MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(fData.PBRMetallicRoughness.RoughnessFactor,Factor,Additive);
+      MaterialAlphaCutOffSum.Add(fData.AlphaCutOff,Factor,Additive);
+      MaterialEmissiveFactorSum.Add(fData.EmissiveFactor.xyz,Factor,Additive);
+      MaterialNormalTextureScaleSum.Add(fData.NormalTextureScale,Factor,Additive);
+      MaterialOcclusionTextureStrengthSum.Add(fData.OcclusionTextureStrength,Factor,Additive);
+      MaterialPBRClearCoatFactorSum.Add(fData.PBRClearCoat.Factor,Factor,Additive);
+      MaterialPBRClearCoatRoughnessFactorSum.Add(fData.PBRClearCoat.RoughnessFactor,Factor,Additive);
+      MaterialEmissiveStrengthSum.Add(fData.EmissiveFactor[3],Factor,Additive);
+      MaterialIORSum.Add(fData.IOR,Factor,Additive);
+      MaterialPBRIridescenceFactorSum.Add(fData.Iridescence.Factor,Factor,Additive);
+      MaterialPBRIridescenceIorSum.Add(fData.Iridescence.Ior,Factor,Additive);
+      MaterialPBRIridescenceMinimumSum.Add(fData.Iridescence.ThicknessMinimum,Factor,Additive);
+      MaterialPBRIridescenceMaximumSum.Add(fData.Iridescence.ThicknessMaximum,Factor,Additive);
+      MaterialPBRSheenColorFactorSum.Add(fData.PBRSheen.ColorFactor,Factor,Additive);
+      MaterialPBRSheenRoughnessFactorSum.Add(fData.PBRSheen.RoughnessFactor,Factor,Additive);
+      MaterialPBRSpecularFactorSum.Add(fData.PBRMetallicRoughness.SpecularFactor,Factor,Additive);
+      MaterialPBRSpecularColorFactorSum.Add(fData.PBRMetallicRoughness.SpecularColorFactor,Factor,Additive);
+      MaterialPBRTransmissionFactorSum.Add(fData.Transmission.Factor,Factor,Additive);
+      MaterialPBRVolumeThicknessFactorSum.Add(fData.Volume.ThicknessFactor,Factor,Additive);
+      MaterialPBRVolumeAttenuationColorSum.Add(fData.Volume.AttenuationColor,Factor,Additive);
+      MaterialPBRVolumeAttenuationDistanceSum.Add(fData.Volume.AttenuationDistance,Factor,Additive);
+      MaterialPBRAnisotropyStrengthSum.Add(fData.Anisotropy.AnisotropyStrength,Factor,Additive);
+      MaterialPBRAnisotropyRotationSum.Add(fData.Anisotropy.AnisotropyRotation,Factor,Additive);
+      MaterialPBRDispersionSum.Add(fData.Dispersion.Dispersion,Factor,Additive);
      end else begin
       // Texture
       TextureTransform:=fData.GetTextureTransform(TpvScene3D.TTextureIndex(Overwrite^.SubIndex));
       if assigned(TextureTransform) then begin
-       fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Offset,Factor);
-       fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Rotation,Factor);
-       fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Scale,Factor);
+       fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Offset,Factor,Additive);
+       fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Rotation,Factor,Additive);
+       fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Scale,Factor,Additive);
       end;
      end;
     end else begin
@@ -12618,177 +14619,184 @@ begin
       // Material
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor in Overwrite^.Flags then begin
-        MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor);
+        MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(fData.PBRMetallicRoughness.BaseColorFactor,Factor,Additive);
        end else begin
-        MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessBaseColorFactor,Factor);
+        MaterialPBRMetallicRoughnessBaseColorFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessBaseColorFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessMetallicFactor in Overwrite^.Flags then begin
-        MaterialPBRMetallicRoughnessMetallicFactorSum.Add(fData.PBRMetallicRoughness.MetallicFactor,Factor);
+        MaterialPBRMetallicRoughnessMetallicFactorSum.Add(fData.PBRMetallicRoughness.MetallicFactor,Factor,Additive);
        end else begin
-        MaterialPBRMetallicRoughnessMetallicFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessMetallicFactor,Factor);
+        MaterialPBRMetallicRoughnessMetallicFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessMetallicFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessRoughnessFactor in Overwrite^.Flags then begin
-        MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(fData.PBRMetallicRoughness.RoughnessFactor,Factor);
+        MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(fData.PBRMetallicRoughness.RoughnessFactor,Factor,Additive);
        end else begin
-        MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessRoughnessFactor,Factor);
+        MaterialPBRMetallicRoughnessRoughnessFactorSum.Add(Overwrite^.MaterialPBRMetallicRoughnessRoughnessFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialAlphaCutOff in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialAlphaCutOff in Overwrite^.Flags then begin
-        MaterialAlphaCutOffSum.Add(fData.AlphaCutOff,Factor);
+        MaterialAlphaCutOffSum.Add(fData.AlphaCutOff,Factor,Additive);
        end else begin
-        MaterialAlphaCutOffSum.Add(Overwrite^.MaterialAlphaCutOff,Factor);
+        MaterialAlphaCutOffSum.Add(Overwrite^.MaterialAlphaCutOff,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveFactor in Overwrite^.Flags then begin
-        MaterialEmissiveFactorSum.Add(fData.EmissiveFactor.xyz,Factor);
+        MaterialEmissiveFactorSum.Add(fData.EmissiveFactor.xyz,Factor,Additive);
        end else begin
-        MaterialEmissiveFactorSum.Add(Overwrite^.MaterialEmissiveFactor,Factor);
+        MaterialEmissiveFactorSum.Add(Overwrite^.MaterialEmissiveFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialNormalTextureScale in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialNormalTextureScale in Overwrite^.Flags then begin
-        MaterialNormalTextureScaleSum.Add(fData.NormalTextureScale,Factor);
+        MaterialNormalTextureScaleSum.Add(fData.NormalTextureScale,Factor,Additive);
        end else begin
-        MaterialNormalTextureScaleSum.Add(Overwrite^.MaterialNormalTextureScale,Factor);
+        MaterialNormalTextureScaleSum.Add(Overwrite^.MaterialNormalTextureScale,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialOcclusionTextureStrength in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialOcclusionTextureStrength in Overwrite^.Flags then begin
-        MaterialOcclusionTextureStrengthSum.Add(fData.OcclusionTextureStrength,Factor);
+        MaterialOcclusionTextureStrengthSum.Add(fData.OcclusionTextureStrength,Factor,Additive);
        end else begin
-        MaterialOcclusionTextureStrengthSum.Add(Overwrite^.MaterialOcclusionTextureStrength,Factor);
+        MaterialOcclusionTextureStrengthSum.Add(Overwrite^.MaterialOcclusionTextureStrength,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatFactor in Overwrite^.Flags then begin
-        MaterialPBRClearCoatFactorSum.Add(fData.PBRClearCoat.Factor,Factor);
+        MaterialPBRClearCoatFactorSum.Add(fData.PBRClearCoat.Factor,Factor,Additive);
        end else begin
-        MaterialPBRClearCoatFactorSum.Add(Overwrite^.MaterialPBRClearCoatFactor,Factor);
+        MaterialPBRClearCoatFactorSum.Add(Overwrite^.MaterialPBRClearCoatFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRClearCoatRoughnessFactor in Overwrite^.Flags then begin
-        MaterialPBRClearCoatRoughnessFactorSum.Add(fData.PBRClearCoat.RoughnessFactor,Factor);
+        MaterialPBRClearCoatRoughnessFactorSum.Add(fData.PBRClearCoat.RoughnessFactor,Factor,Additive);
        end else begin
-        MaterialPBRClearCoatRoughnessFactorSum.Add(Overwrite^.MaterialPBRClearCoatRoughnessFactor,Factor);
+        MaterialPBRClearCoatRoughnessFactorSum.Add(Overwrite^.MaterialPBRClearCoatRoughnessFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialEmissiveStrength in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialEmissiveStrength in Overwrite^.Flags then begin
-        MaterialEmissiveStrengthSum.Add(fData.EmissiveFactor[3],Factor);
+        MaterialEmissiveStrengthSum.Add(fData.EmissiveFactor[3],Factor,Additive);
        end else begin
-        MaterialEmissiveStrengthSum.Add(Overwrite^.MaterialEmissiveStrength,Factor);
+        MaterialEmissiveStrengthSum.Add(Overwrite^.MaterialEmissiveStrength,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialIOR in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialIOR in Overwrite^.Flags then begin
-        MaterialIORSum.Add(fData.IOR,Factor);
+        MaterialIORSum.Add(fData.IOR,Factor,Additive);
        end else begin
-        MaterialIORSum.Add(Overwrite^.MaterialIOR,Factor);
+        MaterialIORSum.Add(Overwrite^.MaterialIOR,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceFactor in Overwrite^.Flags then begin
-        MaterialPBRIridescenceFactorSum.Add(fData.Iridescence.Factor,Factor);
+        MaterialPBRIridescenceFactorSum.Add(fData.Iridescence.Factor,Factor,Additive);
        end else begin
-        MaterialPBRIridescenceFactorSum.Add(Overwrite^.MaterialPBRIridescenceFactor,Factor);
+        MaterialPBRIridescenceFactorSum.Add(Overwrite^.MaterialPBRIridescenceFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceIor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceIor in Overwrite^.Flags then begin
-        MaterialPBRIridescenceIorSum.Add(fData.Iridescence.Ior,Factor);
+        MaterialPBRIridescenceIorSum.Add(fData.Iridescence.Ior,Factor,Additive);
        end else begin
-        MaterialPBRIridescenceIorSum.Add(Overwrite^.MaterialPBRIridescenceIor,Factor);
+        MaterialPBRIridescenceIorSum.Add(Overwrite^.MaterialPBRIridescenceIor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMinimum in Overwrite^.Flags then begin
-        MaterialPBRIridescenceMinimumSum.Add(fData.Iridescence.ThicknessMinimum,Factor);
+        MaterialPBRIridescenceMinimumSum.Add(fData.Iridescence.ThicknessMinimum,Factor,Additive);
        end else begin
-        MaterialPBRIridescenceMinimumSum.Add(Overwrite^.MaterialPBRIridescenceMinimum,Factor);
+        MaterialPBRIridescenceMinimumSum.Add(Overwrite^.MaterialPBRIridescenceMinimum,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRIridescenceMaximum in Overwrite^.Flags then begin
-        MaterialPBRIridescenceMaximumSum.Add(fData.Iridescence.ThicknessMaximum,Factor);
+        MaterialPBRIridescenceMaximumSum.Add(fData.Iridescence.ThicknessMaximum,Factor,Additive);
        end else begin
-        MaterialPBRIridescenceMaximumSum.Add(Overwrite^.MaterialPBRIridescenceMaximum,Factor);
+        MaterialPBRIridescenceMaximumSum.Add(Overwrite^.MaterialPBRIridescenceMaximum,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenColorFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenColorFactor in Overwrite^.Flags then begin
-        MaterialPBRSheenColorFactorSum.Add(fData.PBRSheen.ColorFactor,Factor);
+        MaterialPBRSheenColorFactorSum.Add(fData.PBRSheen.ColorFactor,Factor,Additive);
        end else begin
-        MaterialPBRSheenColorFactorSum.Add(Overwrite^.MaterialPBRSheenColorFactor,Factor);
+        MaterialPBRSheenColorFactorSum.Add(Overwrite^.MaterialPBRSheenColorFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSheenRoughnessFactor in Overwrite^.Flags then begin
-        MaterialPBRSheenRoughnessFactorSum.Add(fData.PBRSheen.RoughnessFactor,Factor);
+        MaterialPBRSheenRoughnessFactorSum.Add(fData.PBRSheen.RoughnessFactor,Factor,Additive);
        end else begin
-        MaterialPBRSheenRoughnessFactorSum.Add(Overwrite^.MaterialPBRSheenRoughnessFactor,Factor);
+        MaterialPBRSheenRoughnessFactorSum.Add(Overwrite^.MaterialPBRSheenRoughnessFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularFactor in Overwrite^.Flags then begin
-        MaterialPBRSpecularFactorSum.Add(fData.PBRMetallicRoughness.SpecularFactor,Factor);
+        MaterialPBRSpecularFactorSum.Add(fData.PBRMetallicRoughness.SpecularFactor,Factor,Additive);
        end else begin
-        MaterialPBRSpecularFactorSum.Add(Overwrite^.MaterialPBRSpecularFactor,Factor);
+        MaterialPBRSpecularFactorSum.Add(Overwrite^.MaterialPBRSpecularFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRSpecularColorFactor in Overwrite^.Flags then begin
-        MaterialPBRSpecularColorFactorSum.Add(fData.PBRMetallicRoughness.SpecularColorFactor,Factor);
+        MaterialPBRSpecularColorFactorSum.Add(fData.PBRMetallicRoughness.SpecularColorFactor,Factor,Additive);
        end else begin
-        MaterialPBRSpecularColorFactorSum.Add(Overwrite^.MaterialPBRSpecularColorFactor,Factor);
+        MaterialPBRSpecularColorFactorSum.Add(Overwrite^.MaterialPBRSpecularColorFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRTransmissionFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRTransmissionFactor in Overwrite^.Flags then begin
-        MaterialPBRTransmissionFactorSum.Add(fData.Transmission.Factor,Factor);
+        MaterialPBRTransmissionFactorSum.Add(fData.Transmission.Factor,Factor,Additive);
        end else begin
-        MaterialPBRTransmissionFactorSum.Add(Overwrite^.MaterialPBRTransmissionFactor,Factor);
+        MaterialPBRTransmissionFactorSum.Add(Overwrite^.MaterialPBRTransmissionFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeThicknessFactor in Overwrite^.Flags then begin
-        MaterialPBRVolumeThicknessFactorSum.Add(fData.Volume.ThicknessFactor,Factor);
+        MaterialPBRVolumeThicknessFactorSum.Add(fData.Volume.ThicknessFactor,Factor,Additive);
        end else begin
-        MaterialPBRVolumeThicknessFactorSum.Add(Overwrite^.MaterialPBRVolumeThicknessFactor,Factor);
+        MaterialPBRVolumeThicknessFactorSum.Add(Overwrite^.MaterialPBRVolumeThicknessFactor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationDistance in Overwrite^.Flags then begin
-        MaterialPBRVolumeAttenuationDistanceSum.Add(fData.Volume.AttenuationDistance,Factor);
+        MaterialPBRVolumeAttenuationDistanceSum.Add(fData.Volume.AttenuationDistance,Factor,Additive);
        end else begin
-        MaterialPBRVolumeAttenuationDistanceSum.Add(Overwrite^.MaterialPBRVolumeAttenuationDistance,Factor);
+        MaterialPBRVolumeAttenuationDistanceSum.Add(Overwrite^.MaterialPBRVolumeAttenuationDistance,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRVolumeAttenuationColor in Overwrite^.Flags then begin
-        MaterialPBRVolumeAttenuationColorSum.Add(fData.Volume.AttenuationColor,Factor);
+        MaterialPBRVolumeAttenuationColorSum.Add(fData.Volume.AttenuationColor,Factor,Additive);
        end else begin
-        MaterialPBRVolumeAttenuationColorSum.Add(Overwrite^.MaterialPBRVolumeAttenuationColor,Factor);
+        MaterialPBRVolumeAttenuationColorSum.Add(Overwrite^.MaterialPBRVolumeAttenuationColor,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRAnisotropyStrength in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRAnisotropyStrength in Overwrite^.Flags then begin
-        MaterialPBRAnisotropyStrengthSum.Add(fData.Anisotropy.AnisotropyStrength,Factor);
+        MaterialPBRAnisotropyStrengthSum.Add(fData.Anisotropy.AnisotropyStrength,Factor,Additive);
        end else begin
-        MaterialPBRAnisotropyStrengthSum.Add(Overwrite^.MaterialPBRAnisotropyStrength,Factor);
+        MaterialPBRAnisotropyStrengthSum.Add(Overwrite^.MaterialPBRAnisotropyStrength,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRAnisotropyRotation in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRAnisotropyRotation in Overwrite^.Flags then begin
-        MaterialPBRAnisotropyRotationSum.Add(fData.Anisotropy.AnisotropyRotation,Factor);
+        MaterialPBRAnisotropyRotationSum.Add(fData.Anisotropy.AnisotropyRotation,Factor,Additive);
        end else begin
-        MaterialPBRAnisotropyRotationSum.Add(Overwrite^.MaterialPBRAnisotropyRotation,Factor);
+        MaterialPBRAnisotropyRotationSum.Add(Overwrite^.MaterialPBRAnisotropyRotation,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRDispersion in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRDispersion in Overwrite^.Flags then begin
+        MaterialPBRDispersionSum.Add(fData.Dispersion.Dispersion,Factor,Additive);
+       end else begin
+        MaterialPBRDispersionSum.Add(Overwrite^.MaterialPBRDispersion,Factor,Additive);
        end;
       end;
      end else begin
@@ -12797,23 +14805,23 @@ begin
       if assigned(TextureTransform) then begin
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureOffset in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureOffset in Overwrite^.Flags then begin
-         fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Offset,Factor);
+         fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Offset,Factor,Additive);
         end else begin
-         fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureOffset,Factor);
+         fTextureOffsetSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureOffset,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureRotation in Overwrite^.Flags then begin
-         fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Rotation,Factor);
+         fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Rotation,Factor,Additive);
         end else begin
-         fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureRotation,Factor);
+         fTextureRotationSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureRotation,Factor,Additive);
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureScale in Overwrite^.Flags then begin
         if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureScale in Overwrite^.Flags then begin
-         fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Scale,Factor);
+         fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(TextureTransform^.Scale,Factor,Additive);
         end else begin
-         fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureScale,Factor);
+         fTextureScaleSums[TpvScene3D.TTextureIndex(Overwrite^.SubIndex)].Add(Overwrite^.TextureScale,Factor,Additive);
         end;
        end;
       end;
@@ -12846,6 +14854,7 @@ begin
   fWorkData.Volume.AttenuationDistance:=MaterialPBRVolumeAttenuationDistanceSum.Get(fData.Volume.AttenuationDistance);
   fWorkData.Anisotropy.AnisotropyStrength:=MaterialPBRAnisotropyStrengthSum.Get(fWorkData.Anisotropy.AnisotropyStrength);
   fWorkData.Anisotropy.AnisotropyRotation:=MaterialPBRAnisotropyRotationSum.Get(fWorkData.Anisotropy.AnisotropyRotation);
+  fWorkData.Dispersion.Dispersion:=MaterialPBRDispersionSum.Get(fWorkData.Dispersion.Dispersion);
   begin
    AnimatedTextureMask:=fData.AnimatedTextureMask;
    while AnimatedTextureMask<>0 do begin
@@ -12971,6 +14980,42 @@ begin
  Free;
 end;
 
+{ TpvScene3D.TGroup.TInstances }
+
+procedure TpvScene3D.TGroup.TInstances.Sort;
+var Index:TpvSizeInt;
+    NeedSort:boolean;
+begin
+
+ NeedSort:=false;
+ for Index:=0 to Count-2 do begin
+  if Items[Index].GetOrder>Items[Index+1].GetOrder then begin
+   NeedSort:=true;
+   break;
+  end;
+ end;
+
+ if NeedSort then begin
+
+  // Simple bubble sort variant for now
+  Index:=0;
+  while (Index+1)<Count do begin
+   if Items[Index].GetOrder>Items[Index+1].GetOrder then begin
+    Exchange(Index,Index+1);
+    if Index>0 then begin
+     dec(Index);
+    end else begin
+     inc(Index);
+    end;
+   end else begin
+    inc(Index);
+   end;
+  end;
+
+ end;
+
+end;
+
 { TpvScene3D.TGroup.TInstance.TAnimation }
 
 constructor TpvScene3D.TGroup.TInstance.TAnimation.Create;
@@ -12980,6 +15025,7 @@ begin
  fTime:=0.0;
  fLastIndices:=nil;
  fShadowTime:=0.0;
+ fAdditive:=false;
  fComplete:=false;
 end;
 
@@ -13023,6 +15069,24 @@ begin
 
  fHeadless:=aHeadless;
 
+ fOrder:=-1;
+
+ fDependencyLock:=TPasMPSpinLock.Create;
+
+ fProvidedDependencies:=TpvScene3D.TGroup.TInstances.Create(false);
+
+ fRequiredDependencies:=TpvScene3D.TGroup.TInstances.Create(false);
+
+ fAttachmentAppendageLock:=TPasMPSpinLock.Create;
+
+ fAttachments:=TpvScene3D.TGroup.TInstances.Create(false);
+
+ fAppendageInstance:=nil;
+
+ fAppendageNode:=nil;
+
+ fAppendageTransform:=TpvMatrix4x4.Identity;
+
  fUseRenderInstances:=false;
 
  fPreviousActive:=false;
@@ -13043,6 +15107,13 @@ begin
 
  fDuplicatedMaterials:=TpvScene3D.TMaterials.Create;
  fDuplicatedMaterials.OwnsObjects:=false;
+
+ fPreparedMeshContentGeneration:=High(TpvUInt64)-1;
+
+ for Index:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
+  fFramePreparedMeshContentGenerations[Index]:=High(TpvUInt64)-1;
+  fFrameUploadedMeshContentGenerations[Index]:=High(TpvUInt64)-1;
+ end;
 
  fRenderInstanceLock:=0;
 
@@ -13159,11 +15230,11 @@ begin
   Node:=fGroup.fNodes[Index];
   InstanceNode^.Processed:=false;
   InstanceNode^.Flags:=[];
-  SetLength(InstanceNode^.WorkWeights,length(Node.fWeights));
-  SetLength(InstanceNode^.OverwriteWeightsSum,length(Node.fWeights));
+  SetLength(InstanceNode^.WorkWeights,Node.fWeights.Count);
+  SetLength(InstanceNode^.OverwriteWeightsSum,Node.fWeights.Count);
   SetLength(InstanceNode^.Overwrites,fGroup.fAnimations.Count+1);
   for OtherIndex:=0 to fGroup.fAnimations.Count do begin
-   SetLength(InstanceNode^.Overwrites[OtherIndex].Weights,length(Node.fWeights));
+   SetLength(InstanceNode^.Overwrites[OtherIndex].Weights,Node.fWeights.Count);
   end;
   for OtherIndex:=0 to fSceneInstance.fCountInFlightFrames-1 do begin
    InstanceNode^.PotentiallyVisibleSetNodeIndices[OtherIndex]:=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex;
@@ -13197,11 +15268,11 @@ begin
   fAnimations[Index]:=TpvScene3D.TGroup.TInstance.TAnimation.Create;
   if Index>0 then begin
    Animation:=fGroup.fAnimations[Index-1];
-   SetLength(fAnimations[Index].fLastIndices,length(Animation.fChannels));
+   SetLength(fAnimations[Index].fLastIndices,Animation.fChannels.Count);
    for OtherIndex:=0 to length(fAnimations[Index].fLastIndices)-1 do begin
     fAnimations[Index].fLastIndices[OtherIndex]:=0;
    end;
-   SetLength(fAnimations[Index].fChannelOverwrites,length(Animation.fChannels)+length(Animation.fDefaultChannels));
+   SetLength(fAnimations[Index].fChannelOverwrites,Animation.fChannels.Count+Animation.fDefaultChannels.Count+2);
   end;
  end;
 
@@ -13294,15 +15365,15 @@ begin
      fSceneInstance.fVulkanNodeMatricesBufferData[Index].Resize(fVulkanNodeMatricesBufferOffset+fVulkanNodeMatricesBufferCount);
     end;
 
-    if fSceneInstance.fVulkanMorphTargetVertexWeightsBufferData[Index].Count<(fVulkanMorphTargetVertexBufferOffset+fVulkanMorphTargetVertexBufferCount) then begin
-     fSceneInstance.fVulkanMorphTargetVertexWeightsBufferData[Index].Resize(fVulkanMorphTargetVertexBufferOffset+fVulkanMorphTargetVertexBufferCount);
+    if fSceneInstance.fVulkanMorphTargetVertexWeightsBufferData[Index].Count<(fVulkanMorphTargetVertexWeightsBufferOffset+fVulkanMorphTargetVertexWeightsBufferCount) then begin
+     fSceneInstance.fVulkanMorphTargetVertexWeightsBufferData[Index].Resize(fVulkanMorphTargetVertexWeightsBufferOffset+fVulkanMorphTargetVertexWeightsBufferCount);
     end;
 
    end;
 
    for Index:=0 to fGroup.fVertices.Count-1 do begin
 
-    SrcVertex:=@fGroup.fVertices.Items[Index];
+    SrcVertex:=@fGroup.fVertices.ItemArray[Index];
 
     DstDynamicVertex:=@fSceneInstance.fVulkanDynamicVertexBufferData.Items[fVulkanVertexBufferOffset+Index];
     DstDynamicVertex^.Position:=SrcVertex^.Position;
@@ -13343,8 +15414,8 @@ begin
    end;
 
    for Index:=0 to fGroup.fMorphTargetVertices.Count-1 do begin
-    SrcMorphTargetVertex:=@fGroup.fMorphTargetVertices.Items[Index];
-    DstMorphTargetVertex:=@fSceneInstance.fVulkanMorphTargetVertexBufferData.Items[fVulkanMorphTargetVertexBufferOffset+Index];
+    SrcMorphTargetVertex:=@fGroup.fMorphTargetVertices.ItemArray[Index];
+    DstMorphTargetVertex:=@fSceneInstance.fVulkanMorphTargetVertexBufferData.ItemArray[fVulkanMorphTargetVertexBufferOffset+Index];
     DstMorphTargetVertex^:=SrcMorphTargetVertex^;
     inc(DstMorphTargetVertex^.Index,fVulkanMorphTargetVertexWeightsBufferOffset);
     if DstMorphTargetVertex^.Next<>TpvUInt32($ffffffff) then begin
@@ -13353,7 +15424,7 @@ begin
    end;
 
    for Index:=0 to fGroup.fJointBlocks.Count-1 do begin
-    SrcJointBlock:=@fGroup.fJointBlocks.Items[Index];
+    SrcJointBlock:=@fGroup.fJointBlocks.ItemArray[Index];
     DstJointBlock:=@fSceneInstance.fVulkanJointBlockBufferData.Items[fVulkanJointBlockBufferOffset+Index];
     DstJointBlock^:=SrcJointBlock^;
     inc(DstJointBlock^.Joints[0],fVulkanNodeMatricesBufferOffset);
@@ -13385,11 +15456,26 @@ begin
 
  end;
 
+ fPreparedMeshContentGeneration:=fGroup.fUpdatedMeshContentGeneration;
+
+ for Index:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  fFramePreparedMeshContentGenerations[Index]:=fGroup.fUpdatedMeshContentGeneration;
+  fFrameUploadedMeshContentGenerations[Index]:=fGroup.fUpdatedMeshContentGeneration;
+ end;
+
  fScenes:=TpvScene3D.TGroup.TInstance.TScenes.Create;
  fScenes.OwnsObjects:=true;
  for Index:=0 to fGroup.fScenes.Count-1 do begin
   fScenes.Add(TpvScene3D.TGroup.TInstance.TScene.Create(self,fGroup.fScenes[Index]));
  end;
+
+ fDrawChoreographyBatchItems:=TpvScene3D.TDrawChoreographyBatchItems.Create;
+ fDrawChoreographyBatchItems.OwnsObjects:=true;
+ fDrawChoreographyBatchItems.GroupInstanceClone(fGroup.fDrawChoreographyBatchItems,self,false);
+
+ fDrawChoreographyBatchUniqueItems:=TpvScene3D.TDrawChoreographyBatchItems.Create;
+ fDrawChoreographyBatchUniqueItems.OwnsObjects:=true;
+ fDrawChoreographyBatchUniqueItems.GroupInstanceClone(fGroup.fDrawChoreographyBatchUniqueItems,self,true);
 
  if fGroup.fDynamicAABBTreeCulling then begin
   fAABBTree:=TpvBVHDynamicAABBTree.Create;
@@ -13476,6 +15562,10 @@ begin
   end;
  end;
 
+ FreeAndNil(fDrawChoreographyBatchItems);
+
+ FreeAndNil(fDrawChoreographyBatchUniqueItems);
+
  FreeAndNil(fScenes);
 
  FreeAndNil(fCameras);
@@ -13550,6 +15640,20 @@ begin
 
  fMorphTargetVertexWeights:=nil;
 
+ fAppendageInstance:=nil;
+
+ fAppendageNode:=nil;
+
+ FreeAndNil(fAttachments);
+
+ FreeAndNil(fAttachmentAppendageLock);
+
+ FreeAndNil(fProvidedDependencies);
+
+ FreeAndNil(fRequiredDependencies);
+
+ FreeAndNil(fDependencyLock);
+
  fGroup:=nil;
 
  FreeAndNil(fLock);
@@ -13561,20 +15665,25 @@ end;
 procedure TpvScene3D.TGroup.TInstance.AfterConstruction;
 begin
  inherited AfterConstruction;
+
  if not fAdded then begin
+
   try
+
    fSceneInstance.fGroupInstanceListLock.Acquire;
    try
     fSceneInstance.fGroupInstances.Add(self);
    finally
     fSceneInstance.fGroupInstanceListLock.Release;
    end;
+
    fGroup.fInstanceListLock.Acquire;
    try
     fGroup.fInstances.Add(self);
    finally
     fGroup.fInstanceListLock.Release;
    end;
+
    begin
     fSceneInstance.fNewInstanceListLock.Acquire;
     try
@@ -13584,10 +15693,13 @@ begin
     end;
     TPasMPInterlocked.Write(fIsNewInstance,TPasMPBool32(true));
    end;
+
   finally
    fAdded:=true;
   end;
+
  end;
+
 end;
 
 procedure TpvScene3D.TGroup.TInstance.BeforeDestruction;
@@ -13597,23 +15709,30 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.TInstance.Remove;
+var GroupInstance:TpvScene3D.TGroup.TInstance;
 begin
+
  if fAdded then begin
+
   try
+
    UpdateInvisible;
    try
+
     fSceneInstance.fGroupInstanceListLock.Acquire;
     try
      fSceneInstance.fGroupInstances.Remove(self);
     finally
      fSceneInstance.fGroupInstanceListLock.Release;
     end;
+
     fGroup.fInstanceListLock.Acquire;
     try
      fGroup.fInstances.Remove(self);
     finally
      fGroup.fInstanceListLock.Release;
     end;
+
     if TPasMPInterlocked.CompareExchange(fIsNewInstance,TPasMPBool32(false),TPasMPBool32(true)) then begin
      fSceneInstance.fNewInstanceListLock.Acquire;
      try
@@ -13622,6 +15741,7 @@ begin
       fSceneInstance.fNewInstanceListLock.Release;
      end;
     end;
+
     if fAABBTreeProxy>=0 then begin
      try
       if assigned(fGroup) and
@@ -13633,13 +15753,100 @@ begin
       fAABBTreeProxy:=-1;
      end;
     end;
+
+    fAttachmentAppendageLock.Acquire;
+    try
+     if assigned(fAttachments) and (fAttachments.Count>0) then begin
+      fSceneInstance.fGroupInstanceListLock.Acquire;
+      try
+       while fAttachments.Count>0 do begin
+        GroupInstance:=fAttachments.ExtractIndex(fAttachments.Count-1);
+        if fSceneInstance.fGroupInstances.Contains(GroupInstance) then begin
+         GroupInstance.fAttachmentAppendageLock.Acquire;
+         try
+          if GroupInstance.fAppendageInstance=self then begin
+           GroupInstance.fAppendageInstance:=nil;
+          end;
+         finally
+          GroupInstance.fAttachmentAppendageLock.Release;
+         end;
+        end;
+       end;
+      finally
+       fSceneInstance.fGroupInstanceListLock.Release;
+      end;
+     end;
+     if assigned(fAppendageInstance) then begin
+      try
+       fAppendageInstance.fAttachmentAppendageLock.Acquire;
+       try
+        fAppendageInstance.fAttachments.Remove(self);
+       finally
+        fAppendageInstance.fAttachmentAppendageLock.Release;
+       end;
+      finally
+       fAppendageInstance:=nil;
+      end;
+     end;
+    finally
+     fAttachmentAppendageLock.Release;
+    end;
+
+    fDependencyLock.Acquire;
+    try
+
+     if assigned(fProvidedDependencies) and (fProvidedDependencies.Count>0) then begin
+      fSceneInstance.fGroupInstanceListLock.Acquire;
+      try
+       while fProvidedDependencies.Count>0 do begin
+        GroupInstance:=fProvidedDependencies.ExtractIndex(fProvidedDependencies.Count-1);
+        if fSceneInstance.fGroupInstances.Contains(GroupInstance) then begin
+         GroupInstance.fDependencyLock.Acquire;
+         try
+          GroupInstance.fRequiredDependencies.Remove(self);
+         finally
+          GroupInstance.fDependencyLock.Release;
+         end;
+        end;
+       end;
+      finally
+       fSceneInstance.fGroupInstanceListLock.Release;
+      end;
+     end;
+
+     if assigned(fRequiredDependencies) and (fRequiredDependencies.Count>0) then begin
+      fSceneInstance.fGroupInstanceListLock.Acquire;
+      try
+       while fRequiredDependencies.Count>0 do begin
+        GroupInstance:=fRequiredDependencies.ExtractIndex(fRequiredDependencies.Count-1);
+        if fSceneInstance.fGroupInstances.Contains(GroupInstance) then begin
+         GroupInstance.fDependencyLock.Acquire;
+         try
+          GroupInstance.fProvidedDependencies.Remove(self);
+         finally
+          GroupInstance.fDependencyLock.Release;
+         end;
+        end;
+       end;
+      finally
+       fSceneInstance.fGroupInstanceListLock.Release;
+      end;
+     end;
+
+    finally
+     fDependencyLock.Release;
+    end;
+
    finally
     fGroup:=nil;
    end;
+
   finally
    fAdded:=false;
   end;
+
  end;
+
 end;
 
 function TpvScene3D.TGroup.TInstance.GetAutomation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
@@ -13757,6 +15964,218 @@ begin
  end;
 end;
 
+function TpvScene3D.TGroup.TInstance.HasProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ fDependencyLock.Acquire;
+ try
+  result:=(aInstance<>self) and fProvidedDependencies.Contains(aInstance);
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.AddProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ result:=false;
+ fDependencyLock.Acquire;
+ try
+  fSceneInstance.fGroupInstanceListLock.Acquire;
+  try
+   if (aInstance<>self) and fSceneInstance.fGroupInstances.Contains(aInstance) and not fProvidedDependencies.Contains(aInstance) then begin
+    fProvidedDependencies.Add(aInstance);
+    aInstance.fDependencyLock.Acquire;
+    try
+     if not aInstance.fProvidedDependencies.Contains(self) then begin
+      aInstance.fProvidedDependencies.Add(self);
+     end;
+    finally
+     aInstance.fDependencyLock.Release;
+    end;
+    result:=true;
+   end;
+  finally
+   fSceneInstance.fGroupInstanceListLock.Release;
+  end;
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.RemoveProvidedDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ result:=false;
+ fDependencyLock.Acquire;
+ try
+  if (aInstance<>self) and fProvidedDependencies.Contains(aInstance) then begin
+   fProvidedDependencies.Remove(aInstance);
+   fSceneInstance.fGroupInstanceListLock.Acquire;
+   try
+    if fSceneInstance.fGroupInstances.Contains(aInstance) then begin
+     aInstance.fDependencyLock.Acquire;
+     try
+      aInstance.fRequiredDependencies.Remove(self);
+     finally
+      aInstance.fDependencyLock.Release;
+     end;
+    end;
+   finally
+    fSceneInstance.fGroupInstanceListLock.Release;
+   end;
+   result:=true;
+  end;
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.HasRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ fDependencyLock.Acquire;
+ try
+  result:=(aInstance<>self) and fRequiredDependencies.Contains(aInstance);
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.AddRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ result:=false;
+ fDependencyLock.Acquire;
+ try
+  fSceneInstance.fGroupInstanceListLock.Acquire;
+  try
+   if (aInstance<>self) and fSceneInstance.fGroupInstances.Contains(aInstance) and not fRequiredDependencies.Contains(aInstance) then begin
+    fRequiredDependencies.Add(aInstance);
+    aInstance.fDependencyLock.Acquire;
+    try
+     if not aInstance.fProvidedDependencies.Contains(self) then begin
+      aInstance.fProvidedDependencies.Add(self);
+     end;
+    finally
+     aInstance.fDependencyLock.Release;
+    end;
+    result:=true;
+   end;
+  finally
+   fSceneInstance.fGroupInstanceListLock.Release;
+  end;
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.RemoveRequiredDependency(const aInstance:TpvScene3D.TGroup.TInstance):Boolean;
+begin
+ result:=false;
+ fDependencyLock.Acquire;
+ try
+  if (aInstance<>self) and fRequiredDependencies.Contains(aInstance) then begin
+   fRequiredDependencies.Remove(aInstance);
+   fSceneInstance.fGroupInstanceListLock.Acquire;
+   try
+    if fSceneInstance.fGroupInstances.Contains(aInstance) then begin
+     aInstance.fDependencyLock.Acquire;
+     try
+      aInstance.fProvidedDependencies.Remove(self);
+     finally
+      aInstance.fDependencyLock.Release;
+     end;
+    end;
+   finally
+    fSceneInstance.fGroupInstanceListLock.Release;
+   end;
+   result:=true;
+  end;
+ finally
+  fDependencyLock.Release;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.AttachTo(const aInstance:TpvScene3D.TGroup.TInstance;const aNode:TpvScene3D.TGroup.TNode;const aTransform:TpvMatrix4x4):Boolean;
+var OtherInstance:TpvScene3D.TGroup.TInstance;
+begin
+ if assigned(aInstance) and (aInstance<>self) and assigned(aNode) then begin
+  if fAppendageInstance=aInstance then begin
+   fAttachmentAppendageLock.Acquire;
+   try
+    aInstance.fAttachmentAppendageLock.Acquire;
+    try
+     fAppendageNode:=aNode;
+     fAppendageTransform:=aTransform;
+    finally
+     aInstance.fAttachmentAppendageLock.Release;
+    end;
+   finally
+    fAttachmentAppendageLock.Release;
+   end;
+  end else begin
+   fAttachmentAppendageLock.Acquire;
+   try
+    OtherInstance:=fAppendageInstance;
+    if assigned(OtherInstance) then begin
+     OtherInstance.fAttachmentAppendageLock.Acquire;
+     try
+      try
+       fAppendageInstance.fAttachments.Remove(self);
+      finally
+       fAppendageInstance:=nil;
+      end;
+     finally
+      OtherInstance.fAttachmentAppendageLock.Release;
+     end;
+    end;
+    aInstance.fAttachmentAppendageLock.Acquire;
+    try
+     fAppendageInstance:=aInstance;
+     fAppendageNode:=aNode;
+     fAppendageTransform:=aTransform;
+     if not aInstance.fAttachments.Contains(self) then begin
+      aInstance.fAttachments.Add(self);
+     end;
+     result:=true;
+    finally
+     aInstance.fAttachmentAppendageLock.Release;
+    end;
+   finally
+    fAttachmentAppendageLock.Release;
+   end;
+  end;
+ end else begin
+  result:=false;
+ end;
+end;
+
+function TpvScene3D.TGroup.TInstance.DetachFrom:Boolean;
+var OtherInstance:TpvScene3D.TGroup.TInstance;
+begin
+ if assigned(fAppendageInstance) then begin
+  fAttachmentAppendageLock.Acquire;
+  try
+   OtherInstance:=fAppendageInstance;
+   OtherInstance.fAttachmentAppendageLock.Acquire;
+   try
+    if assigned(fAppendageInstance) then begin
+     try
+      fAppendageInstance.fAttachments.Remove(self);
+     finally
+      fAppendageInstance:=nil;
+     end;
+     result:=true;
+    end else begin
+     result:=false;
+    end;
+   finally
+    OtherInstance.fAttachmentAppendageLock.Release;
+   end;
+  finally
+   fAttachmentAppendageLock.Release;
+  end;
+ end else begin
+  result:=false;
+ end;
+end;
+
 procedure TpvScene3D.TGroup.TInstance.Check(const aInFlightFrameIndex:TpvSizeInt);
 begin
  if aInFlightFrameIndex>=0 then begin
@@ -13765,7 +16184,6 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeInt);
-var CullFace,Blend:TPasGLTFInt32;
  procedure ResetLights;
  var Index:TPasGLTFSizeInt;
      InstanceLight:TpvScene3D.TGroup.TInstance.TLight;
@@ -13850,32 +16268,32 @@ var CullFace,Blend:TPasGLTFInt32;
  end;
  procedure ProcessAnimation(const aAnimationIndex:TpvSizeInt;const aAnimationTime:TpvDouble;const aFactor:TpvFloat);
   procedure ProcessScalar(out aScalar:TpvFloat;
-                          const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+                          const aAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
                           const aTimeIndex0:TpvSizeInt;
                           const aTimeIndex1:TpvSizeInt;
                           const aKeyDelta:TpvDouble;
                           const aFactor:TpvDouble);
   var SqrFactor,CubeFactor:TpvDouble;
   begin
-   case aAnimationChannel^.Interpolation of
+   case aAnimationChannel.fInterpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-     aScalar:=(aAnimationChannel^.OutputScalarArray[aTimeIndex0]*(1.0-aFactor))+
-              (aAnimationChannel^.OutputScalarArray[aTimeIndex1]*aFactor);
+     aScalar:=(aAnimationChannel.fOutputScalarArray[aTimeIndex0]*(1.0-aFactor))+
+              (aAnimationChannel.fOutputScalarArray[aTimeIndex1]*aFactor);
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
      if (aFactor>=1.0) or SameValue(aFactor,1.0) then begin
-      aScalar:=aAnimationChannel^.OutputScalarArray[aTimeIndex1];
+      aScalar:=aAnimationChannel.fOutputScalarArray[aTimeIndex1];
      end else begin
-      aScalar:=aAnimationChannel^.OutputScalarArray[aTimeIndex0];
+      aScalar:=aAnimationChannel.fOutputScalarArray[aTimeIndex0];
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
      SqrFactor:=sqr(aFactor);
      CubeFactor:=SqrFactor*aFactor;
-     aScalar:=(((aAnimationChannel^.OutputScalarArray[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-               (aAnimationChannel^.OutputScalarArray[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
-                (aAnimationChannel^.OutputScalarArray[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                 (aAnimationChannel^.OutputScalarArray[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
+     aScalar:=(((aAnimationChannel.fOutputScalarArray[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+               (aAnimationChannel.fOutputScalarArray[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
+                (aAnimationChannel.fOutputScalarArray[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                 (aAnimationChannel.fOutputScalarArray[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
     end;
     else begin
      Assert(false);
@@ -13883,32 +16301,32 @@ var CullFace,Blend:TPasGLTFInt32;
    end;
   end;
   procedure ProcessVector2(out aVector2:TpvVector2;
-                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
                            const aTimeIndex0:TpvSizeInt;
                            const aTimeIndex1:TpvSizeInt;
                            const aKeyDelta:TpvDouble;
                            const aFactor:TpvDouble);
   var SqrFactor,CubeFactor:TpvDouble;
   begin
-   case aAnimationChannel^.Interpolation of
+   case aAnimationChannel.fInterpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-     aVector2:=(aAnimationChannel^.OutputVector2Array[aTimeIndex0]*(1.0-aFactor))+
-               (aAnimationChannel^.OutputVector2Array[aTimeIndex1]*aFactor);
+     aVector2:=(aAnimationChannel.fOutputVector2Array[aTimeIndex0]*(1.0-aFactor))+
+               (aAnimationChannel.fOutputVector2Array[aTimeIndex1]*aFactor);
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
      if (aFactor>=1.0) or SameValue(aFactor,1.0) then begin
-      aVector2:=aAnimationChannel^.OutputVector2Array[aTimeIndex1];
+      aVector2:=aAnimationChannel.fOutputVector2Array[aTimeIndex1];
      end else begin
-      aVector2:=aAnimationChannel^.OutputVector2Array[aTimeIndex0];
+      aVector2:=aAnimationChannel.fOutputVector2Array[aTimeIndex0];
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
      SqrFactor:=sqr(aFactor);
      CubeFactor:=SqrFactor*aFactor;
-     aVector2:=(((aAnimationChannel^.OutputVector2Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-                (aAnimationChannel^.OutputVector2Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
-                 (aAnimationChannel^.OutputVector2Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                  (aAnimationChannel^.OutputVector2Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
+     aVector2:=(((aAnimationChannel.fOutputVector2Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+                (aAnimationChannel.fOutputVector2Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
+                 (aAnimationChannel.fOutputVector2Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                  (aAnimationChannel.fOutputVector2Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
     end;
     else begin
      Assert(false);
@@ -13916,32 +16334,32 @@ var CullFace,Blend:TPasGLTFInt32;
    end;
   end;
   procedure ProcessVector3(out aVector3:TpvVector3;
-                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
                            const aTimeIndex0:TpvSizeInt;
                            const aTimeIndex1:TpvSizeInt;
                            const aKeyDelta:TpvDouble;
                            const aFactor:TpvDouble);
   var SqrFactor,CubeFactor:TpvDouble;
   begin
-   case aAnimationChannel^.Interpolation of
+   case aAnimationChannel.fInterpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-     aVector3:=(aAnimationChannel^.OutputVector3Array[aTimeIndex0]*(1.0-aFactor))+
-               (aAnimationChannel^.OutputVector3Array[aTimeIndex1]*aFactor);
+     aVector3:=(aAnimationChannel.fOutputVector3Array[aTimeIndex0]*(1.0-aFactor))+
+               (aAnimationChannel.fOutputVector3Array[aTimeIndex1]*aFactor);
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
      if (aFactor>=1.0) or SameValue(aFactor,1.0) then begin
-      aVector3:=aAnimationChannel^.OutputVector3Array[aTimeIndex1];
+      aVector3:=aAnimationChannel.fOutputVector3Array[aTimeIndex1];
      end else begin
-      aVector3:=aAnimationChannel^.OutputVector3Array[aTimeIndex0];
+      aVector3:=aAnimationChannel.fOutputVector3Array[aTimeIndex0];
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
      SqrFactor:=sqr(aFactor);
      CubeFactor:=SqrFactor*aFactor;
-     aVector3:=(((aAnimationChannel^.OutputVector3Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-                (aAnimationChannel^.OutputVector3Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
-                 (aAnimationChannel^.OutputVector3Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                  (aAnimationChannel^.OutputVector3Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
+     aVector3:=(((aAnimationChannel.fOutputVector3Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+                (aAnimationChannel.fOutputVector3Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
+                 (aAnimationChannel.fOutputVector3Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                  (aAnimationChannel.fOutputVector3Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
     end;
     else begin
      Assert(false);
@@ -13949,7 +16367,7 @@ var CullFace,Blend:TPasGLTFInt32;
    end;
   end;
   procedure ProcessVector4(out aVector4:TpvVector4;
-                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
                            const aTimeIndex0:TpvSizeInt;
                            const aTimeIndex1:TpvSizeInt;
                            const aKeyDelta:TpvDouble;
@@ -13957,30 +16375,30 @@ var CullFace,Blend:TPasGLTFInt32;
                            const aRotation:boolean);
   var SqrFactor,CubeFactor:TpvDouble;
   begin
-   case aAnimationChannel^.Interpolation of
+   case aAnimationChannel.fInterpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
      if aRotation then begin
-//    aVector4:=aAnimationChannel^.OutputVector4Array[aTimeIndex0].Slerp(aAnimationChannel^.OutputVector4Array[aTimeIndex1],aFactor);
-      aVector4:=TpvQuaternion.Create(aAnimationChannel^.OutputVector4Array[aTimeIndex0]).Slerp(TpvQuaternion.Create(aAnimationChannel^.OutputVector4Array[aTimeIndex1]),aFactor).Vector;
+//    aVector4:=aAnimationChannel.fOutputVector4Array[aTimeIndex0].Slerp(aAnimationChannel.fOutputVector4Array[aTimeIndex1],aFactor);
+      aVector4:=TpvQuaternion.Create(aAnimationChannel.fOutputVector4Array[aTimeIndex0]).Slerp(TpvQuaternion.Create(aAnimationChannel.fOutputVector4Array[aTimeIndex1]),aFactor).Vector;
      end else begin
-      aVector4:=(aAnimationChannel^.OutputVector4Array[aTimeIndex0]*(1.0-aFactor))+
-                (aAnimationChannel^.OutputVector4Array[aTimeIndex1]*aFactor);
+      aVector4:=(aAnimationChannel.fOutputVector4Array[aTimeIndex0]*(1.0-aFactor))+
+                (aAnimationChannel.fOutputVector4Array[aTimeIndex1]*aFactor);
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
      if (aFactor>=1.0) or SameValue(aFactor,1.0) then begin
-      aVector4:=aAnimationChannel^.OutputVector4Array[aTimeIndex1];
+      aVector4:=aAnimationChannel.fOutputVector4Array[aTimeIndex1];
      end else begin
-      aVector4:=aAnimationChannel^.OutputVector4Array[aTimeIndex0];
+      aVector4:=aAnimationChannel.fOutputVector4Array[aTimeIndex0];
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
      SqrFactor:=sqr(aFactor);
      CubeFactor:=SqrFactor*aFactor;
-     aVector4:=(((aAnimationChannel^.OutputVector4Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-                (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
-                 (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                  (aAnimationChannel^.OutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
+     aVector4:=(((aAnimationChannel.fOutputVector4Array[(aTimeIndex0*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+                (aAnimationChannel.fOutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*((CubeFactor-(2.0*SqrFactor))+aFactor))))+
+                 (aAnimationChannel.fOutputVector4Array[(aTimeIndex1*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                  (aAnimationChannel.fOutputVector4Array[(aTimeIndex1*3)+0]*(aKeyDelta*(CubeFactor-SqrFactor)));
      aVector4:=TpvQuaternion.Create(aVector4).Normalize.Vector;
     end;
     else begin
@@ -13990,7 +16408,7 @@ var CullFace,Blend:TPasGLTFInt32;
   end;
   procedure ProcessWeights(const aNode:TpvScene3D.TGroup.TInstance.PNode;
                            const aNodeOverwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
-                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+                           const aAnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
                            const aTimeIndex0:TpvSizeInt;
                            const aTimeIndex1:TpvSizeInt;
                            const aKeyDelta:TpvDouble;
@@ -14000,22 +16418,22 @@ var CullFace,Blend:TPasGLTFInt32;
   begin
    CountWeights:=length(aNode^.WorkWeights);
    Include(aNodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Weights);
-   case aAnimationChannel^.Interpolation of
+   case aAnimationChannel.fInterpolation of
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
      InvFactor:=1.0-aFactor;
      for WeightIndex:=0 to CountWeights-1 do begin
-      aNodeOverwrite^.Weights[WeightIndex]:=(aAnimationChannel^.OutputScalarArray[(aTimeIndex0*CountWeights)+WeightIndex]*InvFactor)+
-                                            (aAnimationChannel^.OutputScalarArray[(aTimeIndex1*CountWeights)+WeightIndex]*aFactor);
+      aNodeOverwrite^.Weights[WeightIndex]:=(aAnimationChannel.fOutputScalarArray[(aTimeIndex0*CountWeights)+WeightIndex]*InvFactor)+
+                                            (aAnimationChannel.fOutputScalarArray[(aTimeIndex1*CountWeights)+WeightIndex]*aFactor);
      end;
     end;
     TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
      if (aFactor>=1.0) or SameValue(aFactor,1.0) then begin
       for WeightIndex:=0 to CountWeights-1 do begin
-       aNodeOverwrite^.Weights[WeightIndex]:=aAnimationChannel^.OutputScalarArray[(aTimeIndex1*CountWeights)+WeightIndex];
+       aNodeOverwrite^.Weights[WeightIndex]:=aAnimationChannel.fOutputScalarArray[(aTimeIndex1*CountWeights)+WeightIndex];
       end;
      end else begin
       for WeightIndex:=0 to CountWeights-1 do begin
-       aNodeOverwrite^.Weights[WeightIndex]:=aAnimationChannel^.OutputScalarArray[(aTimeIndex0*CountWeights)+WeightIndex];
+       aNodeOverwrite^.Weights[WeightIndex]:=aAnimationChannel.fOutputScalarArray[(aTimeIndex0*CountWeights)+WeightIndex];
       end;
      end;
     end;
@@ -14023,10 +16441,10 @@ var CullFace,Blend:TPasGLTFInt32;
      SqrFactor:=sqr(aFactor);
      CubeFactor:=SqrFactor*aFactor;
      for WeightIndex:=0 to CountWeights-1 do begin
-      aNodeOverwrite^.Weights[WeightIndex]:=((((2.0*CubeFactor)-(3.0*SqrFactor))+1.0)*aAnimationChannel^.OutputScalarArray[(((aTimeIndex0*3)+1)*CountWeights)+WeightIndex])+
-                                             (((CubeFactor-(2.0*SqrFactor))+aFactor)*aKeyDelta*aAnimationChannel^.OutputScalarArray[(((aTimeIndex0*3)+2)*CountWeights)+WeightIndex])+
-                                             (((3.0*SqrFactor)-(2.0*CubeFactor))*aAnimationChannel^.OutputScalarArray[(((aTimeIndex1*3)+1)*CountWeights)+WeightIndex])+
-                                             ((CubeFactor-SqrFactor)*aKeyDelta*aAnimationChannel^.OutputScalarArray[(((aTimeIndex1*3)+0)*CountWeights)+WeightIndex]);
+      aNodeOverwrite^.Weights[WeightIndex]:=((((2.0*CubeFactor)-(3.0*SqrFactor))+1.0)*aAnimationChannel.fOutputScalarArray[(((aTimeIndex0*3)+1)*CountWeights)+WeightIndex])+
+                                             (((CubeFactor-(2.0*SqrFactor))+aFactor)*aKeyDelta*aAnimationChannel.fOutputScalarArray[(((aTimeIndex0*3)+2)*CountWeights)+WeightIndex])+
+                                             (((3.0*SqrFactor)-(2.0*CubeFactor))*aAnimationChannel.fOutputScalarArray[(((aTimeIndex1*3)+1)*CountWeights)+WeightIndex])+
+                                             ((CubeFactor-SqrFactor)*aKeyDelta*aAnimationChannel.fOutputScalarArray[(((aTimeIndex1*3)+0)*CountWeights)+WeightIndex]);
      end;
     end;
     else begin
@@ -14048,8 +16466,8 @@ var CullFace,Blend:TPasGLTFInt32;
      MidIndex,
      TargetSubIndex:TpvSizeInt;
      Animation:TpvScene3D.TGroup.TAnimation;
-     AnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
-     AnimationDefaultChannel:TpvScene3D.TGroup.TAnimation.PDefaultChannel;
+     AnimationChannel:TpvScene3D.TGroup.TAnimation.TChannel;
+     AnimationDefaultChannel:TpvScene3D.TGroup.TAnimation.TDefaultChannel;
      InstanceAnimation:TpvScene3D.TGroup.TInstance.TAnimation;
      InstanceAnimationChannelOverwrite:TpvScene3D.TGroup.TInstance.TAnimation.PChannelOverwrite;
      //Node:TpvScene3D.TGroup.TNode;
@@ -14074,10 +16492,10 @@ var CullFace,Blend:TPasGLTFInt32;
 
   InstanceAnimation:=fAnimations[aAnimationIndex+1];
 
-  if InstanceAnimation.Complete then begin
+  if InstanceAnimation.fComplete then begin
    CountInstanceChannels:=length(InstanceAnimation.fChannelOverwrites);
   end else begin
-   CountInstanceChannels:=length(Animation.fChannels);
+   CountInstanceChannels:=Animation.fChannels.Count;
   end;
   if length(InstanceAnimation.fChannelOverwrites)>0 then begin
    FillChar(InstanceAnimation.fChannelOverwrites[0],length(InstanceAnimation.fChannelOverwrites)*SizeOf(TpvScene3D.TGroup.TInstance.TAnimation.TChannelOverwrite),$ff);
@@ -14085,28 +16503,28 @@ var CullFace,Blend:TPasGLTFInt32;
 
   CountInstanceChannels:=0;
 
-  for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+  for ChannelIndex:=0 to Animation.fChannels.Count-1 do begin
 
-   AnimationChannel:=@Animation.fChannels[ChannelIndex];
+   AnimationChannel:=Animation.fChannels[ChannelIndex];
 
-   if (AnimationChannel^.TargetInstanceIndex>=0) and
-      (AnimationChannel^.TargetIndex>=0) and
-      (length(AnimationChannel^.InputTimeArray)>0) then begin
+   if (AnimationChannel.fTargetInstanceIndex>=0) and
+      (AnimationChannel.fTargetIndex>=0) and
+      (length(AnimationChannel.fInputTimeArray)>0) then begin
 
     LastIndex:=InstanceAnimation.fLastIndices[ChannelIndex];
 
-    CountTimeIndices:=length(AnimationChannel^.InputTimeArray);
+    CountTimeIndices:=length(AnimationChannel.fInputTimeArray);
 
-    Time:=Min(Max(aAnimationTime,AnimationChannel^.InputTimeArray[0]),AnimationChannel^.InputTimeArray[CountTimeIndices-1]);
+    Time:=Min(Max(aAnimationTime,AnimationChannel.fInputTimeArray[0]),AnimationChannel.fInputTimeArray[CountTimeIndices-1]);
 
     TimeIndices[1]:=-1;
 
     if (LastIndex>0) and
        (LastIndex<CountTimeIndices) and
-       (AnimationChannel^.InputTimeArray[LastIndex-1]<=Time) then begin
+       (AnimationChannel.fInputTimeArray[LastIndex-1]<=Time) then begin
      for InputTimeArrayIndex:=LastIndex to Min(LastIndex+3,CountTimeIndices-1) do begin
-      if (AnimationChannel^.InputTimeArray[InputTimeArrayIndex-1]<=Time) and
-         (Time<AnimationChannel^.InputTimeArray[InputTimeArrayIndex]) then begin
+      if (AnimationChannel.fInputTimeArray[InputTimeArrayIndex-1]<=Time) and
+         (Time<AnimationChannel.fInputTimeArray[InputTimeArrayIndex]) then begin
        TimeIndices[1]:=InputTimeArrayIndex;
        break;
       end;
@@ -14114,11 +16532,11 @@ var CullFace,Blend:TPasGLTFInt32;
     end;
 
     if TimeIndices[1]<0 then begin
-     if (CountTimeIndices>=2) and (Time<AnimationChannel^.InputTimeArray[1]) then begin
+     if (CountTimeIndices>=2) and (Time<AnimationChannel.fInputTimeArray[1]) then begin
       TimeIndices[1]:=1;
-     end else if Time<AnimationChannel^.InputTimeArray[0] then begin
+     end else if Time<AnimationChannel.fInputTimeArray[0] then begin
       TimeIndices[1]:=0;
-     end else if Time>=AnimationChannel^.InputTimeArray[CountTimeIndices-1] then begin
+     end else if Time>=AnimationChannel.fInputTimeArray[CountTimeIndices-1] then begin
       TimeIndices[1]:=CountTimeIndices-1;
      end else begin
       TimeIndices[1]:=-1;
@@ -14126,7 +16544,7 @@ var CullFace,Blend:TPasGLTFInt32;
       HighIndex:=CountTimeIndices-1;
       while LowIndex<=HighIndex do begin
        MidIndex:=LowIndex+((HighIndex-LowIndex) shr 1);
-       case Sign(AnimationChannel^.InputTimeArray[MidIndex]-Time) of
+       case Sign(AnimationChannel.fInputTimeArray[MidIndex]-Time) of
         -1:begin
          LowIndex:=MidIndex+1;
         end;
@@ -14166,15 +16584,15 @@ var CullFace,Blend:TPasGLTFInt32;
         (TimeIndices[1]>=CountTimeIndices)
        ) or
        (
-        (AnimationChannel^.InputTimeArray[TimeIndices[1]-1]>Time) or
+        (AnimationChannel.fInputTimeArray[TimeIndices[1]-1]>Time) or
         (
          (
           ((TimeIndices[1]+1)<CountTimeIndices) and
-          (Time>=AnimationChannel^.InputTimeArray[TimeIndices[1]])
+          (Time>=AnimationChannel.fInputTimeArray[TimeIndices[1]])
          ) or
          (
           ((TimeIndices[1]+1)=CountTimeIndices) and
-          (Time>AnimationChannel^.InputTimeArray[TimeIndices[1]])
+          (Time>AnimationChannel.fInputTimeArray[TimeIndices[1]])
          )
         )
        ) then begin
@@ -14187,14 +16605,14 @@ var CullFace,Blend:TPasGLTFInt32;
       if TimeIndices[1]>=CountTimeIndices then begin
        TimeIndices[1]:=CountTimeIndices-1;
       end;
-      if (AnimationChannel^.InputTimeArray[TimeIndices[1]-1]>Time) or
-         (Time>=AnimationChannel^.InputTimeArray[TimeIndices[1]]) then begin
+      if (AnimationChannel.fInputTimeArray[TimeIndices[1]-1]>Time) or
+         (Time>=AnimationChannel.fInputTimeArray[TimeIndices[1]]) then begin
        while (TimeIndices[1]>1) and
-             (AnimationChannel^.InputTimeArray[TimeIndices[1]-1]>Time) do begin
+             (AnimationChannel.fInputTimeArray[TimeIndices[1]-1]>Time) do begin
         dec(TimeIndices[1]);
        end;
        while ((TimeIndices[1]+1)<CountTimeIndices) and
-             (Time>=AnimationChannel^.InputTimeArray[TimeIndices[1]]) do begin
+             (Time>=AnimationChannel.fInputTimeArray[TimeIndices[1]]) do begin
         inc(TimeIndices[1]);
        end;
        if TimeIndices[1]<1 then begin
@@ -14209,8 +16627,8 @@ var CullFace,Blend:TPasGLTFInt32;
     if TimeIndices[1]<0 then begin
      TimeIndices[1]:=0;
      for InputTimeArrayIndex:=1 to CountTimeIndices-1 do begin
-      if (AnimationChannel^.InputTimeArray[InputTimeArrayIndex-1]<=Time) and
-         (AnimationChannel^.InputTimeArray[InputTimeArrayIndex]>=Time) then begin
+      if (AnimationChannel.fInputTimeArray[InputTimeArrayIndex-1]<=Time) and
+         (AnimationChannel.fInputTimeArray[InputTimeArrayIndex]>=Time) then begin
        TimeIndices[1]:=InputTimeArrayIndex;
        break;
       end;
@@ -14230,12 +16648,12 @@ var CullFace,Blend:TPasGLTFInt32;
       TimeIndices[0]:=0;
      end;
 
-     KeyDelta:=AnimationChannel^.InputTimeArray[TimeIndices[1]]-AnimationChannel^.InputTimeArray[TimeIndices[0]];
+     KeyDelta:=AnimationChannel.fInputTimeArray[TimeIndices[1]]-AnimationChannel.fInputTimeArray[TimeIndices[0]];
 
      if SameValue(TimeIndices[0],TimeIndices[1]) then begin
       Factor:=0.0;
      end else begin
-      Factor:=(Time-AnimationChannel^.InputTimeArray[TimeIndices[0]])/KeyDelta;
+      Factor:=(Time-AnimationChannel.fInputTimeArray[TimeIndices[0]])/KeyDelta;
       if Factor<0.0 then begin
        Factor:=0.0;
       end else if Factor>1.0 then begin
@@ -14243,7 +16661,7 @@ var CullFace,Blend:TPasGLTFInt32;
       end;
      end;
 
-     case AnimationChannel^.Target of
+     case AnimationChannel.fTarget of
 
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
@@ -14254,15 +16672,15 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
 
-       if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<length(fNodes)) then begin
+       if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<length(fNodes)) then begin
 
-        Node:=@fNodes[AnimationChannel^.TargetIndex];
+        Node:=@fNodes[AnimationChannel.fTargetIndex];
 
         NodeOverwrite:=nil;
 
         if aFactor>=-0.5 then begin
 
-         InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
@@ -14273,6 +16691,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Node.Overwrites)) then begin
              NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
              NodeOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Additive);
+             end;
              NodeOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              NodeOverwrite:=nil;
@@ -14290,13 +16711,13 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if assigned(NodeOverwrite) then begin
 
-           case AnimationChannel^.Target of
+           case AnimationChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale:begin
              ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-             case AnimationChannel^.Target of
+             case AnimationChannel.fTarget of
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation:begin
                Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Translation);
@@ -14314,7 +16735,7 @@ var CullFace,Blend:TPasGLTFInt32;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation:begin
              ProcessVector4(Vector4,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor,true);
-             case AnimationChannel^.Target of
+             case AnimationChannel.fTarget of
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
               TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation:begin
                Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Rotation);
@@ -14343,9 +16764,9 @@ var CullFace,Blend:TPasGLTFInt32;
 
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMeshWeights:begin
 
-       if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fGroup.fMeshes.Count) then begin
+       if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fGroup.fMeshes.Count) then begin
 
-        Mesh:=fGroup.fMeshes[AnimationChannel^.TargetIndex];
+        Mesh:=fGroup.fMeshes[AnimationChannel.fTargetIndex];
 
         for ReferenceNodeIndex:=0 to Mesh.fReferencedByNodes.Count-1 do begin
 
@@ -14359,7 +16780,7 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if aFactor>=-0.5 then begin
 
-           InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+           InstanceChannelIndex:=AnimationChannel.fTargetInstanceIndex;
            if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
             InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
@@ -14370,6 +16791,9 @@ var CullFace,Blend:TPasGLTFInt32;
               if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Node.Overwrites)) then begin
                NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
                NodeOverwrite^.Flags:=[];
+               if InstanceAnimation.fAdditive then begin
+                Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Additive);
+               end;
                NodeOverwrite^.Factor:=Max(aFactor,0.0);
               end else begin
                NodeOverwrite:=nil;
@@ -14407,15 +16831,15 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
 
-       if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fLights.Count) then begin
+       if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fLights.Count) then begin
 
-        Light:=fLights[AnimationChannel^.TargetIndex];
+        Light:=fLights[AnimationChannel.fTargetIndex];
 
         LightOverwrite:=nil;
 
         if aFactor>=-0.5 then begin
 
-         InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
@@ -14426,6 +16850,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Light.fOverwrites)) then begin
              LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
              LightOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Additive);
+             end;
              LightOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              LightOverwrite:=nil;
@@ -14443,7 +16870,7 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if assigned(LightOverwrite) then begin
 
-           case AnimationChannel^.Target of
+           case AnimationChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
              ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
              Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color);
@@ -14491,15 +16918,15 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
 
-       if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fCameras.Count) then begin
+       if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fCameras.Count) then begin
 
-        Camera:=fCameras[AnimationChannel^.TargetIndex];
+        Camera:=fCameras[AnimationChannel.fTargetIndex];
 
         CameraOverwrite:=nil;
 
         if aFactor>=-0.5 then begin
 
-         InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
@@ -14510,6 +16937,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Camera.fOverwrites)) then begin
              CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
              CameraOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Additive);
+             end;
              CameraOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              CameraOverwrite:=nil;
@@ -14527,7 +16957,7 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if assigned(CameraOverwrite) then begin
 
-           case AnimationChannel^.Target of
+           case AnimationChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag:begin
              ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
              Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag);
@@ -14606,25 +17036,26 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
 
-       if (AnimationChannel^.TargetIndex>=0) and (AnimationChannel^.TargetIndex<fMaterials.Count) then begin
+       if (AnimationChannel.fTargetIndex>=0) and (AnimationChannel.fTargetIndex<fMaterials.Count) then begin
 
-        Material:=fMaterials[AnimationChannel^.TargetIndex];
+        Material:=fMaterials[AnimationChannel.fTargetIndex];
 
  {      if not assigned(Material) then begin
-         Material:=fMaterials[AnimationChannel^.TargetIndex];
+         Material:=fMaterials[AnimationChannel.fTargetIndex];
         end;}
 
-        TargetSubIndex:=AnimationChannel^.TargetSubIndex;
+        TargetSubIndex:=AnimationChannel.fTargetSubIndex;
 
         MaterialOverwrite:=nil;
 
         if (aFactor>=-0.5) and assigned(Material) then begin
 
-         InstanceChannelIndex:=AnimationChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
 
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
@@ -14635,6 +17066,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Material.fOverwrites)) then begin
              MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
              MaterialOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.Additive);
+             end;
              MaterialOverwrite^.SubIndex:=TargetSubIndex;
              MaterialOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
@@ -14653,7 +17087,7 @@ var CullFace,Blend:TPasGLTFInt32;
 
           if assigned(MaterialOverwrite) then begin
 
-           case AnimationChannel^.Target of
+           case AnimationChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
              ProcessVector4(Vector4,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor,false);
              Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor);
@@ -14771,13 +17205,18 @@ var CullFace,Blend:TPasGLTFInt32;
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength:begin
              ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRAnisotropyStrength);
              MaterialOverwrite^.MaterialPBRAnisotropyStrength:=Scalar;
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation:begin
              ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
-             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureRotation);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRAnisotropyRotation);
              MaterialOverwrite^.MaterialPBRAnisotropyRotation:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRDispersion);
+             MaterialOverwrite^.MaterialPBRDispersion:=Scalar;
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
              ProcessVector2(Vector2,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
@@ -14818,15 +17257,15 @@ var CullFace,Blend:TPasGLTFInt32;
 
   end;
 
-  if InstanceAnimation.Complete then begin
+  if InstanceAnimation.fComplete then begin
 
-   for ChannelIndex:=0 to length(Animation.fDefaultChannels)-1 do begin
+   for ChannelIndex:=0 to Animation.fDefaultChannels.Count-1 do begin
 
-    AnimationDefaultChannel:=@Animation.fDefaultChannels[ChannelIndex];
+    AnimationDefaultChannel:=Animation.fDefaultChannels[ChannelIndex];
 
-    if AnimationDefaultChannel^.TargetInstanceIndex>=0 then begin
+    if AnimationDefaultChannel.fTargetInstanceIndex>=0 then begin
 
-     case AnimationDefaultChannel^.Target of
+     case AnimationDefaultChannel.fTarget of
 
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation,
@@ -14836,11 +17275,11 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeScale,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeWeights:begin
-       if (AnimationDefaultChannel^.TargetIndex>=0) and (AnimationDefaultChannel^.TargetIndex<length(fNodes)) then begin
-        Node:=@fNodes[AnimationDefaultChannel^.TargetIndex];
+       if (AnimationDefaultChannel.fTargetIndex>=0) and (AnimationDefaultChannel.fTargetIndex<length(fNodes)) then begin
+        Node:=@fNodes[AnimationDefaultChannel.fTargetIndex];
         NodeOverwrite:=nil;
         if aFactor>=-0.5 then begin
-         InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationDefaultChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
           if InstanceAnimationChannelOverwrite^<0 then begin
@@ -14850,6 +17289,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Node.Overwrites)) then begin
              NodeOverwrite:=@Node.Overwrites[InstanceAnimationChannelOverwrite^];
              NodeOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(NodeOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Additive);
+             end;
              NodeOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              NodeOverwrite:=nil;
@@ -14865,7 +17307,7 @@ var CullFace,Blend:TPasGLTFInt32;
            end;
           end;
           if assigned(NodeOverwrite) then begin
-           case AnimationDefaultChannel^.Target of
+           case AnimationDefaultChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerNodeTranslation:begin
              NodeOverwrite^.Flags:=NodeOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultTranslation,
@@ -14900,11 +17342,11 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightRange,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotInnerConeAngle,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle:begin
-       if (AnimationDefaultChannel^.TargetIndex>=0) and (AnimationDefaultChannel^.TargetIndex<fLights.Count) then begin
-        Light:=fLights[AnimationDefaultChannel^.TargetIndex];
+       if (AnimationDefaultChannel.fTargetIndex>=0) and (AnimationDefaultChannel.fTargetIndex<fLights.Count) then begin
+        Light:=fLights[AnimationDefaultChannel.fTargetIndex];
         LightOverwrite:=nil;
         if aFactor>=-0.5 then begin
-         InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationDefaultChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
           if InstanceAnimationChannelOverwrite^<0 then begin
@@ -14914,6 +17356,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Light.fOverwrites)) then begin
              LightOverwrite:=@Light.fOverwrites[InstanceAnimationChannelOverwrite^];
              LightOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(LightOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Additive);
+             end;
              LightOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              LightOverwrite:=nil;
@@ -14929,7 +17374,7 @@ var CullFace,Blend:TPasGLTFInt32;
            end;
           end;
           if assigned(LightOverwrite) then begin
-           case AnimationDefaultChannel^.Target of
+           case AnimationDefaultChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
              LightOverwrite^.Flags:=LightOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.DefaultColor,
                                                            TpvScene3D.TGroup.TInstance.TLight.TLightOverwriteFlag.Color];
@@ -14967,11 +17412,11 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveYFov,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZFar,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraPerspectiveZNear:begin
-       if (AnimationDefaultChannel^.TargetIndex>=0) and (AnimationDefaultChannel^.TargetIndex<fCameras.Count) then begin
-        Camera:=fCameras[AnimationDefaultChannel^.TargetIndex];
+       if (AnimationDefaultChannel.fTargetIndex>=0) and (AnimationDefaultChannel.fTargetIndex<fCameras.Count) then begin
+        Camera:=fCameras[AnimationDefaultChannel.fTargetIndex];
         CameraOverwrite:=nil;
         if aFactor>=-0.5 then begin
-         InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationDefaultChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
           if InstanceAnimationChannelOverwrite^<0 then begin
@@ -14981,6 +17426,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Camera.fOverwrites)) then begin
              CameraOverwrite:=@Camera.fOverwrites[InstanceAnimationChannelOverwrite^];
              CameraOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(CameraOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.Additive);
+             end;
              CameraOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
              CameraOverwrite:=nil;
@@ -14994,7 +17442,7 @@ var CullFace,Blend:TPasGLTFInt32;
            end;
           end;
           if assigned(CameraOverwrite) then begin
-           case AnimationDefaultChannel^.Target of
+           case AnimationDefaultChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerCameraOrthographicXMag:begin
              CameraOverwrite^.Flags:=CameraOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.DefaultOrthographicXMag,
                                                              TpvScene3D.TGroup.TInstance.TCamera.TCameraOverwriteFlag.OrthographicXMag];
@@ -15061,15 +17509,16 @@ var CullFace,Blend:TPasGLTFInt32;
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
-       if (AnimationDefaultChannel^.TargetIndex>=0) and (AnimationDefaultChannel^.TargetIndex<fMaterials.Count) then begin
-        Material:=fMaterials[AnimationDefaultChannel^.TargetIndex];
-        TargetSubIndex:=AnimationDefaultChannel^.TargetSubIndex;
+       if (AnimationDefaultChannel.fTargetIndex>=0) and (AnimationDefaultChannel.fTargetIndex<fMaterials.Count) then begin
+        Material:=fMaterials[AnimationDefaultChannel.fTargetIndex];
+        TargetSubIndex:=AnimationDefaultChannel.fTargetSubIndex;
         MaterialOverwrite:=nil;
         if (aFactor>=-0.5) and assigned(Material) then begin
-         InstanceChannelIndex:=AnimationDefaultChannel^.TargetInstanceIndex;
+         InstanceChannelIndex:=AnimationDefaultChannel.fTargetInstanceIndex;
          if (InstanceChannelIndex>=0) and (InstanceChannelIndex<length(InstanceAnimation.fChannelOverwrites)) then begin
           InstanceAnimationChannelOverwrite:=@InstanceAnimation.fChannelOverwrites[InstanceChannelIndex];
           if InstanceAnimationChannelOverwrite^<0 then begin
@@ -15079,6 +17528,9 @@ var CullFace,Blend:TPasGLTFInt32;
             if (InstanceAnimationChannelOverwrite^>=0) and (InstanceAnimationChannelOverwrite^<length(Material.fOverwrites)) then begin
              MaterialOverwrite:=@Material.fOverwrites[InstanceAnimationChannelOverwrite^];
              MaterialOverwrite^.Flags:=[];
+             if InstanceAnimation.fAdditive then begin
+              Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.Additive);
+             end;
              MaterialOverwrite^.SubIndex:=TargetSubIndex;
              MaterialOverwrite^.Factor:=Max(aFactor,0.0);
             end else begin
@@ -15095,7 +17547,7 @@ var CullFace,Blend:TPasGLTFInt32;
            end;
           end;
           if assigned(MaterialOverwrite) then begin
-           case AnimationDefaultChannel^.Target of
+           case AnimationDefaultChannel.fTarget of
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRMetallicRoughnessBaseColorFactor:begin
              MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRMetallicRoughnessBaseColorFactor,
                                                                  TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRMetallicRoughnessBaseColorFactor];
@@ -15196,6 +17648,10 @@ var CullFace,Blend:TPasGLTFInt32;
              MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRAnisotropyRotation,
                                                                  TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRAnisotropyRotation];
             end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRDispersion,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRDispersion];
+            end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
              MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureOffset,
                                                                  TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.TextureOffset];
@@ -15231,50 +17687,55 @@ var CullFace,Blend:TPasGLTFInt32;
  end;
  procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMatrix:TpvMatrix4x4;aDirty:boolean);
  var Index,OtherIndex,RotationCounter:TpvSizeInt;
-     Matrix:TpvMatrix4x4;
+     Matrix,LightMatrix:TpvMatrix4x4;
      InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
      Node:TpvScene3D.TGroup.TNode;
      Translation,Scale:TpvVector3;
-     Rotation:TpvQuaternion;
+     WeightedRotation,AdditiveRotation:TpvQuaternion;
      TranslationSum,ScaleSum:TVector3Sum;
      Factor,
-     RotationFactorSum,
+     WeightedRotationFactorSum,
      WeightsFactorSum:TpvDouble;
      Overwrite:TpvScene3D.TGroup.TInstance.TNode.PNodeOverwrite;
-     FirstWeights,SkinUsed,Dirty:boolean;
+     FirstWeights,SkinUsed,Dirty,Additive,HasAdditiveRotation:boolean;
      Light:TpvScene3D.TLight;
      InstanceLight:TpvScene3D.TGroup.TInstance.TLight;
-  procedure AddRotation(const aRotation:TpvQuaternion;const aFactor:TpvDouble);
+  procedure AddRotation(const aRotation:TpvQuaternion;const aFactor:TpvDouble;const aAdditive:Boolean);
   begin
    if not IsZero(aFactor) then begin
-    if RotationCounter=0 then begin
-     Rotation:=aRotation;
+    if aAdditive then begin
+     AdditiveRotation:=AdditiveRotation.Slerp(AdditiveRotation*aRotation,aFactor);
+     HasAdditiveRotation:=true;
     end else begin
-     // Informal rolling weighted average proof as javascript/ecmascript:
-     // var data = [[1, 0.5], [2, 0.25], [3, 0.125], [4, 0.0625]]; // <= [[value, weight], ... ]
-     // var weightedAverage = 0, weightSum = 0;
-     // for(var i = 0; i < data.length; i++){
-     //   weightSum += data[i][1];
-     // }
-     // for(var i = 0; i < data.length; i++){
-     //    weightedAverage += data[i][0] * data[i][1];
-     // };
-     // weightedAverage /= weightSum;
-     // var rollingAverage = 0, rollingWeightSum = 0;
-     // for(var i = 0; i < data.length; i++){
-     //   //-------------------- THIS -----------------\\ should be replaced with the actual blend operation, for example slerping
-     //   rollingAverage += (data[i][0] - rollingAverage) * (data[i][1] / (rollingWeightSum + data[i][1]));
-     //   rollingWeightSum += data[i][1];
-     // }
-     // var output = [weightedAverage, rollingAverage, weightedAverage * weightSum, rollingAverage * weightSum];
-     // output should be [1.7333333333333334, 1.7333333333333334, 1.625, 1.625] then
-     // Slerp: Commutative =  No, Constant velocity = Yes, Torque minimal = Yes (no artefact-jumps)
-     // Nlerp: Commutative = Yes, Constant velocity = No,  Torque minimal = Yes (no artefact-jumps)
-     // Elerp: Commutative = Yes, Constant velocity = Yes, Torque minimal = No  (can produce artefact-jumps on too distinct to blending automation rotation frames)
-     Rotation:=Rotation.Slerp(aRotation,aFactor/(RotationFactorSum+aFactor)); // Rolling weighted average
+     if RotationCounter=0 then begin
+      WeightedRotation:=aRotation;
+     end else begin
+      // Informal rolling weighted average proof as javascript/ecmascript:
+      // var data = [[1, 0.5], [2, 0.25], [3, 0.125], [4, 0.0625]]; // <= [[value, weight], ... ]
+      // var weightedAverage = 0, weightSum = 0;
+      // for(var i = 0; i < data.length; i++){
+      //   weightSum += data[i][1];
+      // }
+      // for(var i = 0; i < data.length; i++){
+      //    weightedAverage += data[i][0] * data[i][1];
+      // };
+      // weightedAverage /= weightSum;
+      // var rollingAverage = 0, rollingWeightSum = 0;
+      // for(var i = 0; i < data.length; i++){
+      //   //-------------------- THIS -----------------\\ should be replaced with the actual blend operation, for example slerping
+      //   rollingAverage += (data[i][0] - rollingAverage) * (data[i][1] / (rollingWeightSum + data[i][1]));
+      //   rollingWeightSum += data[i][1];
+      // }
+      // var output = [weightedAverage, rollingAverage, weightedAverage * weightSum, rollingAverage * weightSum];
+      // output should be [1.7333333333333334, 1.7333333333333334, 1.625, 1.625] then
+      // Slerp: Commutative =  No, Constant velocity = Yes, Torque minimal = Yes (no artefact-jumps)
+      // Nlerp: Commutative = Yes, Constant velocity = No,  Torque minimal = Yes (no artefact-jumps)
+      // Elerp: Commutative = Yes, Constant velocity = Yes, Torque minimal = No  (can produce artefact-jumps on too distinct to blending automation WeightedRotation frames)
+      WeightedRotation:=WeightedRotation.Slerp(aRotation,aFactor/(WeightedRotationFactorSum+aFactor)); // Rolling weighted average
+     end;
+     inc(RotationCounter);
+     WeightedRotationFactorSum:=WeightedRotationFactorSum+aFactor;
     end;
-    inc(RotationCounter);
-    RotationFactorSum:=RotationFactorSum+aFactor;
    end;
   end;
  begin
@@ -15288,51 +17749,54 @@ var CullFace,Blend:TPasGLTFInt32;
    SkinUsed:=true;
    TranslationSum.Clear;
    ScaleSum.Clear;
-   RotationFactorSum:=0.0;
+   WeightedRotationFactorSum:=0.0;
    WeightsFactorSum:=0.0;
    FirstWeights:=true;
-   Rotation:=TpvQuaternion.Identity;
+   WeightedRotation:=TpvQuaternion.Identity;
+   AdditiveRotation:=TpvQuaternion.Identity;
+   HasAdditiveRotation:=false;
    RotationCounter:=0;
    for Index:=0 to InstanceNode^.CountOverwrites-1 do begin
     Overwrite:=@InstanceNode^.Overwrites[Index];
     Factor:=Overwrite^.Factor;
+    Additive:=TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Additive in Overwrite^.Flags;
     if not IsZero(Factor) then begin
      if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults in Overwrite^.Flags then begin
-      TranslationSum.Add(Node.fTranslation,Factor);
-      ScaleSum.Add(Node.fScale,Factor);
-      AddRotation(Node.fRotation,Factor);
-      if length(Node.fWeights)>0 then begin
+      TranslationSum.Add(Node.fTranslation,Factor,Additive);
+      ScaleSum.Add(Node.fScale,Factor,Additive);
+      AddRotation(Node.fRotation,Factor,Additive);
+      if Node.fWeights.Count>0 then begin
        if FirstWeights then begin
         FirstWeights:=false;
         for OtherIndex:=0 to length(InstanceNode^.OverwriteWeightsSum)-1 do begin
          InstanceNode^.OverwriteWeightsSum[OtherIndex]:=0.0;
         end;
        end;
-       for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Node.fWeights))-1 do begin
-        InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights[OtherIndex]*Factor);
+       for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),Node.fWeights.Count)-1 do begin
+        InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights.Items[OtherIndex]*Factor);
        end;
        WeightsFactorSum:=WeightsFactorSum+Factor;
       end;
      end else begin
       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Translation in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultTranslation in Overwrite^.Flags then begin
-        TranslationSum.Add(Node.fTranslation,Factor);
+        TranslationSum.Add(Node.fTranslation,Factor,Additive);
        end else begin
-        TranslationSum.Add(Overwrite^.Translation,Factor);
+        TranslationSum.Add(Overwrite^.Translation,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Scale in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultScale in Overwrite^.Flags then begin
-        ScaleSum.Add(Node.fScale,Factor);
+        ScaleSum.Add(Node.fScale,Factor,Additive);
        end else begin
-        ScaleSum.Add(Overwrite^.Scale,Factor);
+        ScaleSum.Add(Overwrite^.Scale,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Rotation in Overwrite^.Flags then begin
        if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultRotation in Overwrite^.Flags then begin
-        AddRotation(Node.fRotation,Factor);
+        AddRotation(Node.fRotation,Factor,Additive);
        end else begin
-        AddRotation(Overwrite^.Rotation,Factor);
+        AddRotation(Overwrite^.Rotation,Factor,Additive);
        end;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Weights in Overwrite^.Flags then begin
@@ -15343,8 +17807,8 @@ var CullFace,Blend:TPasGLTFInt32;
         end;
        end;
        if TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.DefaultWeights in Overwrite^.Flags then begin
-        for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Node.fWeights))-1 do begin
-         InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights[OtherIndex]*Factor);
+        for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),Node.fWeights.Count)-1 do begin
+         InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights.Items[OtherIndex]*Factor);
         end;
        end else begin
         for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Overwrite^.Weights))-1 do begin
@@ -15358,31 +17822,34 @@ var CullFace,Blend:TPasGLTFInt32;
    end;
    Translation:=TranslationSum.Get(Node.fTranslation);
    Scale:=ScaleSum.Get(Node.fScale);
-   if RotationFactorSum>0.0 then begin
-    Rotation:=Rotation.Normalize;
+   if WeightedRotationFactorSum>0.0 then begin
+    WeightedRotation:=WeightedRotation.Normalize;
    end else begin
-    Rotation:=Node.fRotation;
+    WeightedRotation:=Node.fRotation;
+   end;
+   if HasAdditiveRotation then begin
+    WeightedRotation:=WeightedRotation*AdditiveRotation;
    end;
    if WeightsFactorSum>0.0 then begin
     Factor:=1.0/WeightsFactorSum;
-    for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(Node.fWeights))-1 do begin
+    for Index:=0 to Min(length(InstanceNode^.WorkWeights),Node.fWeights.Count)-1 do begin
      InstanceNode^.WorkWeights[Index]:=InstanceNode^.OverwriteWeightsSum[Index]*Factor;
     end;
    end else begin
-    for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(Node.fWeights))-1 do begin
-     InstanceNode^.WorkWeights[Index]:=Node.fWeights[Index];
+    for Index:=0 to Min(length(InstanceNode^.WorkWeights),Node.fWeights.Count)-1 do begin
+     InstanceNode^.WorkWeights[Index]:=Node.fWeights.Items[Index];
     end;
    end;
   end else begin
    Translation:=Node.fTranslation;
    Scale:=Node.fScale;
-   Rotation:=Node.fRotation;
-   for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(Node.fWeights))-1 do begin
-    InstanceNode^.WorkWeights[Index]:=Node.fWeights[Index];
+   WeightedRotation:=Node.fRotation;
+   for Index:=0 to Min(length(InstanceNode^.WorkWeights),Node.fWeights.Count)-1 do begin
+    InstanceNode^.WorkWeights[Index]:=Node.fWeights.Items[Index];
    end;
   end;
   Matrix:=TpvMatrix4x4.CreateScale(Scale)*
-          (TpvMatrix4x4.CreateFromQuaternion(Rotation)*
+          (TpvMatrix4x4.CreateFromQuaternion(WeightedRotation)*
            TpvMatrix4x4.CreateTranslation(Translation));
   if assigned(fOnNodeMatrixPre) then begin
    if fOnNodeMatrixPre(self,Node,InstanceNode,Matrix) then begin
@@ -15407,15 +17874,19 @@ var CullFace,Blend:TPasGLTFInt32;
     fSkins[Node.fSkin.Index].Used:=true;
    end;
   end;
-  Dirty:=Dirty or (assigned(Node.fSkin) or (length(Node.fWeights)>0));
+  Dirty:=Dirty or (assigned(Node.fSkin) or (Node.fWeights.Count>0));
   if aInFlightFrameIndex>=0 then begin
    if assigned(Node.fLight) then begin
+    LightMatrix:=Matrix*fModelMatrix;
     InstanceLight:=fLights[Node.fLight.fIndex];
     if assigned(InstanceNode^.Light) then begin
      Light:=InstanceNode^.Light;
-     if (Light.fMatrix<>Matrix) or (Light.fDataPointer<>InstanceLight.fEffectiveData) then begin
-      Light.fMatrix:=Matrix;
+     if (Light.fMatrix<>LightMatrix) or
+        (Light.fDataPointer<>InstanceLight.fEffectiveData) or
+        (Light.fGeneration<>InstanceLight.fEffectiveData.fGeneration) then begin
+      Light.fMatrix:=LightMatrix;
       Light.fDataPointer:=InstanceLight.fEffectiveData;
+      Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
       Light.Update;
      end;
     end else begin
@@ -15425,7 +17896,8 @@ var CullFace,Blend:TPasGLTFInt32;
       Light.fInstanceLight:=InstanceLight;
       Light.fData:=Node.fLight.fData;
       Light.fDataPointer:=InstanceLight.fEffectiveData;
-      Light.fMatrix:=Matrix;
+      Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
+      Light.fMatrix:=LightMatrix;
       Light.Update;
      finally
       InstanceNode^.Light:=Light;
@@ -15450,8 +17922,8 @@ var CullFace,Blend:TPasGLTFInt32;
    InstanceSkin:=@fSkins[SkinIndex];
    if InstanceSkin^.Used and (Skin.fJoints.Count>0) then begin
     for Index:=0 to Skin.fJoints.Count-1 do begin
-     Assert(fGroup.fNodes[Skin.fJoints.Items[Index]].Index=Skin.fJoints.Items[Index]);
-     fNodeMatrices[Skin.fJointMatrixOffset+Index]:=Skin.fInverseBindMatrices.Items[Index]*fNodes[Skin.fJoints.Items[Index]].WorkMatrix;
+     Assert(fGroup.fNodes[Skin.fJoints.ItemArray[Index]].Index=Skin.fJoints.ItemArray[Index]);
+     fNodeMatrices[Skin.fJointMatrixOffset+Index]:=Skin.fInverseBindMatrices.ItemArray[Index]*fNodes[Skin.fJoints.ItemArray[Index]].WorkMatrix;
     end;
    end;
   end;
@@ -15483,7 +17955,7 @@ var CullFace,Blend:TPasGLTFInt32;
  end;
  procedure ProcessBoundingSceneBoxNodesWithManualStack(const aScene:TpvScene3D.TGroup.TScene);
  type TStackItem=record
-       NodeIndex:TpvSizeInt;       
+       NodeIndex:TpvSizeInt;
        Pass:TpvSizeInt;
       end;
       PStackItem=^TStackItem;
@@ -15521,19 +17993,19 @@ var CullFace,Blend:TPasGLTFInt32;
        end; 
       end;  
       1:begin 
-       if Node.Children.Count>0 then begin 
-        InstanceNode:=@fNodes[StackItem.NodeIndex];
-        AABB:=@InstanceNode^.BoundingBoxes[aInFlightFrameIndex];
-        Filled:=@InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex];
-        for Index:=0 to Node.Children.Count-1 do begin
-         OtherInstanceNode:=@fNodes[Node.Children[Index].Index];
-         if OtherInstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
+       InstanceNode:=@fNodes[StackItem.NodeIndex];
+       AABB:=@InstanceNode^.BoundingBoxes[aInFlightFrameIndex];
+       Filled:=@InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex];
+       for Index:=0 to Node.Children.Count-1 do begin
+        OtherInstanceNode:=@fNodes[Node.Children[Index].Index];
+        if OtherInstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
+         if Filled^ then begin
           AABB^:=AABB^.Combine(OtherInstanceNode^.BoundingBoxes[aInFlightFrameIndex]);
          end else begin
           Filled^:=true;
           AABB^:=OtherInstanceNode^.BoundingBoxes[aInFlightFrameIndex];
          end;
-        end; 
+        end;
        end;
       end; 
      end;
@@ -15560,7 +18032,7 @@ var CullFace,Blend:TPasGLTFInt32;
      Mesh:TpvScene3D.TGroup.TMesh;
      Skin:TpvScene3D.TGroup.TSkin;
      InverseMatrix,Matrix,ModelNodeMatrix,ModelNodeMatrixEx:TpvMatrix4x4;
-     Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+     Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
      Vertex:TpvScene3D.PVertex;
      Position:TpvVector3;
      JointBlock:PJointBlock;
@@ -15580,22 +18052,22 @@ var CullFace,Blend:TPasGLTFInt32;
    ModelNodeMatrixEx:=aInstanceNode^.WorkMatrix*fModelMatrix;
    DynamicBoundingBox.Min:=TpvVector3.InlineableCreate(Infinity,Infinity,Infinity);
    DynamicBoundingBox.Max:=TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity);
-   for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-    Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
-    for VertexIndex:=Primitive^.StartBufferVertexOffset to (Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-     Vertex:=@Group.fVertices.Items[VertexIndex];
+   for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+    Primitive:=Mesh.fPrimitives[PrimitiveIndex];
+    for VertexIndex:=Primitive.fStartBufferVertexOffset to (Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+     Vertex:=@Group.fVertices.ItemArray[VertexIndex];
      Position:=Vertex^.Position;
      MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
      while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
-      MorphTargetVertex:=@Group.fMorphTargetVertices.Items[MorphTargetVertexIndex];
+      MorphTargetVertex:=@Group.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
       Position:=Position+(MorphTargetVertex^.Position.xyz*fMorphTargetVertexWeights[MorphTargetVertex^.Index]);
       MorphTargetVertexIndex:=MorphTargetVertex^.Next;
      end;
      ModelNodeMatrix:=ModelNodeMatrixEx;
      if Vertex^.CountJointBlocks>0 then begin
-      Matrix:=TpvMatrix4x4.Identity;
+      Matrix:=TpvMatrix4x4.Null;
       for JointBlockIndex:=Vertex^.JointBlockBaseIndex to (Vertex^.JointBlockBaseIndex+Vertex^.CountJointBlocks)-1 do begin
-       JointBlock:=@fGroup.fJointBlocks.Items[JointBlockIndex];
+       JointBlock:=@fGroup.fJointBlocks.ItemArray[JointBlockIndex];
        for JointIndex:=0 to 3 do begin
         Matrix:=Matrix+((fNodeMatrices[JointBlock^.Joints[JointIndex]]*InverseMatrix)*JointBlock^.Weights[JointIndex]);
        end;
@@ -15615,7 +18087,7 @@ var CullFace,Blend:TPasGLTFInt32;
    if OK then begin
     aInstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=DynamicBoundingBox;
    end else begin
-    aInstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=Mesh.fBoundingBox.Transform(aInstanceNode^.WorkMatrix*fModelMatrix);
+    aInstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=Mesh.fBoundingBox.HomogenTransform(aInstanceNode^.WorkMatrix*fModelMatrix);
    end;
    aInstanceNode^.BoundingBoxFilled[aInFlightFrameIndex]:=true;
   end;
@@ -15655,12 +18127,12 @@ var CullFace,Blend:TPasGLTFInt32;
     UsedJoint:=@aNode.fUsedJoints.Items[JointIndex];
 
     // Update the bounding box by combining it with the transformed by-the-joint-affected-vertices bounding box using the joint matrix.
-    BoundingBox:=BoundingBox.Combine(UsedJoint^.AABB.Transform((fNodeMatrices[UsedJoint^.Joint]*InverseMatrix)*UsedJoint^.Weight));
+    BoundingBox.DirectCombine(UsedJoint^.AABB.HomogenTransform((fNodeMatrices[UsedJoint^.Joint]*InverseMatrix)*UsedJoint^.Weight));
 
    end;
 
    // Transform the final bounding box using the node and model matrices and store it in the instance node.
-   aInstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=BoundingBox.Transform(aInstanceNode^.WorkMatrix*fModelMatrix);
+   aInstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=BoundingBox.HomogenTransform(aInstanceNode^.WorkMatrix*fModelMatrix);
 
    // Indicate that the bounding box has been calculated for the instance node.
    aInstanceNode^.BoundingBoxFilled[aInFlightFrameIndex]:=true;
@@ -15676,10 +18148,11 @@ var CullFace,Blend:TPasGLTFInt32;
        SkipListItemIndex:TpvSizeInt;
       end;
       PStackItem=^TStackItem;
-      TStack=TpvDynamicStack<TStackItem>;
- var NodeIndex,SkipListItemCount,SkipListItemIndex:TpvSizeInt;
+      TStack=TpvDynamicFastStack<TStackItem>;
+ var SkipListItemCount,SkipListItemIndex:TpvSizeInt;
      Stack:TStack;
-     StackItem,NewStackItem:TStackItem;
+     StackItem:TStackItem;
+     NewStackItem:PStackItem;
      Node:TpvBVHDynamicAABBTree.PTreeNode;
      SkipList:TpvScene3D.TGroup.TInstance.PAABBTreeSkipList;
      SkipListItem:TpvScene3D.TGroup.TInstance.PAABBTreeSkipListItem;
@@ -15689,17 +18162,19 @@ var CullFace,Blend:TPasGLTFInt32;
   try
 
    if fAABBTree.Root>=0 then begin
-    NewStackItem.NodeIndex:=fAABBTree.Root;
-    NewStackItem.Pass:=0;
-    NewStackItem.Level:=0;
-    NewStackItem.SkipListItemIndex:=0;
-    Stack.Push(NewStackItem);
+    NewStackItem:=Stack.PushIndirect;
+    NewStackItem^.NodeIndex:=fAABBTree.Root;
+    NewStackItem^.Pass:=0;
+    NewStackItem^.Level:=0;
+    NewStackItem^.SkipListItemIndex:=0;
    end;
 
    SkipListItemCount:=0;
 
    SkipList:=@fAABBTreeSkipLists[aInFlightFrameIndex];
+
    SkipList^.Count:=0;
+
    try
 
     while Stack.Pop(StackItem) do begin
@@ -15719,31 +18194,31 @@ var CullFace,Blend:TPasGLTFInt32;
 
        SkipListItem:=@SkipList^.Items[SkipListItemIndex];
        SkipListItem^.AABB:=Node.AABB;
-       SkipListItem^.UserData:=Node.UserData;
+       SkipListItem^.UserData:=TpvPtrUInt(Node.UserData);
        SkipListItem^.NodeIndex:=StackItem.NodeIndex;
        SkipListItem^.Level:=StackItem.Level;
        SkipListItem^.SkipCount:=1;
 
-       NewStackItem.NodeIndex:=StackItem.NodeIndex;
-       NewStackItem.Pass:=1;
-       NewStackItem.Level:=StackItem.Level;
-       NewStackItem.SkipListItemIndex:=SkipListItemIndex;
-       Stack.Push(NewStackItem);
+       NewStackItem:=Stack.PushIndirect;
+       NewStackItem^.NodeIndex:=StackItem.NodeIndex;
+       NewStackItem^.Pass:=1;
+       NewStackItem^.Level:=StackItem.Level;
+       NewStackItem^.SkipListItemIndex:=SkipListItemIndex;
 
        if Node^.Children[1]>=0 then begin
-        NewStackItem.NodeIndex:=Node^.Children[1];
-        NewStackItem.Pass:=0;
-        NewStackItem.Level:=StackItem.Level+1;
-        NewStackItem.SkipListItemIndex:=0;
-        Stack.Push(NewStackItem);
+        NewStackItem:=Stack.PushIndirect;
+        NewStackItem^.NodeIndex:=Node^.Children[1];
+        NewStackItem^.Pass:=0;
+        NewStackItem^.Level:=StackItem.Level+1;
+        NewStackItem^.SkipListItemIndex:=0;
        end;
 
        if Node^.Children[0]>=0 then begin
-        NewStackItem.NodeIndex:=Node^.Children[0];
-        NewStackItem.Pass:=0;
-        NewStackItem.Level:=StackItem.Level+1;
-        NewStackItem.SkipListItemIndex:=0;
-        Stack.Push(NewStackItem);
+        NewStackItem:=Stack.PushIndirect;
+        NewStackItem^.NodeIndex:=Node^.Children[0];
+        NewStackItem^.Pass:=0;
+        NewStackItem^.Level:=StackItem.Level+1;
+        NewStackItem^.SkipListItemIndex:=0;
        end;
 
       end;
@@ -15782,6 +18257,13 @@ var Index,PerInFlightFrameRenderInstanceIndex:TPasGLTFSizeInt;
     AABBTreeNode:TpvBVHDynamicAABBTree.PTreeNode;
     AABBTreeNodePotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
 begin
+
+ if assigned(fAppendageInstance) and assigned(fAppendageNode) then begin
+  fModelMatrix:=(fAppendageTransform*
+                 fAppendageInstance.fNodes[fAppendageNode.fIndex].WorkMatrix)*
+                 fAppendageInstance.fModelMatrix;
+  SetDirty;
+ end;
 
  if aInFlightFrameIndex>=0 then begin
 
@@ -15892,20 +18374,26 @@ begin
     end;
    end;
 
-   if aInFlightFrameIndex>=0 then begin
+   if aInFlightFrameIndex>=(-1) then begin
 
     for Index:=0 to fGroup.fNodes.Count-1 do begin
-     Node:=fGroup.fNodes[Index];
-     InstanceNode:=@fNodes[Index];
+     InstanceNode:=@fNodes[Node.Index];
+     InstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=TpvAABB.Create(TpvVector3.Origin,TpvVector3.Origin);
+     InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex]:=false;
+    end;
+
+    for Index:=0 to Scene.fAllNodes.Count-1 do begin
+     Node:=Scene.fAllNodes[Index];
+     InstanceNode:=@fNodes[Node.Index];
      if assigned(Node.fMesh) then begin
      {
-      if assigned(Node.fSkin) or (length(Node.fWeights)>0) or (length(Node.fMesh.fWeights)>0) then begin
+      if assigned(Node.fSkin) or (Node.fWeights.Count>0) or (Node.fMesh.fWeights.Count>0) then begin
        ProcessMorphSkinNode(Node,InstanceNode);
       end else//}
       if assigned(Node.fSkin) then begin
        ProcessSkinNode(Node,InstanceNode);
       end else begin
-       InstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=Node.fMesh.fBoundingBox.Transform(InstanceNode^.WorkMatrix*fModelMatrix);
+       InstanceNode^.BoundingBoxes[aInFlightFrameIndex]:=Node.fMesh.fBoundingBox.HomogenTransform(InstanceNode^.WorkMatrix*fModelMatrix);
        InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex]:=true;
       end;
      end else begin
@@ -15916,9 +18404,13 @@ begin
 
     ProcessBoundingSceneBoxNodes(Scene);
 
-    for Index:=0 to fGroup.fNodes.Count-1 do begin
-     Node:=fGroup.fNodes[Index];
-     InstanceNode:=@fNodes[Index];
+   end;
+
+   if aInFlightFrameIndex>=0 then begin
+
+    for Index:=0 to Scene.fAllNodes.Count-1 do begin
+     Node:=Scene.fAllNodes[Index];
+     InstanceNode:=@fNodes[Node.Index];
      if InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
       if assigned(fGroup.fSceneInstance.fPotentiallyVisibleSet) and
          ((InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
@@ -15939,7 +18431,7 @@ begin
        if InstanceNode^.AABBTreeProxy<0 then begin
         InstanceNode^.AABBTreeProxy:=fAABBTree.CreateProxy(InstanceNode^.BoundingBoxes[aInFlightFrameIndex],TpvPtrInt(Node.fIndex)+1);
        end else begin
-        fAABBTree.MoveProxy(InstanceNode^.AABBTreeProxy,InstanceNode^.BoundingBoxes[aInFlightFrameIndex],TpvVector3.Origin);
+        fAABBTree.MoveProxy(InstanceNode^.AABBTreeProxy,InstanceNode^.BoundingBoxes[aInFlightFrameIndex],TpvVector3.Null,TpvVector3.AllAxis);
        end;
       end else if InstanceNode^.AABBTreeProxy>=0 then begin
        fAABBTree.DestroyProxy(InstanceNode^.AABBTreeProxy);
@@ -15952,12 +18444,12 @@ begin
 
   end;
 
-  fBoundingBox:=fGroup.fBoundingBox.Transform(fModelMatrix);
-  if assigned(Scene) and (aInFlightFrameIndex>=0) then begin
+  fBoundingBox:=fGroup.fBoundingBox.HomogenTransform(fModelMatrix);
+  if assigned(Scene) and (aInFlightFrameIndex>=-1) then begin
    for Index:=0 to Scene.fNodes.Count-1 do begin
     InstanceNode:=@fNodes[Scene.fNodes[Index].fIndex];
     if InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
-     fBoundingBox:=fBoundingBox.Combine(InstanceNode^.BoundingBoxes[aInFlightFrameIndex]);
+     fBoundingBox.DirectCombine(InstanceNode^.BoundingBoxes[aInFlightFrameIndex]);
     end;
    end;
   end;
@@ -15972,14 +18464,14 @@ begin
     for Index:=0 to fRenderInstances.Count-1 do begin
      RenderInstance:=fRenderInstances[Index];
      if RenderInstance.fActive then begin
-      RenderInstance.fBoundingBox:=fBoundingBox.Transform(RenderInstance.fModelMatrix);
+      RenderInstance.fBoundingBox:=fBoundingBox.HomogenTransform(RenderInstance.fModelMatrix);
       if assigned(fGroup.fSceneInstance.fPotentiallyVisibleSet) and
          ((RenderInstance.fPotentiallyVisibleSetNodeIndex=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
           ((RenderInstance.fPotentiallyVisibleSetNodeIndex<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
            fSceneInstance.fPotentiallyVisibleSet.fNodes[RenderInstance.fPotentiallyVisibleSetNodeIndex].fAABB.Contains(RenderInstance.fBoundingBox))) then begin
        RenderInstance.fPotentiallyVisibleSetNodeIndex:=fGroup.fSceneInstance.fPotentiallyVisibleSet.GetNodeIndexByAABB(RenderInstance.fBoundingBox);
       end;
-      PerInFlightFrameRenderInstanceIndex:=fPerInFlightFrameRenderInstances[aInFlightFrameIndex].AddNew;
+      PerInFlightFrameRenderInstanceIndex:=fPerInFlightFrameRenderInstances[aInFlightFrameIndex].AddNewIndex;
       PerInFlightFrameRenderInstance:=@fPerInFlightFrameRenderInstances[aInFlightFrameIndex].Items[PerInFlightFrameRenderInstanceIndex];
       PerInFlightFrameRenderInstance^.PotentiallyVisibleSetNodeIndex:=RenderInstance.fPotentiallyVisibleSetNodeIndex;
       PerInFlightFrameRenderInstance^.BoundingBox:=RenderInstance.fBoundingBox;
@@ -16014,9 +18506,9 @@ begin
    fAABBTreeProxy:=fGroup.fSceneInstance.fAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
   end else begin
    if fUseRenderInstances then begin
-    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,TpvAABB.Create(TpvVector3.InlineableCreate(-65536.0,-65536.0,-65536.0),TpvVector3.InlineableCreate(65536.0,65536.0,65536.0)),TpvVector3.Create(1.0,1.0,1.0));
+    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,TpvAABB.Create(-TpvVector3.AllMaxAxis,TpvVector3.AllMaxAxis),TpvVector3.Null,TpvVector3.AllAxis);
    end else begin
-    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Create(1.0,1.0,1.0));
+    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Null,TpvVector3.AllAxis);
    end;
   end;
 
@@ -16084,11 +18576,11 @@ begin
      if assigned(fGroup.fSceneInstance.fPotentiallyVisibleSet) then begin
       for Index:=0 to length(fAABBTree.Nodes)-1 do begin
        AABBTreeNode:=@fAABBTree.Nodes[Index];
-       if (AABBTreeNode^.UserData=0) or ((AABBTreeNode^.UserData and TpvUInt32($80000000))<>0) then begin
+       if (AABBTreeNode^.UserData=0) or ((TpvPtrUInt(AABBTreeNode^.UserData) and TpvUInt32($80000000))<>0) then begin
         if AABBTreeNode^.UserData=0 then begin
          AABBTreeNodePotentiallyVisibleSet:=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex;
         end else begin
-         AABBTreeNodePotentiallyVisibleSet:=AABBTreeNode^.UserData and TpvUInt32($7fffffff);
+         AABBTreeNodePotentiallyVisibleSet:=TpvPtrUInt(AABBTreeNode^.UserData) and TpvUInt32($7fffffff);
         end;
         if ((AABBTreeNodePotentiallyVisibleSet=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) or
             ((AABBTreeNodePotentiallyVisibleSet<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex) and not
@@ -16097,7 +18589,7 @@ begin
          if AABBTreeNodePotentiallyVisibleSet=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex then begin
           AABBTreeNode^.UserData:=0;
          end else begin
-          AABBTreeNode^.UserData:=AABBTreeNodePotentiallyVisibleSet or TpvUInt32($80000000);
+          AABBTreeNode^.UserData:=TpvPtrInt(TpvPtrUInt(AABBTreeNodePotentiallyVisibleSet or TpvUInt32($80000000)));
          end;
         end;
        end;
@@ -16116,8 +18608,8 @@ begin
     end;
    end;
   end else begin
-// AABBTreeState^.Root:=-1;
-   AABBTreeState^.Generation:=High(TpvUInt64);
+{  AABBTreeState^.Root:=-1;
+   AABBTreeState^.Generation:=High(TpvUInt64);}
    fAABBTreeSkipLists[aInFlightFrameIndex].Count:=0;
   end;
  end;
@@ -16140,12 +18632,81 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.TInstance.UploadFrame(const aInFlightFrameIndex:TpvSizeInt);
+var Index:TpvSizeInt;
+    Generation:TpvUInt64;
+    SrcVertex:TpvScene3D.PVertex;
+    DstDynamicVertex:PGPUDynamicVertex;
+    DstStaticVertex:PGPUStaticVertex;
+    SrcMorphTargetVertex,DstMorphTargetVertex:PMorphTargetVertex;
 begin
+
  if (aInFlightFrameIndex>=0) and
     fActives[aInFlightFrameIndex] and
     assigned(fActiveScenes[aInFlightFrameIndex]) and
     not fHeadless then begin
+
+  if (fPreparedMeshContentGeneration<>fGroup.fFrameUpdatedMeshContentGenerations[aInFlightFrameIndex]) and
+     (fVulkanVertexBufferOffset>=0) then begin
+
+   repeat
+    Generation:=TPasMPInterlocked.Increment(fGroup.fSceneInstance.fMeshGenerationCounter);
+   until Generation<>0;
+
+   begin
+
+    SrcVertex:=@fGroup.fFrameVertices[aInFlightFrameIndex].ItemArray[0];
+
+    DstDynamicVertex:=@fSceneInstance.fVulkanDynamicVertexBufferData.Items[fVulkanVertexBufferOffset];
+
+    DstStaticVertex:=@fSceneInstance.fVulkanStaticVertexBufferData.Items[fVulkanVertexBufferOffset];
+
+    for Index:=0 to fGroup.fFrameVertices[aInFlightFrameIndex].Count-1 do begin
+
+     DstDynamicVertex^.Position:=SrcVertex^.Position;
+     DstDynamicVertex^.Normal:=SrcVertex^.Normal;
+     DstDynamicVertex^.Tangent:=SrcVertex^.Tangent;
+     DstDynamicVertex^.Flags:=SrcVertex^.Flags;
+     DstDynamicVertex^.Generation:=Generation;
+
+     DstStaticVertex^.TexCoord0:=SrcVertex^.TexCoord0;
+     DstStaticVertex^.TexCoord1:=SrcVertex^.TexCoord1;
+     DstStaticVertex^.Color0:=SrcVertex^.Color0;
+     DstStaticVertex^.MaterialID:=fMaterialMap[SrcVertex^.MaterialID];
+     //DstStaticVertex^.Unused0:=0;
+
+     inc(SrcVertex);
+
+     inc(DstDynamicVertex);
+
+     inc(DstStaticVertex);
+
+    end;
+
+   end;
+
+   if (fVulkanMorphTargetVertexBufferOffset>=0) and
+      (fGroup.fFrameMorphTargetVertices[aInFlightFrameIndex].Count>0) then begin
+    SrcMorphTargetVertex:=@fGroup.fFrameMorphTargetVertices[aInFlightFrameIndex].ItemArray[0];
+    DstMorphTargetVertex:=@fSceneInstance.fVulkanMorphTargetVertexBufferData.ItemArray[fVulkanMorphTargetVertexBufferOffset];
+    for Index:=0 to fGroup.fFrameMorphTargetVertices[aInFlightFrameIndex].Count-1 do begin
+     DstMorphTargetVertex^:=SrcMorphTargetVertex^;
+     inc(DstMorphTargetVertex^.Index,fVulkanMorphTargetVertexWeightsBufferOffset);
+     if DstMorphTargetVertex^.Next<>TpvUInt32($ffffffff) then begin
+      inc(DstMorphTargetVertex^.Next,fVulkanMorphTargetVertexBufferOffset);
+     end;
+     inc(SrcMorphTargetVertex);
+     inc(DstMorphTargetVertex);
+    end;
+   end;
+
+   fPreparedMeshContentGeneration:=fGroup.fFrameUpdatedMeshContentGenerations[aInFlightFrameIndex];
+
+  end;
+
+  fFramePreparedMeshContentGenerations[aInFlightFrameIndex]:=fPreparedMeshContentGeneration;
+
  end;
+
 end;
 
 procedure TpvScene3D.TGroup.TInstance.GetBakedMeshProcessMorphSkinNode(const aBakedMesh:TpvScene3D.TBakedMesh;
@@ -16165,7 +18726,7 @@ var PrimitiveIndex,VertexIndex,JointBlockIndex,JointIndex,IndexIndex,SideIndex:T
     Mesh:TpvScene3D.TGroup.TMesh;
     Skin:TpvScene3D.TGroup.TSkin;
     InverseMatrix,Matrix,ModelNodeMatrix,ModelNodeMatrixEx:TpvMatrix4x4;
-    Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
     Vertex:TpvScene3D.PVertex;
     Position,Normal:TpvVector3;
     JointBlock:PJointBlock;
@@ -16189,21 +18750,21 @@ begin
    if not aRelative then begin
     ModelNodeMatrixEx:=ModelNodeMatrixEx*fModelMatrix;
    end;
-   for PrimitiveIndex:=0 to length(Mesh.fPrimitives)-1 do begin
-    Primitive:=@Mesh.fPrimitives[PrimitiveIndex];
-    if assigned(Primitive^.Material) and
-       (Primitive^.Material.fData.AlphaMode in aMaterialAlphaModes) then begin
-     case Primitive^.PrimitiveTopology of
+   for PrimitiveIndex:=0 to Mesh.fPrimitives.Count-1 do begin
+    Primitive:=Mesh.fPrimitives[PrimitiveIndex];
+    if assigned(Primitive.fMaterial) and
+       (Primitive.fMaterial.fData.AlphaMode in aMaterialAlphaModes) then begin
+     case Primitive.fPrimitiveTopology of
       TpvScene3D.TPrimitiveTopology.Triangles:begin
-       SetLength(BakedVertices,Primitive^.CountVertices);
-       for VertexIndex:=Primitive^.StartBufferVertexOffset to (Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-        Vertex:=@Group.fVertices.Items[VertexIndex];
-        BakedVertex:=@BakedVertices[VertexIndex-Primitive^.StartBufferVertexOffset];
+       SetLength(BakedVertices,Primitive.fCountVertices);
+       for VertexIndex:=Primitive.fStartBufferVertexOffset to (Primitive.fStartBufferVertexOffset+Primitive.fCountVertices)-1 do begin
+        Vertex:=@Group.fVertices.ItemArray[VertexIndex];
+        BakedVertex:=@BakedVertices[VertexIndex-Primitive.fStartBufferVertexOffset];
         Position:=Vertex^.Position;
         Normal:=OctDecode(Vertex^.Normal);
         MorphTargetVertexIndex:=Vertex^.MorphTargetVertexBaseIndex;
         while MorphTargetVertexIndex<>TpvUInt32($ffffffff) do begin
-         MorphTargetVertex:=@Group.fMorphTargetVertices.Items[MorphTargetVertexIndex];
+         MorphTargetVertex:=@Group.fMorphTargetVertices.ItemArray[MorphTargetVertexIndex];
          Position:=Position+(MorphTargetVertex^.Position.xyz*fMorphTargetVertexWeights[MorphTargetVertex^.Index]);
          Normal:=Normal+(MorphTargetVertex^.Normal.xyz*fMorphTargetVertexWeights[MorphTargetVertex^.Index]);
          MorphTargetVertexIndex:=MorphTargetVertex^.Next;
@@ -16211,9 +18772,9 @@ begin
         Normal:=Normal.Normalize;
         ModelNodeMatrix:=ModelNodeMatrixEx;
         if Vertex^.CountJointBlocks>0 then begin
-         Matrix:=TpvMatrix4x4.Identity;
+         Matrix:=TpvMatrix4x4.Null;
          for JointBlockIndex:=Vertex^.JointBlockBaseIndex to (Vertex^.JointBlockBaseIndex+Vertex^.CountJointBlocks)-1 do begin
-          JointBlock:=@fGroup.fJointBlocks.Items[JointBlockIndex];
+          JointBlock:=@fGroup.fJointBlocks.ItemArray[JointBlockIndex];
           for JointIndex:=0 to 3 do begin
            Matrix:=Matrix+((fNodeMatrices[JointBlock^.Joints[JointIndex]]*InverseMatrix)*JointBlock^.Weights[JointIndex]);
           end;
@@ -16225,13 +18786,13 @@ begin
        end;
        TemporaryTriangleIndices:=nil;
        try
-        SetLength(TemporaryTriangleIndices,Primitive^.CountIndices);
-        for IndexIndex:=Primitive^.StartBufferIndexOffset to (Primitive^.StartBufferIndexOffset+Primitive^.CountIndices)-1 do begin
-         TemporaryTriangleIndices[IndexIndex-Primitive^.StartBufferIndexOffset]:=Group.fIndices.Items[IndexIndex]-Primitive^.StartBufferVertexOffset;
+        SetLength(TemporaryTriangleIndices,Primitive.fCountIndices);
+        for IndexIndex:=Primitive.fStartBufferIndexOffset to (Primitive.fStartBufferIndexOffset+Primitive.fCountIndices)-1 do begin
+         TemporaryTriangleIndices[IndexIndex-Primitive.fStartBufferIndexOffset]:=Group.fIndices.Items[IndexIndex]-Primitive.fStartBufferVertexOffset;
         end;
         IndexIndex:=0;
         while (IndexIndex+2)<length(TemporaryTriangleIndices) do begin
-         for SideIndex:=0 to ord(Primitive^.Material.fData.DoubleSided) and 1 do begin
+         for SideIndex:=0 to ord(Primitive.fMaterial.fData.DoubleSided) and 1 do begin
           BakedTriangle:=pointer(aBakedMesh.fTriangles.AddNew);
           try
            if SideIndex>0 then begin
@@ -16379,7 +18940,7 @@ begin
        (aWithDynamicMeshs or
          ((not aWithDynamicMeshs) and
           ((not assigned(GroupNode.Skin)) and
-           (length(GroupNode.fWeights)=0) and
+           (GroupNode.fWeights.Count=0) and
            ((GroupInstanceNode^.CountOverwrites=0) or
             ((GroupInstanceNode^.CountOverwrites=1) and
              ((GroupInstanceNode^.Overwrites[0].Flags=[TpvScene3D.TGroup.TInstance.TNode.TNodeOverwriteFlag.Defaults]))))))) and
@@ -16506,6 +19067,15 @@ begin
  fDirtyCounter:=fGroup.fSceneInstance.fCountInFlightFrames+1;
 end;
 
+function TpvScene3D.TGroup.TInstance.GetOrder:TpvInt64;
+begin
+ if fOrder<0 then begin
+  result:=fGroup.fOrder;
+ end else begin
+  result:=fOrder;
+ end;
+end;
+
 function TpvScene3D.TGroup.TInstance.CreateRenderInstance:TpvScene3D.TGroup.TInstance.TRenderInstance;
 begin
  result:=TpvScene3D.TGroup.TInstance.TRenderInstance.Create(self);
@@ -16610,16 +19180,15 @@ procedure TpvScene3D.TGroup.TInstance.Prepare(const aInFlightFrameIndex:TpvSizeI
                                               const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes;
                                               const aFrustumCullMask:TpvUInt32);
 var ViewIndex,FrustumIndex,SkipListItemIndex,SkipListItemCount,DrawChoreographyBatchItemIndex,
-    FirstInstance,InstancesCount:TpvSizeInt;
+    DrawChoreographyBatchItemElementIndex,FirstInstance,InstancesCount:TpvSizeInt;
     PotentiallyVisibleSetNodeIndex,
     ViewPotentiallyVisibleSetNodeIndex:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
-    Masks:array[-1..15] of TpvUInt32;
+    Masks:array[-1..31] of TpvUInt32;
     RendererInstanceID:TpvUInt32;
     HaveNodeFilter:Boolean;
     GroupOnNodeFilter,GlobalOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
     Scene:TpvScene3D.TGroup.TScene;
     Node:TpvScene3D.TGroup.TNode;
-    InstanceScene:TpvScene3D.TGroup.TInstance.TScene;
     InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
     DrawChoreographyBatchItemMaterialAlphaModeBuckets:PDrawChoreographyBatchItemMaterialAlphaModeBuckets;
     PotentiallyVisible,DoCulling:boolean;
@@ -16647,8 +19216,6 @@ begin
    DoCulling:=fGroup.fCulling and not fUseRenderInstances;
 
    DrawChoreographyBatchItemMaterialAlphaModeBuckets:=@TpvScene3DRendererInstance(aRendererInstance).DrawChoreographyBatchItemFrameBuckets[aInFlightFrameIndex,aRenderPassIndex];
-
-   InstanceScene:=fScenes[Scene.Index];
 
    if assigned(fAABBTree) then begin
 
@@ -16704,6 +19271,10 @@ begin
 
        if DoCulling then begin
 
+        if AABBTreeSkipListItem^.Level<=High(Masks) then begin
+         Masks[AABBTreeSkipListItem^.Level]:=Masks[AABBTreeSkipListItem^.Level-1];
+        end;
+
         if aPotentiallyVisibleSetCulling then begin
 
          if (AABBTreeSkipListItem^.UserData and TpvUInt32($80000000))<>0 then begin
@@ -16740,16 +19311,30 @@ begin
 
         end;
 
-        if PotentiallyVisible then begin
-         if length(aFrustums)>0 then begin
+        if PotentiallyVisible and (length(aFrustums)>0) then begin
+         if (AABBTreeSkipListItem^.UserData>=1) and (AABBTreeSkipListItem^.UserData<=TpvUInt32($7fffffff)) then begin
+          InstanceNode:=@fNodes[AABBTreeSkipListItem^.UserData-1];
           if length(aFrustums)=1 then begin
-           if Masks[AABBTreeSkipListItem^.Level-1]<>$40000000 then begin
-            if AABBTreeSkipListItem^.Level<=High(Masks) then begin
-             Masks[AABBTreeSkipListItem^.Level]:=Masks[AABBTreeSkipListItem^.Level-1];
-             PotentiallyVisible:=not ((((Masks[AABBTreeSkipListItem^.Level] and $80000000)<>0) and (aFrustums[0].AABBInFrustum(AABBTreeSkipListItem^.AABB,Masks[AABBTreeSkipListItem^.Level])=TpvFrustum.COMPLETE_OUT)));
-            end else begin
-             PotentiallyVisible:=aFrustums[0].AABBInFrustum(AABBTreeSkipListItem^.AABB)<>TpvFrustum.COMPLETE_OUT;
+           if AABBTreeSkipListItem^.Level<=High(Masks) then begin
+            PotentiallyVisible:=(Masks[AABBTreeSkipListItem^.Level-1]=$40000000) or not ((((Masks[AABBTreeSkipListItem^.Level] and $80000000)<>0) and (aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex],Masks[AABBTreeSkipListItem^.Level])=TpvFrustum.COMPLETE_OUT)));
+           end else begin
+            PotentiallyVisible:=aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex])<>TpvFrustum.COMPLETE_OUT;
+           end;
+          end else begin
+           PotentiallyVisible:=false;
+           for FrustumIndex:=0 to length(aFrustums)-1 do begin
+            if aFrustums[FrustumIndex].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex])<>TpvFrustum.COMPLETE_OUT then begin
+             PotentiallyVisible:=true;
+             break;
             end;
+           end;
+          end;
+         end else begin
+          if length(aFrustums)=1 then begin
+           if AABBTreeSkipListItem^.Level<=High(Masks) then begin
+            PotentiallyVisible:=(Masks[AABBTreeSkipListItem^.Level-1]=$40000000) or not ((((Masks[AABBTreeSkipListItem^.Level] and $80000000)<>0) and (aFrustums[0].AABBInFrustum(AABBTreeSkipListItem^.AABB,Masks[AABBTreeSkipListItem^.Level])=TpvFrustum.COMPLETE_OUT)));
+           end else begin
+            PotentiallyVisible:=aFrustums[0].AABBInFrustum(AABBTreeSkipListItem^.AABB)<>TpvFrustum.COMPLETE_OUT;
            end;
           end else begin
            PotentiallyVisible:=false;
@@ -16778,7 +19363,8 @@ begin
 
           DrawChoreographyBatchItemIndices:=@Node.fDrawChoreographyBatchItemIndices;
           for DrawChoreographyBatchItemIndex:=0 to DrawChoreographyBatchItemIndices^.Count-1 do begin
-           DrawChoreographyBatchItem:=InstanceScene.fDrawChoreographyBatchItems[DrawChoreographyBatchItemIndices^.Items[DrawChoreographyBatchItemIndex]];
+           DrawChoreographyBatchItemElementIndex:=DrawChoreographyBatchItemIndices^.Items[DrawChoreographyBatchItemIndex];
+           DrawChoreographyBatchItem:=fDrawChoreographyBatchItems[DrawChoreographyBatchItemElementIndex];
            if DrawChoreographyBatchItem.fMaterial.fVisible and
               (DrawChoreographyBatchItem.fAlphaMode in aMaterialAlphaModes) and
              (DrawChoreographyBatchItem.fCountIndices>0) then begin
@@ -16835,6 +19421,10 @@ begin
 
      if DoCulling then begin
 
+      if SkipListItem^.Level<=High(Masks) then begin
+       Masks[SkipListItem^.Level]:=Masks[SkipListItem^.Level-1];
+      end;
+
       if aPotentiallyVisibleSetCulling then begin
        PotentiallyVisibleSetNodeIndex:=InstanceNode^.PotentiallyVisibleSetNodeIndices[aInFlightFrameIndex];
        if PotentiallyVisibleSetNodeIndex<>TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex then begin
@@ -16854,13 +19444,10 @@ begin
        if InstanceNode^.BoundingBoxFilled[aInFlightFrameIndex] then begin
         if length(aFrustums)>0 then begin
          if length(aFrustums)=1 then begin
-          if Masks[SkipListItem^.Level-1]<>$40000000 then begin
-           if SkipListItem^.Level<=High(Masks) then begin
-            Masks[SkipListItem^.Level]:=Masks[SkipListItem^.Level-1];
-            PotentiallyVisible:=not ((((Masks[SkipListItem^.Level] and $80000000)<>0) and (aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex],Masks[SkipListItem^.Level])=TpvFrustum.COMPLETE_OUT)));
-           end else begin
-            PotentiallyVisible:=aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex])<>TpvFrustum.COMPLETE_OUT;
-           end;
+          if SkipListItem^.Level<=High(Masks) then begin
+           PotentiallyVisible:=(Masks[SkipListItem^.Level-1]=$40000000) or not ((((Masks[SkipListItem^.Level] and $80000000)<>0) and (aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex],Masks[SkipListItem^.Level])=TpvFrustum.COMPLETE_OUT)));
+          end else begin
+           PotentiallyVisible:=aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aInFlightFrameIndex])<>TpvFrustum.COMPLETE_OUT;
           end;
          end else begin
           PotentiallyVisible:=false;
@@ -16884,7 +19471,8 @@ begin
 
       DrawChoreographyBatchItemIndices:=@Node.fDrawChoreographyBatchItemIndices;
       for DrawChoreographyBatchItemIndex:=0 to DrawChoreographyBatchItemIndices^.Count-1 do begin
-       DrawChoreographyBatchItem:=InstanceScene.fDrawChoreographyBatchItems[DrawChoreographyBatchItemIndices^.Items[DrawChoreographyBatchItemIndex]];
+       DrawChoreographyBatchItemElementIndex:=DrawChoreographyBatchItemIndices^.Items[DrawChoreographyBatchItemIndex];
+       DrawChoreographyBatchItem:=fDrawChoreographyBatchItems[DrawChoreographyBatchItemElementIndex];
        if DrawChoreographyBatchItem.fMaterial.fVisible and
           (DrawChoreographyBatchItem.fAlphaMode in aMaterialAlphaModes) and
          (DrawChoreographyBatchItem.fCountIndices>0) then begin
@@ -17103,12 +19691,20 @@ begin
 
  fMeshGenerationCounter:=1;
 
+ fPlanets:=TpvScene3DPlanets.Create(self);
+
  fNewInstanceListLock:=TPasMPSlimReaderWriterLock.Create;
 
  fNewInstances:=TpvScene3D.TGroup.TInstances.Create;
  fNewInstances.OwnsObjects:=false;
 
  fBufferRangeAllocatorLock:=TPasMPCriticalSection.Create;
+
+ if assigned(fVulkanDevice) then begin
+  for Index:=0 to fCountInFlightFrames-1 do begin
+   fInFlightFrameDataTransferQueues[Index]:=TpvTransferQueue.Create(fVulkanDevice);
+  end;
+ end;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
   fGlobalVulkanInstanceMatrixDynamicArrays[Index].Initialize;
@@ -17178,6 +19774,8 @@ begin
 
  fSkyBoxBrightnessFactor:=1.0;
 
+ fLightIntensityFactor:=1.0;
+
  fTechniques:=TpvTechniques.Create;
 
  fCullObjectIDLock:=TPasMPSlimReaderWriterLock.Create;
@@ -17240,9 +19838,21 @@ begin
 
  FillChar(fInFlightFrameMaterialBufferDataGenerations,SizeOf(TInFlightFrameMaterialBufferDataGenerations),#$ff);
 
+ fSkyBoxTextureImage:=nil;
+
+ fSkyBoxMode:=TpvScene3DEnvironmentMode.Sky;
+
+ fEnvironmentTextureImage:=nil;
+
+ fEnvironmentMode:=TpvScene3DEnvironmentMode.Sky;
+
  fDefaultSampler:=TSampler.Create(ResourceManager,self);
  fDefaultSampler.AssignFromDefault;
  fDefaultSampler.IncRef;
+
+ fDefaultMipMapSampler:=TSampler.Create(ResourceManager,self);
+ fDefaultMipMapSampler.AssignFromDefaultMipMap;
+ fDefaultMipMapSampler.IncRef;
 
  fWhiteImage:=TpvScene3D.TImage.Create(ResourceManager,self);
  fWhiteImage.AssignFromWhiteTexture;
@@ -17290,17 +19900,39 @@ begin
   fCountLights[Index]:=0;
  end;
 
- fGroupListLock:=TPasMPSlimReaderWriterLock.Create;
+ fGroupListLock:=TPasMPCriticalSection.Create;
  fGroups:=TGroups.Create;
  fGroups.OwnsObjects:=false;
 
- fGroupInstanceListLock:=TPasMPSlimReaderWriterLock.Create;
+ fGroupInstanceListLock:=TPasMPCriticalSection.Create;
  fGroupInstances:=TGroup.TInstances.Create;
  fGroupInstances.OwnsObjects:=false;
 
  ReleaseFrameDelay:=fCountInFlightFrames+1;
 
  if assigned(fVulkanDevice) then begin
+
+  fGeneralComputeSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                  VK_FILTER_LINEAR,
+                                                  VK_FILTER_LINEAR,
+                                                  VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  0.0,
+                                                  false,
+                                                  1.0,
+                                                  false,
+                                                  VK_COMPARE_OP_ALWAYS,
+                                                  0.0,
+                                                  65535.0,
+                                                  VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK,
+                                                  false);
+  fVulkanDevice.DebugUtils.SetObjectName(fGeneralComputeSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3D.fGeneralComputeSampler');
+
+  fPlanetDescriptorSetLayout:=TpvScene3DPlanet.CreatePlanetDescriptorSetLayout(fVulkanDevice);
+
+  fPlanetCullDescriptorSetLayout:=TpvScene3DPlanet.CreatePlanetCullDescriptorSetLayout(fVulkanDevice);
 
   fMeshComputeVulkanDescriptorSet0Layout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice);
 
@@ -17413,6 +20045,9 @@ begin
   fGlobalVulkanDescriptorSetLayout.AddBinding(4,
                                               VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                               length(fImageInfos),
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT) or
+                                              TVkShaderStageFlags(VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT) or
                                               TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                               [],
                                               TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT) or
@@ -17421,6 +20056,13 @@ begin
   fGlobalVulkanDescriptorSetLayout.Initialize;
   fVulkanDevice.DebugUtils.SetObjectName(fGlobalVulkanDescriptorSetLayout.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,'TpvScene3D.fGlobalVulkanDescriptorSetLayout');
 
+ end;
+
+ if assigned(fVulkanDevice) then begin
+  for Index:=0 to fCountInFlightFrames-1 do begin
+   fVulkanBeginFrameSemaphores[Index]:=TpvVulkanSemaphore.Create(fVulkanDevice);
+   fVulkanEndFrameSemaphores[Index]:=TpvVulkanSemaphore.Create(fVulkanDevice);
+  end;
  end;
 
  fLightAABBTree:=TpvBVHDynamicAABBTree.Create;
@@ -17475,6 +20117,11 @@ begin
  Unload;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
+  FreeAndNil(fVulkanBeginFrameSemaphores[Index]);
+  FreeAndNil(fVulkanEndFrameSemaphores[Index]);
+ end;
+
+ for Index:=0 to fCountInFlightFrames-1 do begin
   FreeAndNil(fGlobalVulkanDescriptorSets[Index]);
  end;
  FreeAndNil(fGlobalVulkanDescriptorPool);
@@ -17507,11 +20154,19 @@ begin
 
  FreeAndNil(fLightAABBTree);
 
+ FreeAndNil(fGeneralComputeSampler);
+
+ FreeAndNil(fPlanetDescriptorSetLayout);
+
+ FreeAndNil(fPlanetCullDescriptorSetLayout);
+
  FreeAndNil(fMeshComputeVulkanDescriptorSet0Layout);
 
  FreeAndNil(fMeshComputeVulkanDescriptorSet1Layout);
 
  FreeAndNil(fGlobalVulkanDescriptorSetLayout);
+
+ FreeAndNil(fPlanets);
 
  while fGroupInstances.Count>0 do begin
   fGroupInstances[fGroupInstances.Count-1].Free;
@@ -17556,6 +20211,8 @@ begin
  FreeAndNil(fTextureIDManager);
  FreeAndNil(fTextureListLock);
 
+ FreeAndNil(fDefaultMipMapSampler);
+
  FreeAndNil(fDefaultSampler);
 
  while fSamplers.Count>0 do begin
@@ -17572,6 +20229,10 @@ begin
  FreeAndNil(fDefaultNormalMapImage);
 
  FreeAndNil(fDefaultParticleImage);
+
+ FreeAndNil(fEnvironmentTextureImage);
+
+ FreeAndNil(fSkyBoxTextureImage);
 
  while fImages.Count>0 do begin
   fImages[fImages.Count-1].Free;
@@ -17597,6 +20258,12 @@ begin
  FreeAndNil(fMaterialDataGenerationLock);
 
  FreeAndNil(fPotentiallyVisibleSet);
+
+ if assigned(fVulkanDevice) then begin
+  for Index:=0 to fCountInFlightFrames-1 do begin
+   FreeAndNil(fInFlightFrameDataTransferQueues[Index]);
+  end;
+ end;
 
  fObjectListLock.Acquire;
  try
@@ -17788,6 +20455,8 @@ begin
        if assigned(fVulkanDevice) then begin
 
         fDefaultSampler.Upload;
+
+        fDefaultMipMapSampler.Upload;
 
         fWhiteTexture.Upload;
 
@@ -18008,14 +20677,17 @@ begin
          fLightBuffers[Index].Upload;
         end;
 
-        fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) or TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT),length(fImageInfos)*length(fGlobalVulkanDescriptorSets));
+        fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,
+                                                                    TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) or
+                                                                    TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT),
+                                                                    length(fImageInfos)*length(fGlobalVulkanDescriptorSets));
         fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,length(fGlobalVulkanDescriptorSets)*3);
         fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fGlobalVulkanDescriptorSets)*5);
         fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,length(fGlobalVulkanDescriptorSets)*length(fImageInfos));
         fGlobalVulkanDescriptorPool.Initialize;
 
         for Group in fGroups do begin
-         if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
+         if Group.Usable then begin
           Group.Upload;
          end;
         end;
@@ -18399,7 +21071,7 @@ begin
      end;}
 
      for Group in fGroups do begin
-      if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
+      if Group.Usable then begin
        Group.Unload;
       end;
      end;
@@ -18431,6 +21103,8 @@ begin
      end;
 
      fDefaultSampler.Unload;
+
+     fDefaultMipMapSampler.Unload;
 
      FreeAndNil(fVulkanStagingFence);
 
@@ -18481,22 +21155,110 @@ begin
 end;
 
 procedure TpvScene3D.Update(const aInFlightFrameIndex:TpvSizeInt);
-var Index,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
+type TGroupInstanceStack=TpvDynamicFastStack<TpvScene3D.TGroup.TInstance>;
+var Index,OtherIndex,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
     MinMaterialID,MaxMaterialID:TpvInt32;
     Group:TpvScene3D.TGroup;
-    GroupInstance:TpvScene3D.TGroup.TInstance;
+    GroupInstance,OtherGroupInstance:TpvScene3D.TGroup.TInstance;
     LightAABBTreeState,AABBTreeState:TpvBVHDynamicAABBTree.PState;
     First:boolean;
     OldGeneration,NewGeneration:TpvUInt64;
     LightBuffer:TpvScene3D.TLightBuffer;
     Texture:TpvScene3D.TTexture;
     Material:TpvScene3D.TMaterial;
+    Planet:TpvScene3DPlanet;
+    GroupInstanceStack:TGroupInstanceStack;
+    Sphere:TpvSphere;
 begin
 
  fCountLights[aInFlightFrameIndex]:=0;
 
- for Group in fGroups do begin
-  Group.Update(aInFlightFrameIndex);
+ fPlanets.Lock.Acquire;
+ try
+  for Index:=0 to fPlanets.Count-1 do begin
+   Planet:=fPlanets[Index];
+   if Planet.Ready then begin
+    Planet.Update(aInFlightFrameIndex);
+   end;
+  end;
+ finally
+  fPlanets.Lock.Release;
+ end;
+
+ fGroupListLock.Acquire;
+ try
+
+  for Group in fGroups do begin
+   if Group.Usable then begin
+    Group.Update(aInFlightFrameIndex);
+   end;
+  end;
+
+  fGroupInstanceListLock.Acquire;
+  try
+
+   fGroupInstances.Sort;
+
+   GroupInstanceStack.Initialize;
+   try
+
+    for Index:=0 to fGroupInstances.Count-1 do begin
+     fGroupInstances[Index].fVisitedState[aInFlightFrameIndex]:=0;
+    end;
+
+    for Index:=0 to fGroupInstances.Count-1 do begin
+     GroupInstance:=fGroupInstances[Index];
+     if GroupInstance.fGroup.Usable and (GroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+      if (GroupInstance.fRequiredDependencies.Count=0) and
+         ((not assigned(GroupInstance.fAppendageInstance)) or
+          (assigned(GroupInstance.fAppendageInstance) and
+           (GroupInstance.fAppendageInstance.fVisitedState[aInFlightFrameIndex]<>0))) then begin
+       GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
+       GroupInstance.Update(aInFlightFrameIndex);
+      end else begin
+       GroupInstanceStack.Push(GroupInstance);
+       while GroupInstanceStack.Pop(GroupInstance) do begin
+        case GroupInstance.fVisitedState[aInFlightFrameIndex] of
+         0:begin
+          GroupInstance.fVisitedState[aInFlightFrameIndex]:=1;
+          GroupInstanceStack.Push(GroupInstance);
+          for OtherIndex:=0 to GroupInstance.fRequiredDependencies.Count-1 do begin
+           OtherGroupInstance:=GroupInstance.fRequiredDependencies[OtherIndex];
+           if (OtherGroupInstance<>GroupInstance.fAppendageInstance) and
+              OtherGroupInstance.Group.Usable and
+              (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+            GroupInstanceStack.Push(OtherGroupInstance);
+           end;
+          end;
+          if assigned(GroupInstance.fAppendageInstance) then begin
+           OtherGroupInstance:=GroupInstance.fAppendageInstance;
+           if OtherGroupInstance.Group.Usable and (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+            GroupInstanceStack.Push(OtherGroupInstance);
+           end;
+          end;
+         end;
+         1:begin
+          GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
+          GroupInstance.Update(aInFlightFrameIndex);
+         end;
+         else begin
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
+
+   finally
+    GroupInstanceStack.Finalize;
+   end;
+
+  finally
+   fGroupInstanceListLock.Release;
+  end;
+
+ finally
+  fGroupListLock.Release;
  end;
 
  AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
@@ -18515,25 +21277,50 @@ begin
   end;
  end;
 
- First:=true;
- fBoundingBox.Min:=TpvVector3.Origin;
- fBoundingBox.Max:=TpvVector3.Origin;
- for GroupInstance in fGroupInstances do begin
-  if GroupInstance.fActive then begin
-   if First then begin
-    First:=false;
-    fBoundingBox:=GroupInstance.fBoundingBox;
-   end else begin
-    fBoundingBox:=fBoundingBox.Combine(GroupInstance.fBoundingBox);
+ begin
+
+  First:=true;
+
+  fBoundingBox.Min:=TpvVector3.Origin;
+  fBoundingBox.Max:=TpvVector3.Origin;
+
+  for GroupInstance in fGroupInstances do begin
+   if GroupInstance.fGroup.Usable and GroupInstance.fActive then begin
+    if First then begin
+     First:=false;
+     fBoundingBox:=GroupInstance.fBoundingBox;
+    end else begin
+     fBoundingBox.DirectCombine(GroupInstance.fBoundingBox);
+    end;
    end;
   end;
- end;
- if First or IsZero(fBoundingBox.Radius) then begin
-  fBoundingBox.Min:=TpvVector3.InlineableCreate(-1.0,-1.0,-1.0);
-  fBoundingBox.Max:=TpvVector3.InlineableCreate(1.0,1.0,-1.0);
- end;
 
- fInFlightFrameBoundingBoxes[aInFlightFrameIndex]:=fBoundingBox;
+  fPlanets.Lock.Acquire;
+  try
+   for Index:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[Index];
+    if Planet.Ready then begin
+     Sphere:=TpvSphere.Create(Planet.Data.ModelMatrix.MulHomogen(TpvVector3.Origin),Planet.TopRadius);
+     if First then begin
+      First:=false;
+      fBoundingBox:=Sphere.ToAABB;
+     end else begin
+      fBoundingBox.DirectCombine(Sphere.ToAABB);
+     end;
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
+  end;
+
+  if First or IsZero(fBoundingBox.Radius) then begin
+   fBoundingBox.Min:=TpvVector3.InlineableCreate(-1.0,-1.0,-1.0);
+   fBoundingBox.Max:=TpvVector3.InlineableCreate(1.0,1.0,-1.0);
+  end;
+
+  fInFlightFrameBoundingBoxes[aInFlightFrameIndex]:=fBoundingBox;
+
+ end;
 
 end;
 
@@ -18629,6 +21416,7 @@ var StackItem:PStackItem;
     LightMetaInfo:TpvScene3D.PLightMetaInfo;
     InnerConeAngleCosinus,OuterConeAngleCosinus:TpvScalar;
     Stack:TStack;
+    Intensity:TpvFloat;
 begin
  aLightItemArray.Count:=0;
  if (aRoot>=0) and (length(aTreeNodes)>0) then begin
@@ -18643,7 +21431,7 @@ begin
      if TreeNode^.UserData<>0 then begin
       Light:=TpvScene3D.TLight(Pointer(TreeNode^.UserData));
       if aLightItemArray.Count<MaxVisibleLights then begin
-       Light.fLightItemIndex:=aLightItemArray.AddNew;
+       Light.fLightItemIndex:=aLightItemArray.AddNewIndex;
        LightItem:=@aLightItemArray.Items[Light.fLightItemIndex];
        LightItem^.Type_:=TpvUInt32(Light.fDataPointer^.Type_);
        LightItem^.ShadowMapIndex:=0;
@@ -18653,7 +21441,39 @@ begin
        LightItem^.OuterConeCosinus:=OuterConeAngleCosinus;}
        LightItem^.LightAngleScale:=1.0/Max(1e-5,InnerConeAngleCosinus-OuterConeAngleCosinus);
        LightItem^.LightAngleOffset:=-(OuterConeAngleCosinus*LightItem^.LightAngleScale);
-       LightItem^.ColorIntensity:=TpvVector4.InlineableCreate(Light.fDataPointer^.fColor,Light.fDataPointer^.fIntensity);
+       case Light.fDataPointer^.Type_ of
+        TpvScene3D.TLightData.TType.Directional,
+        TpvScene3D.TLightData.TType.PrimaryDirectional:begin
+         // It is already in lux, nothing to do.
+         Intensity:=Light.fDataPointer^.fIntensity;
+        end;
+        TpvScene3D.TLightData.TType.Point:begin
+         // Intensity specified directly in candela, no conversion needed
+         Intensity:=Light.fDataPointer^.fIntensity;
+         // When the input value would be in lux:
+         // Intensity:=Light.fDataPointer^.fIntensity*(OneOverPI*0.25);
+        end;
+        TpvScene3D.TLightData.TType.Spot:begin
+         // Intensity specified directly in candela, no conversion needed
+         Intensity:=Light.fDataPointer^.fIntensity;
+         // When the input value would be in lux:
+         // Intensity:=Light.fDataPointer^.fIntensity*OneOverPI;
+        end;
+        else begin
+         // Turning unknown light types off in the end effect
+         Intensity:=0.0;
+        end;
+       end;
+       begin
+        Intensity:=Intensity*fLightIntensityFactor;
+       end;
+       begin
+        // Scale the color to fit into the range of 16-bit floating point numbers,
+        // by halfing the value, so that the sun can be represented as 64000 "bi-lux"
+        // instead of 120000 lux.
+        Intensity:=Intensity*0.5;
+       end;
+       LightItem^.ColorIntensity:=TpvVector4.InlineableCreate(Light.fDataPointer^.fColor,Intensity);
        LightItem^.PositionRange:=TpvVector4.InlineableCreate(Light.fPosition,Light.fDataPointer^.fRange);
        LightItem^.DirectionZFar:=TpvVector4.InlineableCreate(Light.fDirection,0.0);
        LightItem^.ShadowMapMatrix:=TpvMatrix4x4.Identity;
@@ -18696,9 +21516,22 @@ var Index,ItemID:TpvSizeInt;
     Texture:TpvScene3D.TTexture;
     Material:TpvScene3D.TMaterial;
     MaterialIDDirtyMap:TpvScene3D.PMaterialIDDirtyMap;
+    Planet:TpvScene3DPlanet;
 begin
 
  if assigned(fVulkanDevice) then begin
+
+  fPlanets.Lock.Acquire;
+  try
+   for Index:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[Index];
+    if Planet.Ready then begin
+     Planet.FrameUpdate(aInFlightFrameIndex);
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
+  end;
 
   for Group in fGroups do begin
    Group.PrepareFrame(aInFlightFrameIndex);
@@ -18808,18 +21641,121 @@ begin
 
 end;
 
-procedure TpvScene3D.BeginFrame(const aInFlightFrameIndex:TpvSizeInt);
+procedure TpvScene3D.BeginFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence);
+var PlanetIndex:TpvSizeInt;
+    Planet:TpvScene3DPlanet;
+    SubmitInfo:TVkSubmitInfo;
+    WaitDstStageFlags:TVkPipelineStageFlags;
 begin
+
+ if assigned(fVulkanDevice) then begin
+
+  if assigned(fInFlightFrameDataTransferQueues[aInFlightFrameIndex]) then begin
+   fInFlightFrameDataTransferQueues[aInFlightFrameIndex].Reset;
+  end;
+
+  fPlanets.Lock.Acquire;
+  try
+   for PlanetIndex:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[PlanetIndex];
+    if Planet.Ready then begin
+     Planet.BeginFrame(aInFlightFrameIndex,aWaitSemaphore,nil);
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
+  end;
+
+  if assigned(aWaitFence) then begin
+
+   FillChar(SubmitInfo,SizeOf(TVkSubmitInfo),#0);
+   SubmitInfo.sType:=VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   SubmitInfo.pNext:=nil;
+   if assigned(aWaitSemaphore) then begin
+    WaitDstStageFlags:=TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    SubmitInfo.waitSemaphoreCount:=1;
+    SubmitInfo.pWaitSemaphores:=@aWaitSemaphore.Handle;
+    SubmitInfo.pWaitDstStageMask:=@WaitDstStageFlags;
+   end else begin
+    SubmitInfo.waitSemaphoreCount:=0;
+    SubmitInfo.pWaitSemaphores:=nil;
+    SubmitInfo.pWaitDstStageMask:=nil;
+   end;
+   SubmitInfo.commandBufferCount:=0;
+   SubmitInfo.pCommandBuffers:=nil;
+   SubmitInfo.signalSemaphoreCount:=1;
+   SubmitInfo.pSignalSemaphores:=@fVulkanBeginFrameSemaphores[aInFlightFrameIndex].Handle;
+
+   fVulkanDevice.UniversalQueue.Submit(1,@SubmitInfo,aWaitFence);
+
+   aWaitSemaphore:=fVulkanBeginFrameSemaphores[aInFlightFrameIndex];
+
+  end;
+
+ end;
+
 end;
 
-procedure TpvScene3D.EndFrame(const aInFlightFrameIndex:TpvSizeInt);
+procedure TpvScene3D.EndFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence);
+var PlanetIndex:TpvSizeInt;
+    Planet:TpvScene3DPlanet;
+    SubmitInfo:TVkSubmitInfo;
+    WaitDstStageFlags:TVkPipelineStageFlags;
 begin
+
+ if assigned(fVulkanDevice) then begin
+
+  if assigned(fInFlightFrameDataTransferQueues[aInFlightFrameIndex]) then begin
+   fInFlightFrameDataTransferQueues[aInFlightFrameIndex].Reset;
+  end;
+
+  fPlanets.Lock.Acquire;
+  try
+   for PlanetIndex:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[PlanetIndex];
+    if Planet.Ready then begin
+     Planet.EndFrame(aInFlightFrameIndex,aWaitSemaphore,nil);
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
+  end;
+
+  if assigned(aWaitFence) then begin
+
+   FillChar(SubmitInfo,SizeOf(TVkSubmitInfo),#0);
+   SubmitInfo.sType:=VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   SubmitInfo.pNext:=nil;
+   if assigned(aWaitSemaphore) then begin
+    WaitDstStageFlags:=TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    SubmitInfo.waitSemaphoreCount:=1;
+    SubmitInfo.pWaitSemaphores:=@aWaitSemaphore.Handle;
+    SubmitInfo.pWaitDstStageMask:=@WaitDstStageFlags;
+   end else begin
+    SubmitInfo.waitSemaphoreCount:=0;
+    SubmitInfo.pWaitSemaphores:=nil;
+    SubmitInfo.pWaitDstStageMask:=nil;
+   end;
+   SubmitInfo.commandBufferCount:=0;
+   SubmitInfo.pCommandBuffers:=nil;
+   SubmitInfo.signalSemaphoreCount:=1;
+   SubmitInfo.pSignalSemaphores:=@fVulkanEndFrameSemaphores[aInFlightFrameIndex].Handle;
+
+   fVulkanDevice.UniversalQueue.Submit(1,@SubmitInfo,aWaitFence);
+
+   aWaitSemaphore:=fVulkanEndFrameSemaphores[aInFlightFrameIndex];
+
+  end;
+
+ end;
+
 end;
 
 procedure TpvScene3D.UploadFrame(const aInFlightFrameIndex:TpvSizeInt);
-var Index,ItemID,RenderPassIndex:TpvSizeInt;
+var Index,ItemID,RenderPassIndex,PlanetIndex:TpvSizeInt;
     Size:TVkDeviceSize;
     Group:TpvScene3D.TGroup;
+    Planet:TpvScene3DPlanet;
     MaterialIDDirtyMap:PMaterialIDDirtyMap;
     DirtyBits,MinMaterialID,MaxMaterialID:TpvUInt32;
     MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeUInt;
@@ -18829,12 +21765,24 @@ begin
 
  if assigned(fVulkanDevice) then begin
 
+  fPlanets.Lock.Acquire;
+  try
+   for PlanetIndex:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[PlanetIndex];
+    if Planet.Ready then begin
+     Planet.UploadFrame(aInFlightFrameIndex);
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
+  end;
+
   for Group in fGroups do begin
    Group.UploadFrame(aInFlightFrameIndex);
   end;
 
   begin
-   fVulkanLongTermStaticBuffers.Update;
+   fVulkanLongTermStaticBuffers.Update(aInFlightFrameIndex);
    fVulkanShortTermDynamicBuffers.Update(aInFlightFrameIndex);
   end;
 
@@ -19100,8 +22048,19 @@ begin
                                       SizeOf(TpvScene3D.TParticleVertex)*Min(fCountInFlightFrameParticleVertices[aInFlightFrameIndex],TpvScene3D.MaxParticleVertices));
   end;
 
+{ fInFlightFrameDataTransferQueues[aInFlightFrameIndex].Execute(fVulkanStagingQueue,
+                                                                           fVulkanStagingCommandBuffer,
+                                                                           fVulkanStagingFence);}
+
  end;
 
+end;
+
+procedure TpvScene3D.UploadFrameData(const aInFlightFrameIndex:TpvSizeInt;const aCommandBuffer:TpvVulkanCommandBuffer);
+begin
+ if assigned(fVulkanDevice) and assigned(fInFlightFrameDataTransferQueues[aInFlightFrameIndex]) then begin
+  fInFlightFrameDataTransferQueues[aInFlightFrameIndex].Flush(aCommandBuffer);
+ end;
 end;
 
 procedure TpvScene3D.PrepareLights(const aInFlightFrameIndex:TpvSizeInt;
@@ -19167,16 +22126,15 @@ procedure TpvScene3D.CullAndPrepareGroupInstances(const aInFlightFrameIndex:TpvS
                                                   const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
                                                   const aRoot:TpvSizeInt);
 type TStackItem=record
-      Node:TpvSizeInt;
+      NodeIndex:TpvSizeInt;
       Mask:TpvUInt32;
      end;
      PStackItem=^TStackItem;
      TStack=TpvDynamicFastStack<TStackItem>;
-var Index,ViewIndex:TpvSizeInt;
+var Index,ViewIndex,NodeIndex:TpvSizeInt;
     PotentiallyVisibleSetNodeIndex,
     ViewPotentiallyVisibleSetNodeIndex:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
     StackItem:PStackItem;
-    Node:TpvSizeInt;
     TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
     Mask:TpvUInt32;
     Stack:TStack;
@@ -19190,28 +22148,43 @@ begin
   try
 
    StackItem:=Stack.PushIndirect;
-   StackItem^.Node:=aRoot;
+   StackItem^.NodeIndex:=aRoot;
    StackItem^.Mask:=$ffffffff;
 
    while Stack.PopIndirect(StackItem) do begin
 
-    Node:=StackItem^.Node;
+    NodeIndex:=StackItem^.NodeIndex;
 
     Mask:=StackItem^.Mask;
 
-    while Node>=0 do begin
+    while NodeIndex>=0 do begin
 
-     TreeNode:=@aTreeNodes[Node];
+     TreeNode:=@aTreeNodes[NodeIndex];
 
      if length(aFrustums)>0 then begin
-      if length(aFrustums)=1 then begin
-       PotentiallyVisible:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+      if TreeNode^.UserData<>0 then begin
+       GroupInstance:=TpvScene3D.TGroup.TInstance(TreeNode^.UserData);
+       if length(aFrustums)=1 then begin
+        PotentiallyVisible:=(Mask=$40000000) or not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(GroupInstance.fBoundingBoxes[aInFlightFrameIndex],Mask)=TpvFrustum.COMPLETE_OUT)));
+       end else begin
+        PotentiallyVisible:=false;
+        for Index:=0 to length(aFrustums)-1 do begin
+         if aFrustums[Index].AABBInFrustum(GroupInstance.fBoundingBoxes[aInFlightFrameIndex])<>TpvFrustum.COMPLETE_OUT then begin
+          PotentiallyVisible:=true;
+          break;
+         end;
+        end;
+       end;
       end else begin
-       PotentiallyVisible:=false;
-       for Index:=0 to length(aFrustums)-1 do begin
-        if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
-         PotentiallyVisible:=true;
-         break;
+       if length(aFrustums)=1 then begin
+        PotentiallyVisible:=(Mask=$40000000) or not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+       end else begin
+        PotentiallyVisible:=false;
+        for Index:=0 to length(aFrustums)-1 do begin
+         if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
+          PotentiallyVisible:=true;
+          break;
+         end;
         end;
        end;
       end;
@@ -19225,9 +22198,7 @@ begin
 
        GroupInstance:=TpvScene3D.TGroup.TInstance(TreeNode^.UserData);
 
-       if (not GroupInstance.fHeadless) and
-          (GroupInstance.Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,
-                                                  TpvResource.TAsyncLoadState.Done]) then begin
+       if (not GroupInstance.fHeadless) and GroupInstance.Group.Usable then begin
 
         if aPotentiallyVisibleSetCulling then begin
          PotentiallyVisibleSetNodeIndex:=GroupInstance.fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex];
@@ -19264,14 +22235,14 @@ begin
       if TreeNode^.Children[0]>=0 then begin
        if TreeNode^.Children[1]>=0 then begin
         StackItem:=Stack.PushIndirect;
-        StackItem^.Node:=TreeNode^.Children[1];
+        StackItem^.NodeIndex:=TreeNode^.Children[1];
         StackItem^.Mask:=Mask;
        end;
-       Node:=TreeNode^.Children[0];
+       NodeIndex:=TreeNode^.Children[0];
        continue;
       end else begin
        if TreeNode^.Children[1]>=0 then begin
-        Node:=TreeNode^.Children[1];
+        NodeIndex:=TreeNode^.Children[1];
         continue;
        end;
       end;
@@ -19301,11 +22272,12 @@ procedure TpvScene3D.Prepare(const aInFlightFrameIndex:TpvSizeInt;
                              const aCountViews:TpvSizeInt;
                              const aViewPortWidth:TpvInt32;
                              const aViewPortHeight:TpvInt32;
+                             const aMainViewPort:Boolean;
                              const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes;
                              const aLights:boolean;
                              const aFrustumCulling:boolean;
                              const aPotentiallyVisibleSetCulling:boolean;
-                             const aGPUCulling:boolean=true);
+                             const aGPUCulling:boolean);
 var Index:TpvSizeInt;
     MaterialAlphaMode:TpvScene3D.TMaterial.TAlphaMode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
@@ -19316,6 +22288,7 @@ var Index:TpvSizeInt;
     AABBTreeState:TpvBVHDynamicAABBTree.PState;
     View:TpvScene3D.PView;
     DrawChoreographyBatchItems:TDrawChoreographyBatchItems;
+    Planet:TpvScene3DPlanet;
 begin
 
  for MaterialAlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to high(TpvScene3D.TMaterial.TAlphaMode) do begin
@@ -19360,7 +22333,7 @@ begin
    end else begin
 
     for Group in fGroups do begin
-     if (Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done]) and not Group.fHeadless then begin
+     if Group.Usable and not Group.fHeadless then begin
       for GroupInstance in Group.fInstances do begin
        GroupInstance.Prepare(aInFlightFrameIndex,
                              aRendererInstance,
@@ -19391,6 +22364,18 @@ begin
 
   finally
    Frustums:=nil;
+  end;
+
+  fPlanets.Lock.Acquire;
+  try
+   for Index:=0 to fPlanets.Count-1 do begin
+    Planet:=fPlanets[Index];
+    if Planet.Ready then begin
+     Planet.Prepare(aInFlightFrameIndex,aRendererInstance,aRenderPassIndex,aViewPortWidth,aViewPortHeight,aMainViewPort);
+    end;
+   end;
+  finally
+   fPlanets.Lock.Release;
   end;
 
  end;
@@ -19493,7 +22478,7 @@ begin
  fCachedVertexRanges.Count:=0;
 
  for Group in fGroups do begin
-  if Group.AsyncLoadState in [TpvResource.TAsyncLoadState.None,TpvResource.TAsyncLoadState.Done] then begin
+  if Group.Usable then begin
    Group.UpdateCachedVertices(aInFlightFrameIndex);
   end;
  end;
@@ -19867,6 +22852,7 @@ begin
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
@@ -20075,6 +23061,12 @@ begin
  end else begin
   Particle^.TextureID:=aTextureID;
  end;
+end;
+
+function TpvScene3D.CreateGroup(const aName:TpvUTF8String):TpvScene3D.TGroup;
+begin
+ result:=TpvScene3D.TGroup.Create(ResourceManager,self,nil);
+ result.fName:=aName;
 end;
 
 initialization

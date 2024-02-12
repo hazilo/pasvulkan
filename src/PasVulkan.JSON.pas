@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -209,7 +209,7 @@ begin
      for JSONItemObjectProperty in TPasJSONItemObject(aJSONItem) do begin
       if assigned(JSONItemObjectProperty.Value) and (JSONItemObjectProperty.Value is TPasJSONItemObject) then begin
        JSONItemObject:=TPasJSONItemObject(JSONItemObjectProperty.Value);
-       OtherIndex:=ObjectItemDynamicArray.AddNew;
+       OtherIndex:=ObjectItemDynamicArray.AddNewIndex;
        ObjectItem:=@ObjectItemDynamicArray.Items[OtherIndex];
        ObjectItem^.Index:=OtherIndex;
        ObjectItem^.Name:=JSONItemObjectProperty.Key;

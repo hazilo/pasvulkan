@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -288,7 +288,7 @@ begin
                                                                  [TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
                                                                                                 //fResourceOverlay.VulkanImageViews[InFlightFrameIndex].Handle,
                                                                                                 //fResourceOverlay.ResourceTransition.Layout)],// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
-                                                                                                fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImageView.Handle,
+                                                                                                fInstance.HUDMipmappedArray2DImage.VulkanImageView.Handle,
                                                                                                 TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],

@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -71,12 +71,19 @@ uses SysUtils,
      PasVulkan.Framework,
      PasVulkan.Application,
      PasVulkan.VirtualReality,
-     PasVulkan.VirtualFileSystem;
+     PasVulkan.VirtualFileSystem,
+     PasVulkan.Scene3D.Renderer.Exposure;
 
 type { TpvScene3DRendererCameraPreset }
      TpvScene3DRendererCameraPreset=class
       public
-       type TShaderData=packed record
+       type TExposureMode=
+             (
+              Auto,
+              Camera,
+              Manual
+             );
+            TShaderData=packed record
              SensorSize:TpvVector2;
              FocalLength:TpvFloat;
              FlangeFocalDistance:TpvFloat;
@@ -107,6 +114,8 @@ type { TpvScene3DRendererCameraPreset }
        fHighlightGain:TpvFloat;
        fBokehChromaticAberration:TpvFloat;
        fAutoFocus:boolean;
+       fExposureMode:TExposureMode;
+       fExposure:TpvScene3DRendererExposure;
        fReset:boolean;
        function GetFieldOfViewAngleRadians:TpvFloat;
        function GetAspectRatio:TpvFloat;
@@ -114,6 +123,7 @@ type { TpvScene3DRendererCameraPreset }
        constructor Create; reintroduce;
        destructor Destroy; override;
        procedure Assign(const aFrom:TpvScene3DRendererCameraPreset);
+       procedure UpdateExposure;
       published
 
        // Field of view, > 0.0 = horizontal and < 0.0 = vertical
@@ -164,8 +174,14 @@ type { TpvScene3DRendererCameraPreset }
        // Aspect ratio
        property AspectRatio:TpvFloat read GetAspectRatio;
 
-       // AutoFocus
+       // Auto-Focus
        property AutoFocus:boolean read fAutoFocus write fAutoFocus;
+
+       // Exposure mode
+       property ExposureMode:TExposureMode read fExposureMode write fExposureMode;
+
+       // Exposure
+       property Exposure:TpvScene3DRendererExposure read fExposure;
 
        // Reset, when completely new view
        property Reset:boolean read fReset write fReset;
@@ -195,12 +211,15 @@ begin
  fHighlightGain:=1.0;
  fBokehChromaticAberration:=0.7;
  fAutoFocus:=true;
+ fExposureMode:=TExposureMode.Auto;
+ fExposure:=TpvScene3DRendererExposure.Create;
  fReset:=false;
 end;
 
 destructor TpvScene3DRendererCameraPreset.Destroy;
 begin
  FreeAndNil(fSensorSizeProperty);
+ FreeAndNil(fExposure);
  inherited Destroy;
 end;
 
@@ -221,6 +240,8 @@ begin
  fHighlightGain:=aFrom.fHighlightGain;
  fBokehChromaticAberration:=aFrom.fBokehChromaticAberration;
  fAutoFocus:=aFrom.fAutoFocus;
+ fExposureMode:=aFrom.fExposureMode;
+ fExposure.Assign(aFrom.fExposure);
  fReset:=aFrom.fReset;
 end;
 
@@ -232,6 +253,11 @@ end;
 function TpvScene3DRendererCameraPreset.GetAspectRatio:TpvFloat;
 begin
  result:=fSensorSize.x/fSensorSize.y;
+end;
+
+procedure TpvScene3DRendererCameraPreset.UpdateExposure;
+begin
+ fExposure.SetFromCamera(fFlangeFocalDistance,fFocalLength,fFNumber); 
 end;
 
 initialization

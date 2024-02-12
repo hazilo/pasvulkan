@@ -18,6 +18,13 @@ layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInputMS 
 layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput uSubpassInputTransparent;
 #endif
 
+#if defined(MSAA)
+layout(set = 0, binding = 2, std430) buffer HistogramLuminanceBuffer {
+  float histogramLuminance;
+  float luminanceFactor; 
+} histogramLuminanceBuffer;
+#endif
+
 #ifdef MSAA
 layout(push_constant) uniform PushConstants { 
   int countSamples; 
@@ -42,9 +49,9 @@ void main() {
   vec4 transparency = vec4(0.0);
   int countSamples = pushConstants.countSamples;
   for (int sampleIndex = 0; sampleIndex < countSamples; sampleIndex++) {
-    transparency += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, sampleIndex));
+    transparency += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, sampleIndex) * histogramLuminanceBuffer.luminanceFactor);
   }
-  transparency = ApplyInverseToneMapping(transparency / float(countSamples));
+  transparency = ApplyInverseToneMapping(transparency / float(countSamples)) / histogramLuminanceBuffer.luminanceFactor;
 #else
   vec4 transparency = subpassLoad(uSubpassInputTransparent);
 #endif
@@ -53,5 +60,5 @@ void main() {
 
   blend(color, subpassLoad(uSubpassInputOpaque));
 
-  outColor = vec4(color.xyz, hasTransparency ? 0.0 : 1.0);
+  outColor = vec4(clamp(color.xyz, vec3(-65504.0), vec3(65504.0)), hasTransparency ? 0.0 : 1.0);
 }

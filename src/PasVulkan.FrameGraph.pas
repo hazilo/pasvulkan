@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -1187,6 +1187,7 @@ type EpvFrameGraph=class(Exception);
        fSurfaceWidth:TpvSizeInt;
        fSurfaceHeight:TpvSizeInt;
        fSurfaceColorFormat:TVkFormat;
+       fSurfaceColorSpace:TVkColorSpaceKHR;
        fSurfaceDepthFormat:TVkFormat;
        fSurfaceImages:array of TpvVulkanImage;
        fCountInFlightFrames:TpvSizeInt;
@@ -1315,6 +1316,7 @@ type EpvFrameGraph=class(Exception);
        property SurfaceWidth:TpvSizeInt read fSurfaceWidth write fSurfaceWidth;
        property SurfaceHeight:TpvSizeInt read fSurfaceHeight write fSurfaceHeight;
        property SurfaceColorFormat:TVkFormat read fSurfaceColorFormat write fSurfaceColorFormat;
+       property SurfaceColorSpace:TVkColorSpaceKHR read fSurfaceColorSpace write fSurfaceColorSpace;
        property SurfaceDepthFormat:TVkFormat read fSurfaceDepthFormat write fSurfaceDepthFormat;
        property CountInFlightFrames:TpvSizeInt read fCountInFlightFrames;
        property CountSurfaceImages:TpvSizeInt read fCountSurfaceImages write fCountSurfaceImages;
@@ -4379,7 +4381,9 @@ begin
  fSurfaceWidth:=1;
  fSurfaceHeight:=1;
 
- fSurfaceColorFormat:=VK_FORMAT_B8G8R8A8_UNORM;
+ fSurfaceColorFormat:=VK_FORMAT_R8G8B8A8_SRGB;
+
+ fSurfaceColorSpace:=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
  fSurfaceDepthFormat:=VK_FORMAT_D32_SFLOAT;
 
@@ -4556,6 +4560,7 @@ begin
  fSurfaceHeight:=aSwapChain.Height;
  fCountSurfaceImages:=aSwapChain.CountImages;
  fSurfaceColorFormat:=aSwapChain.ImageFormat;
+ fSurfaceColorSpace:=aSwapChain.ImageColorSpace;
  fSurfaceDepthFormat:=aSurfaceDepthFormat;
  if fCountSurfaceImages>0 then begin
   SetLength(fSurfaceImages,fCountSurfaceImages);
@@ -5692,7 +5697,7 @@ type TEventBeforeAfter=(Event,Before,After);
     end;
    end;
    if not assigned(WaitingSemaphore) then begin
-    WaitingSemaphoreIndex:=aWaitingCommandBuffer.fWaitingSemaphores.AddNew;
+    WaitingSemaphoreIndex:=aWaitingCommandBuffer.fWaitingSemaphores.AddNewIndex;
     WaitingSemaphore:=@aWaitingCommandBuffer.fWaitingSemaphores.Items[WaitingSemaphoreIndex];
     WaitingSemaphore^.SignallingCommandBuffer:=aSignallingCommandBuffer;
     WaitingSemaphore^.DstStageMask:=0;
@@ -6433,7 +6438,7 @@ type TEventBeforeAfter=(Event,Before,After);
         end;
         if not Found then begin
          ImageResourceType:=ResourceType as TImageResourceType;
-         AttachmentIndex:=PhysicalRenderPass.fAttachments.AddNew;
+         AttachmentIndex:=PhysicalRenderPass.fAttachments.AddNewIndex;
          Attachment:=@PhysicalRenderPass.fAttachments.Items[AttachmentIndex];
          Attachment^.Resource:=ResourceTransition.fResource;
          Attachment^.Persistent:=ImageResourceType.fPersistent;
@@ -6778,7 +6783,7 @@ type TEventBeforeAfter=(Event,Before,After);
    for Queue in fQueues do begin
     for CommandBuffer in Queue.fCommandBuffers do begin
      if CommandBuffer.fWaitingSemaphores.Count=0 then begin
-      WaitingSemaphoreIndex:=CommandBuffer.fWaitingSemaphores.AddNew;
+      WaitingSemaphoreIndex:=CommandBuffer.fWaitingSemaphores.AddNewIndex;
       WaitingSemaphore:=@CommandBuffer.fWaitingSemaphores.Items[WaitingSemaphoreIndex];
       WaitingSemaphore^.SignallingCommandBuffer:=nil;
       WaitingSemaphore^.DstStageMask:=TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);

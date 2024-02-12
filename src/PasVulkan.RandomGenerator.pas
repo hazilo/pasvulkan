@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -845,7 +845,7 @@ var x,l,t:TpvUInt32;
 begin
  if aRange<=1 then begin
   // For ranges of 0 or 1, just output always zero, but do a dummy Get32 call with discarding its result
-    Get32;
+  Get32;
   result:=0;
  end else if (aRange and (aRange-1))<>0 then begin
   // For non-power-of-two ranges: Debiased Integer Multiplication — Lemire's Method

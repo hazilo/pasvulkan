@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -104,6 +104,8 @@ const EPSILON={$ifdef UseDouble}1e-14{$else}1e-5{$endif}; // actually {$ifdef Us
       DEG2RAD=PI/180.0;
       RAD2DEG=180.0/PI;
 
+      LN2=0.6931471805599453;
+
       OnePI=PI;
 
       HalfPI=PI*0.5;
@@ -136,6 +138,13 @@ type PpvScalar=^TpvScalar;
      TpvIntPoint=record
       public
        x,y:TpvInt32;
+     end;
+
+     PPpvInt16Vector2=^PpvInt16Vector2;
+     PpvInt16Vector2=^TpvInt16Vector2;
+     TpvInt16Vector2=packed record
+      public
+       x,y:TpvInt16;
      end;
 
      PpvVector2=^TpvVector2;
@@ -181,6 +190,7 @@ type PpvScalar=^TpvScalar;
        function Length:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function SquaredLength:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Normalize:TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
+       function Abs:TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
        function DistanceTo(const aToVector:TpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Dot(const aWithVector:TpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Cross(const aVector:TpvVector2):TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
@@ -359,6 +369,7 @@ type PpvScalar=^TpvScalar;
              XAxis:TpvVector2=(x:1.0;y:0.0);
              YAxis:TpvVector2=(x:0.0;y:1.0);
              AllAxis:TpvVector2=(x:1.0;y:1.0);
+             AllMaxAxis:TpvVector3=(x:3.4e+28;y:3.4e+28);
       public
        {$i PasVulkan.Math.TpvVector2Helper.Swizzle.Definitions.inc}
      end;
@@ -371,6 +382,7 @@ type PpvScalar=^TpvScalar;
              YAxis:TpvVector3=(x:0.0;y:1.0;z:0.0);
              ZAxis:TpvVector3=(x:0.0;y:0.0;z:1.0);
              AllAxis:TpvVector3=(x:1.0;y:1.0;z:1.0);
+             AllMaxAxis:TpvVector3=(x:3.4e+28;y:3.4e+28;z:3.4e+28);
       public
        {$i PasVulkan.Math.TpvVector3Helper.Swizzle.Definitions.inc}
      end;
@@ -384,6 +396,7 @@ type PpvScalar=^TpvScalar;
              ZAxis:TpvVector4=(x:0.0;y:0.0;z:1.0;w:0.0);
              WAxis:TpvVector4=(x:0.0;y:0.0;z:0.0;w:1.0);
              AllAxis:TpvVector4=(x:1.0;y:1.0;z:1.0;w:1.0);
+             AllMaxAxis:TpvVector4=(x:3.4e+28;y:3.4e+28;z:3.4e+28;w:3.4e+28);
       public
        {$i PasVulkan.Math.TpvVector4Helper.Swizzle.Definitions.inc}
      end;
@@ -494,6 +507,7 @@ type PpvScalar=^TpvScalar;
        constructor CreateFromEuler(const aAngles:TpvVector3); overload;
        constructor CreateFromNormalizedSphericalCoordinates(const aNormalizedSphericalCoordinates:TpvNormalizedSphericalCoordinates);
        constructor CreateFromToRotation(const aFromDirection,aToDirection:TpvVector3);
+       constructor CreateFromLookRotation(const aForward,aUp:TpvVector3);
        constructor CreateFromCols(const aC0,aC1,aC2:TpvVector3);
        constructor CreateFromXY(const aX,aY:TpvVector3);
        class operator Implicit(const a:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -916,8 +930,8 @@ type PpvScalar=^TpvScalar;
        function MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; //{$ifdef CAN_INLINE}inline;{$endif}
+       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; //{$ifdef CAN_INLINE}inline;{$endif}
        function Decompose:TpvDecomposedMatrix4x4;
        property Components[const pIndexA,pIndexB:TpvInt32]:TpvScalar read GetComponent write SetComponent; default;
        property Columns[const pIndex:TpvInt32]:TpvVector4 read GetColumn write SetColumn;
@@ -1121,6 +1135,7 @@ type PpvScalar=^TpvScalar;
        function TriangleIntersection(const Triangle:TpvTriangle):boolean;
        function Transform(const Transform:TpvMatrix3x3):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function Transform(const Transform:TpvMatrix4x4):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function HomogenTransform(const aTransform:TpvMatrix4x4):TpvAABB; overload;
        function MatrixMul(const Transform:TpvMatrix3x3):TpvAABB; overload;
        function MatrixMul(const Transform:TpvMatrix4x4):TpvAABB; overload;
        function ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1144,9 +1159,11 @@ type PpvScalar=^TpvScalar;
       public
        Center:TpvVector3;
        Radius:TpvScalar;
-       constructor Create(const pCenter:TpvVector3;const pRadius:TpvScalar);
+       constructor Create(const pCenter:TpvVector3;const pRadius:TpvScalar); overload;
+       constructor Create(const aVector:TpvVector4); overload;
        constructor CreateFromAABB(const ppvAABB:TpvAABB);
        constructor CreateFromFrustum(const zNear,zFar,FOV,AspectRatio:TpvScalar;const Position,Direction:TpvVector3);
+       function ToVector4:TpvVector4;
        function ToAABB(const pScale:TpvScalar=1.0):TpvAABB;
        function Cull(const p:array of TpvPlane):boolean;
        function Contains(const b:TpvSphere):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1525,13 +1542,16 @@ function CastUInt32ToFloat(const v:TpvUInt32):TpvFloat; {$ifdef CAN_INLINE}inlin
 function SignNonZero(const v:TpvFloat):TpvInt32; {$ifdef CAN_INLINE}inline;{$endif}
 
 function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
-function SolveQuadraticRoots(const a,b,c:TpvScalar;out t1,t2:TpvScalar):boolean;
+function OldSolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
+function SolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
 function LinearPolynomialRoot(const a,b:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function QuadraticPolynomialRoot(const a,b,c:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function CubicPolynomialRoot(const a,b,c,d:TpvScalar):TpvScalar;
 
 function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function DoubleLerp(const aV1,aV2,aTime:TpvDouble):TpvDouble; {$ifdef CAN_INLINE}inline;{$endif}
+
+function Exp2(const aValue:TpvDouble):TpvDouble; {$ifdef CAN_INLINE}inline;{$endif}
 
 function Cross(const a,b:TpvVector2):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
 function Cross(const a,b:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1680,6 +1700,13 @@ function AngleClamp(a:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function AngleDiff(a,b:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function AngleLerp(a,b,x:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 
+function UnitTimeClamp(a:TpvDouble):TpvDouble;
+function UnitTimeDiff(a,b:TpvDouble;const aBackwards:boolean):TpvDouble;
+function UnitTimeLerp(a,b,x:TpvDouble;const aBackwards:boolean):TpvDouble; overload;
+function UnitTimeLerp(a,b,x:TpvDouble):TpvDouble; overload;
+
+function NonUnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+
 function InertiaTensorTransform(const Inertia,Transform:TpvMatrix3x3):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
 function InertiaTensorParallelAxisTheorem(const Center:TpvVector3;const Mass:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
 
@@ -1702,8 +1729,10 @@ function ConvertRGB32FToR11FG11FB10F(const r,g,b:TpvFloat):TpvUInt32; {$ifdef CA
 function PackTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvPackedTangentSpace;
 procedure UnpackTangentSpace(const aPackedTangentSpace:TpvPackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
 
+function ConvertLinearToSRGB(const aColor:TpvFloat):TpvFloat; overload;
 function ConvertLinearToSRGB(const aColor:TpvVector3):TpvVector3; overload;
 function ConvertLinearToSRGB(const aColor:TpvVector4):TpvVector4; overload;
+function ConvertSRGBToLinear(const aColor:TpvFloat):TpvFloat; overload;
 function ConvertSRGBToLinear(const aColor:TpvVector3):TpvVector3; overload;
 function ConvertSRGBToLinear(const aColor:TpvVector4):TpvVector4; overload;
 
@@ -1714,6 +1743,16 @@ function SolveQuadratic(const a,b,c:TpvDouble;out r0,r1:TpvDouble):TpvSizeInt;
 function SolveCubic(const a,b,c,d:TpvDouble;out r0,r1,r2:TpvDouble):TpvSizeInt;
 function SolveQuartic(const a,b,c,d,e:TpvDouble;out r0,r1,r2,r3:TpvDouble):TpvSizeInt;
 function SolveRootsInInterval(const aCoefs:array of TpvDouble;const aMin,aMax:TpvDouble):TpvDoubleDynamicArray;
+
+function EncodeNormalAsUInt32(const aNormal:TpvVector3):TpvUInt32;
+function DecodeNormalFromUInt32(const aNormal:TpvUInt32):TpvVector3;
+
+function OctahedralProjectionMappingEncode(const aVector:TpvVector3):TpvVector2;
+function OctahedralProjectionMappingDecode(const aVector:TpvVector2):TpvVector3;
+
+function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvInt16Vector2; overload;
+function OctDecode(const aOct:TpvInt16Vector2):TpvVector3;
+function OctEncode(const aVector:TpvVector3):TpvInt16Vector2; overload;
 
 implementation
 
@@ -1869,7 +1908,7 @@ end;
 function IntLog2(x:TpvUInt32):TpvUInt32; {$if defined(fpc)}{$ifdef CAN_INLINE}inline;{$endif}
 begin
  if x<>0 then begin
-  result:=BSRWord(x);
+  result:=BSRDWord(x);
  end else begin
   result:=0;
  end;
@@ -2041,7 +2080,7 @@ begin
          (v0.y*v1.x*v2.z*v3.w)+(v0.x*v1.y*v2.z*v3.w);
 end;
 
-function SolveQuadraticRoots(const a,b,c:TpvScalar;out t1,t2:TpvScalar):boolean;
+function OldSolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
 var a2,d,InverseDenominator:TpvScalar;
 begin
  result:=false;
@@ -2055,20 +2094,65 @@ begin
   end else begin
    InverseDenominator:=1.0/a2;
    if abs(d)<EPSILON then begin
-    t1:=(-b)*InverseDenominator;
-    t2:=t1;
+    t0:=(-b)*InverseDenominator;
+    t1:=t0;
    end else begin
     d:=sqrt(d);
-    t1:=((-b)+d)*InverseDenominator;
-    t2:=((-b)-d)*InverseDenominator;
-    if t1>t2 then begin
-     d:=t1;
-     t1:=t2;
-     t2:=d;
+    t0:=((-b)+d)*InverseDenominator;
+    t1:=((-b)-d)*InverseDenominator;
+    if t0>t1 then begin
+     d:=t0;
+     t0:=t1;
+     t1:=d;
     end;
    end;
    result:=true;
   end;
+ end;
+end;
+
+// The SolveQuadraticRoots function offers a significant improvement over the OldSolveQuadraticRoots
+// function in terms of numerical stability and accuracy. In computing, especially for floating-point
+// numbers, the representation and precision of real numbers are limited, which can lead to issues
+// like loss of significance and catastrophic cancellation. This problem is particularly acute when
+// dealing with values that are very close in magnitude but have opposite signs.
+// The OldSolveQuadraticRoots function uses a direct approach to calculate the roots of the quadratic
+// equation, which suffers from these numerical stability issues. Specifically, when 'b' and the
+// square root of the discriminant ('d') in the quadratic formula have values close to each other
+// but opposite in sign, it can lead to significant errors due to rounding and cancellation.
+// The SolveQuadraticRoots function addresses this by using an alternative formulation:
+// q = -0.5 * (b + sign(b) * sqrt(b^2 - 4ac))
+// t0 = q / a
+// t1 = c / q
+// This approach ensures that the terms added to compute 'q' always have the same sign, thus avoiding
+// the catastrophic cancellation that can occur in the OldSolveQuadraticRoots function. By doing so,
+// SolveQuadraticRoots provides more reliable and accurate results, particularly in edge cases where
+// precision is crucial.
+function SolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
+var d,q,t:TpvScalar;
+begin
+ d:=sqr(b)-(4.0*(a*c));
+ if d<0.0 then begin
+  result:=false;
+ end else begin
+  if d=0.0 then begin
+   t0:=((-0.5)*b)/a;
+   t1:=t0;
+  end else begin
+   if b>0 then begin
+    q:=(-0.5)*(b+sqrt(d));
+   end else begin
+    q:=(-0.5)*(b-sqrt(d));
+   end;
+   t0:=q/a;
+   t1:=c/q;
+   if t0>t1 then begin
+    t:=t0;
+    t0:=t1;
+    t1:=t;
+   end;
+  end;
+  result:=true;
  end;
 end;
 
@@ -2468,6 +2552,12 @@ begin
   result.x:=0.0;
   result.y:=0.0;
  end;
+end;
+
+function TpvVector2.Abs:TpvVector2;
+begin
+ result.x:=System.Abs(x);
+ result.y:=System.Abs(y);
 end;
 
 function TpvVector2.DistanceTo(const aToVector:TpvVector2):TpvScalar;
@@ -3738,7 +3828,8 @@ begin
 end;
 
 function TpvVector3.Slerp(const aToVector:TpvVector3;const aTime:TpvScalar):TpvVector3;
-var DotProduct,Theta,Sinus,Cosinus:TpvScalar;
+var //DotProduct,Theta,Sinus,Cosinus:TpvScalar;
+    SelfLength,ToVectorLength:TpvScalar;
 begin
  if aTime<=0.0 then begin
   result:=self;
@@ -3747,7 +3838,17 @@ begin
  end else if self=aToVector then begin
   result:=aToVector;
  end else begin
-  DotProduct:=self.Dot(aToVector);
+  SelfLength:=self.Length;
+  ToVectorLength:=aToVector.Length;
+  if Math.Min(System.Abs(SelfLength),System.Abs(ToVectorLength))<1e-7 then begin
+   result:=(self*(1.0-aTime))+(aToVector*aTime);
+  end else begin
+   result:=TpvVector3.InlineableCreate(TpvQuaternion.Identity.Slerp(TpvQuaternion.CreateFromToRotation(self,
+                                                                                                       aToVector),
+                                                                    aTime)*self.Normalize)*
+           ((SelfLength*(1.0-aTime))+(ToVectorLength*aTime));
+  end;
+{ DotProduct:=self.Dot(aToVector);
   if DotProduct<-1.0 then begin
    DotProduct:=-1.0;
   end else if DotProduct>1.0 then begin
@@ -3757,7 +3858,7 @@ begin
   Sinus:=0.0;
   Cosinus:=0.0;
   SinCos(Theta,Sinus,Cosinus);
-  result:=(self*Cosinus)+((aToVector-(self*DotProduct)).Normalize*Sinus);
+  result:=(self*Cosinus)+((aToVector-(self*DotProduct)).Normalize*Sinus);}
  end;
 end;
 
@@ -5041,11 +5142,64 @@ begin
 end;
 
 constructor TpvQuaternion.CreateFromToRotation(const aFromDirection,aToDirection:TpvVector3);
+var FromDirection,ToDirection:TpvVector3;
+    DotProduct:TpvScalar;
 begin
- Vector.xyz:=aFromDirection.Normalize.Cross(aToDirection.Normalize);
- Vector.w:=sqrt((sqr(aFromDirection.x)+sqr(aFromDirection.y)+sqr(aFromDirection.z))*
-                (sqr(aToDirection.x)+sqr(aToDirection.y)+sqr(aToDirection.z)))+
-                ((aFromDirection.x*aToDirection.x)+(aFromDirection.y*aToDirection.y)+(aFromDirection.z*aToDirection.z));
+ FromDirection:=aFromDirection.Normalize;
+ ToDirection:=aToDirection.Normalize;
+ DotProduct:=FromDirection.Dot(ToDirection);
+ if System.Abs(DotProduct)>=1.0 then begin
+  if DotProduct>0.0 then begin
+   self:=TpvQuaternion.Identity;
+  end else begin
+   self:=TpvQuaternion.CreateFromAngleAxis(PI,FromDirection.Perpendicular);
+  end;
+ end else begin
+  Vector.xyz:=FromDirection.Cross(ToDirection);
+  Vector.w:=DotProduct+sqrt(FromDirection.SquaredLength*ToDirection.SquaredLength);
+  Vector:=Vector.Normalize;
+ end;
+end;
+
+constructor TpvQuaternion.CreateFromLookRotation(const aForward,aUp:TpvVector3);
+var m0,m1,m2:TpvVector3;
+    t,s:TpvScalar;
+begin
+ m2:=aForward.Normalize;
+ m0:=((aUp.Normalize).Cross(aForward)).Normalize;
+ m1:=(m2.Cross(m0)).Normalize;
+ t:=m0.x+(m1.y+m2.z);
+ if t>2.9999999 then begin
+  self.x:=0.0;
+  self.y:=0.0;
+  self.z:=0.0;
+  self.w:=1.0;
+ end else if t>0.0000001 then begin
+  s:=sqrt(1.0+t)*2.0;
+  self.x:=(m1.z-m2.y)/s;
+  self.y:=(m2.x-m0.z)/s;
+  self.z:=(m0.y-m1.x)/s;
+  self.w:=s*0.25;
+ end else if (m0.x>m1.y) and (m0.x>m2.z) then begin
+  s:=sqrt(1.0+(m0.x-(m1.y+m2.z)))*2.0;
+  self.x:=s*0.25;
+  self.y:=(m1.x+m0.y)/s;
+  self.z:=(m2.x+m0.z)/s;
+  self.w:=(m1.z-m2.y)/s;
+ end else if m1.y>m2.z then begin
+  s:=sqrt(1.0+(m1.y-(m0.x+m2.z)))*2.0;
+  self.x:=(m1.x+m0.y)/s;
+  self.y:=s*0.25;
+  self.z:=(m2.y+m1.z)/s;
+  self.w:=(m2.x-m0.z)/s;
+ end else begin
+  s:=sqrt(1.0+(m2.z-(m0.x+m1.y)))*2.0;
+  self.x:=(m2.x+m0.z)/s;
+  self.y:=(m2.y+m1.z)/s;
+  self.z:=s*0.25;
+  self.w:=(m0.y-m1.x)/s;
+ end;
+ self:=self.Normalize;
 end;
 
 constructor TpvQuaternion.CreateFromCols(const aC0,aC1,aC2:TpvVector3);
@@ -12281,8 +12435,7 @@ function TpvMatrix4x4.MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvV
 var Temporary:TpvVector4;
 begin
  Temporary:=self*TpvVector4.InlineableCreate(a,1.0);
- Temporary:=Temporary/Temporary.w;
- result:=Temporary.xyz;
+ result:=Temporary.xyz/Temporary.w;
 end;
 
 function TpvMatrix4x4.MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4;
@@ -12349,9 +12502,9 @@ begin
       (LocalMatrix.RawComponents[2,3]<>0.0) then begin
 
     result.Perspective:=PerspectiveMatrix.Inverse.Transpose*TpvVector4.Create(LocalMatrix.RawComponents[0,3],
-                                                                                         LocalMatrix.RawComponents[1,3],
-                                                                                         LocalMatrix.RawComponents[2,3],
-                                                                                         LocalMatrix.RawComponents[3,3]);
+                                                                              LocalMatrix.RawComponents[1,3],
+                                                                              LocalMatrix.RawComponents[2,3],
+                                                                              LocalMatrix.RawComponents[3,3]);
 
     LocalMatrix.RawComponents[0,3]:=0.0;
     LocalMatrix.RawComponents[1,3]:=0.0;
@@ -15165,6 +15318,21 @@ begin
  end;
 end;}
 
+function TpvAABB.HomogenTransform(const aTransform:TpvMatrix4x4):TpvAABB;
+var Center,Extents:TpvVector3;
+begin
+ if (abs(aTransform.RawComponents[0,3])+abs(aTransform.RawComponents[1,3])+abs(aTransform.RawComponents[2,3])+(abs(aTransform.RawComponents[3,3]-1.0))<1e-6) then begin
+  // Affine => fast but more specialized code path
+  Center:=(aTransform*TpvVector4.InlineableCreate((Min+Max)*0.5,1.0)).xyz;
+  Extents:=aTransform.MulAbsBasis((Max-Min)*0.5);
+  result.Min:=Center-Extents;
+  result.Max:=Center+Extents;
+ end else begin
+  // Non-affine => slow but more flexible code path
+  result:=MatrixMul(aTransform);
+ end;
+end;
+
 function TpvAABB.MatrixMul(const Transform:TpvMatrix3x3):TpvAABB;
 var Index:TpvInt32;
     v:TpvVector3;
@@ -15508,6 +15676,12 @@ begin
  Radius:=pRadius;
 end;
 
+constructor TpvSphere.Create(const aVector:TpvVector4);
+begin
+ Center:=aVector.xyz;
+ Radius:=aVector.w;
+end;
+
 constructor TpvSphere.CreateFromAABB(const ppvAABB:TpvAABB);
 begin
  Center:=(ppvAABB.Min+ppvAABB.Max)*0.5;
@@ -15522,6 +15696,11 @@ begin
  Width:=Height*AspectRatio;
  Radius:=TpvVector3.Create(Width,Height,ViewLen).DistanceTo(TpvVector3.Create(0.0,0.0,zNear+(ViewLen*0.5)));
  Center:=Position+(Direction*((ViewLen*0.5)+zNear));
+end;
+
+function TpvSphere.ToVector4:TpvVector4;
+begin
+ result:=TpvVector4.InlineableCreate(Center,Radius);
 end;
 
 function TpvSphere.ToAABB(const pScale:TpvScalar=1.0):TpvAABB;
@@ -15592,39 +15771,69 @@ end;
 
 function TpvSphere.RayIntersection(const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean;
 var SphereCenterToRayOrigin:TpvVector3;
-    a,b,c,t1,t2:TpvScalar;
+    a,b,c,t0,t1:TpvScalar;
 begin
- result:=false;
  SphereCenterToRayOrigin:=Origin-Center;
  a:=Direction.SquaredLength;
  b:=2.0*SphereCenterToRayOrigin.Dot(Direction);
  c:=SphereCenterToRayOrigin.SquaredLength-sqr(Radius);
- if SolveQuadraticRoots(a,b,c,t1,t2) then begin
-  if t1<0.0 then begin
-   if t2<0.0 then begin
-    // sphere is behind, abort
+ if SolveQuadraticRoots(a,b,c,t0,t1) then begin
+  if t0<0.0 then begin
+   if t1<0.0 then begin
+    // Sphere is behind, abort
+    result:=false;
     exit;
    end else begin
-    // inside sphere
-    Time:=t2;
+    // Inside sphere
+    Time:=t1;
     result:=true;
    end;
   end else begin
-   if t2<0.0 then begin
-    // inside sphere
-    Time:=t1;
+   if t1<0.0 then begin
+    // Inside sphere
+    Time:=t0;
    end else begin
-    // sphere is ahead, return the nearest value
-    if t1<t2 then begin
-     Time:=t1;
+    // Sphere is ahead, return the nearest value
+    if t0<t1 then begin
+     Time:=t0;
     end else begin
-     Time:=t2;
+     Time:=t1;
     end;
    end;
    result:=true;
   end;
+ end else begin
+  result:=false;
  end;
 end;
+
+{function TpvSphere.RayIntersection(const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean;
+var SphereCenterToRayOrigin:TpvVector3;
+    a,b,c,t0,t1,t:TpvScalar;
+begin
+ SphereCenterToRayOrigin:=Origin-Center;
+ a:=Direction.SquaredLength;
+ b:=2.0*SphereCenterToRayOrigin.Dot(Direction);
+ c:=SphereCenterToRayOrigin.SquaredLength-sqr(Radius);
+ if SolveQuadraticRoots(a,b,c,t0,t1) then begin
+  if t0>t1 then begin
+   t:=t0;
+   t0:=t1;
+   t1:=t;
+  end;
+  if t0<0.0 then begin
+   t0:=t1;
+   if t0<0.0 then begin
+    result:=false;
+    exit;
+   end;
+  end;
+  Time:=t0;
+  result:=true;
+ end else begin
+  result:=false;
+ end;
+end;}
 
 function TpvSphere.Extends(const WithSphere:TpvSphere):TpvSphere;
 var x0,y0,z0,r0,x1,y1,z1,r1,xn,yn,zn,dn,t:TpvScalar;
@@ -15919,6 +16128,12 @@ end;
 procedure TpvRect.SetSize(const aSize:TpvVector2);
 begin
  Max:=Min+aSize;
+end;
+
+function Exp2(const aValue:TpvDouble):TpvDouble;
+begin
+ result:=Power(2.0,aValue);
+//result:=Exp(aValue*LN2);
 end;
 
 function Cross(const a,b:TpvVector2):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -17707,6 +17922,73 @@ begin
  result:=a+(AngleDiff(a,b)*x);
 end;
 
+function UnitTimeClamp(a:TpvDouble):TpvDouble;
+begin
+ a:=ModuloPos(a,1.0);
+ while a<0.0 do begin
+  a:=a+1.0;
+ end;
+ while a>1.0 do begin
+  a:=a-1.0;
+ end;
+ result:=a;
+end;
+
+function UnitTimeDiff(a,b:TpvDouble;const aBackwards:boolean):TpvDouble;
+begin
+ a:=ModuloPos(a,1.0);
+ b:=ModuloPos(b,1.0);
+ if aBackwards then begin
+  if a<b then begin
+   a:=a+1.0;
+  end;
+ end else begin
+  if b<a then begin
+   b:=b+1.0;
+  end;
+ end;
+ result:=b-a;
+end;
+
+function UnitTimeLerp(a,b,x:TpvDouble;const aBackwards:boolean):TpvDouble;
+begin
+ a:=frac(frac(a)+1.0);
+ b:=frac(frac(b)+1.0);
+ if aBackwards then begin
+  if a<b then begin
+   a:=a+1.0;
+  end;
+ end else begin
+  if b<a then begin
+   b:=b+1.0;
+  end;
+ end;
+ if x<=0.0 then begin
+  result:=a;
+ end else if x>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=(a*(1.0-x))+(b*x);
+ end;
+ result:=frac(result);
+end;
+
+function UnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+begin
+ result:=UnitTimeLerp(a,b,x,b<a);
+end;
+
+function NonUnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+begin
+ if x<=0.0 then begin
+  result:=a;
+ end else if x>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=(a*(1.0-x))+(b*x);
+ end;
+end;
+
 function InertiaTensorTransform(const Inertia,Transform:TpvMatrix3x3):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
 begin
  result:=(Transform*Inertia)*Transform.Transpose;
@@ -18203,6 +18485,18 @@ begin
  aBitangent:=Vector3Norm(Vector3Cross(aNormal,aTangent));
 end;//}
 
+function ConvertLinearToSRGB(const aColor:TpvFloat):TpvFloat;
+const InverseGamma=1.0/2.4;
+begin
+ if aColor<0.0031308 then begin
+  result:=aColor*12.92;
+ end else if aColor<1.0 then begin
+  result:=(Power(aColor,InverseGamma)*1.055)-0.055;
+ end else begin
+  result:=1.0;
+ end;
+end;
+
 function ConvertLinearToSRGB(const aColor:TpvVector3):TpvVector3;
 const InverseGamma=1.0/2.4;
 var ChannelIndex:TpvInt32;
@@ -18232,6 +18526,18 @@ begin
   end;
  end;
  result.a:=aColor.a;
+end;
+
+function ConvertSRGBToLinear(const aColor:TpvFloat):TpvFloat;
+const Inverse12d92=1.0/12.92;
+begin
+ if aColor<0.04045 then begin
+  result:=aColor*Inverse12d92;
+ end else if aColor<1.0 then begin
+  result:=Power((aColor+0.055)/1.055,2.4);
+ end else begin
+  result:=1.0;
+ end;
 end;
 
 function ConvertSRGBToLinear(const aColor:TpvVector3):TpvVector3;
@@ -19586,6 +19892,123 @@ begin
   result.y:=(1.0-abs(t))*SignNonZero(result.y);
  end;
  result:=result.Normalize;
+end;
+
+function OctahedralProjectionMappingEncode(const aVector:TpvVector3):TpvVector2;
+var Vector:TpvVector3;
+begin
+ Vector:=aVector.Normalize;
+ result:=Vector.xy/(abs(Vector.x)+abs(Vector.y)+abs(Vector.z));
+ if Vector.z<0.0 then begin
+  result:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*
+           TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+ result:=(result*0.5)+TpvVector2.InlineableCreate(0.5,0.5);
+end;
+
+function OctahedralProjectionMappingDecode(const aVector:TpvVector2):TpvVector3;
+var ix,iy:TpvInt32;
+begin
+ ix:=floor(aVector.x);
+ iy:=floor(aVector.y);
+ result.x:=aVector.x-ix;
+ result.y:=aVector.y-iy;
+ if ((ix+iy) and 1)<>0 then begin
+  result.xy:=TpvVector2.InlineableCreate(1.0,1.0)-result.xy;
+ end;
+ result.xy:=(result.xy*2.0)-TpvVector2.InlineableCreate(1.0,1.0);
+ result.z:=(1.0-abs(result.x))-abs(result.y);
+ if result.z<0 then begin
+  result.xy:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+ result:=result.Normalize;
+end;
+
+function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvInt16Vector2; overload;
+var Vector:TpvVector3;
+    x,y,s,tx,ty:TpvScalar;
+begin
+ Vector:=aVector.Normalize;
+ s:=abs(Vector.x)+abs(Vector.y)+abs(Vector.z);
+ x:=Vector.x/s;
+ y:=Vector.y/s;
+ if Vector.z<0.0 then begin
+  tx:=1.0-abs(y);
+  if x<0.0 then begin
+   tx:=-tx;
+  end;
+  ty:=1.0-abs(x);
+  if y<0.0 then begin
+   ty:=-ty;
+  end;
+  x:=tx;
+  y:=ty;
+ end;
+ if aFloorX then begin
+  result.x:=Min(Max(trunc(Floor(x*32767.0)),-32767),32767);
+ end else begin
+  result.x:=Min(Max(trunc(Ceil(x*32767.0)),-32767),32767);
+ end;
+ if aFloorY then begin
+  result.y:=Min(Max(trunc(Floor(y*32767.0)),-32767),32767);
+ end else begin
+  result.y:=Min(Max(trunc(Ceil(y*32767.0)),-32767),32767);
+ end;
+end;
+
+function OctDecode(const aOct:TpvInt16Vector2):TpvVector3;
+var x,y,z,s,tx,ty:TpvScalar;
+begin
+ x:=Max(-32767,aOct.x)/32767.0;
+ y:=Max(-32767,aOct.y)/32767.0;
+ z:=(1.0-abs(x))-abs(y);
+ if z<0 then begin
+  tx:=1.0-abs(y);
+  if x<0.0 then begin
+   tx:=-tx;
+  end;
+  ty:=1.0-abs(x);
+  if y<0.0 then begin
+   ty:=-ty;
+  end;
+  x:=tx;
+  y:=ty;
+ end;
+ result:=TpvVector3.Create(x,y,z).Normalize;
+end;
+
+function OctEncode(const aVector:TpvVector3):TpvInt16Vector2; overload;
+var Vector:TpvVector3;
+    Oct:TpvInt16Vector2;
+    BestDot,Dot:TpvScalar;
+begin
+
+ Vector:=aVector.Normalize;
+
+ result:=OctEncode(Vector,false,false);
+ BestDot:=Vector.Dot(OctDecode(result));
+
+ Oct:=OctEncode(Vector,false,true);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
+ Oct:=OctEncode(Vector,true,true);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
+ Oct:=OctEncode(Vector,true,false);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
 end;
 
 initialization

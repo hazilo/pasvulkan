@@ -23,6 +23,14 @@ layout(set = 0, binding = 3, r32ui) uniform coherent uimage2DArray uOITImgAux;
 layout(set = 0, binding = 4, std140) uniform uboOIT {
   uvec4 oitViewPort;  //
 } uOIT;
+
+#ifdef MSAA
+layout(set = 0, binding = 5, std430) buffer HistogramLuminanceBuffer {
+  float histogramLuminance;
+  float luminanceFactor; 
+} histogramLuminanceBuffer;
+#endif
+
 /* clang-format on */
 
 #if defined(MSAA)
@@ -131,10 +139,10 @@ void main() {
 #endif
       }
     }
-    for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {  //
-      color += ApplyToneMapping(oitMSAAColors[oitMSAASampleIndex]);                         //
+    for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {                     //
+      color += ApplyToneMapping(oitMSAAColors[oitMSAASampleIndex] * histogramLuminanceBuffer.luminanceFactor); //
     }
-    color = ApplyInverseToneMapping(color / oitMSAA);
+    color = ApplyInverseToneMapping(color / oitMSAA) / histogramLuminanceBuffer.luminanceFactor;
 #else
     for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {
       vec4 sampleColor = vec4(0.0);
@@ -145,9 +153,9 @@ void main() {
           blend(sampleColor, fragmentColor);                                                              //
         }
       }
-      color += ApplyToneMapping(sampleColor);
+      color += ApplyToneMapping(sampleColor * histogramLuminanceBuffer.luminanceFactor);
     }
-    color = ApplyInverseToneMapping(color / oitMSAA);
+    color = ApplyInverseToneMapping(color / oitMSAA) / histogramLuminanceBuffer.luminanceFactor;
 #endif
 #else
     for (int oitFragmentIndex = 0; oitFragmentIndex < oitCountFragments; oitFragmentIndex++) {        //
@@ -164,9 +172,9 @@ void main() {
   {
     vec4 sampleColor = vec4(0.0);  
     for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {
-      sampleColor += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, oitMSAASampleIndex));
+      sampleColor += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, oitMSAASampleIndex) * histogramLuminanceBuffer.luminanceFactor);
     }
-    blend(color, ApplyInverseToneMapping(sampleColor / float(oitMSAA)));   
+    blend(color, ApplyInverseToneMapping(sampleColor / float(oitMSAA)) / histogramLuminanceBuffer.luminanceFactor);   
   }
 #else
   blend(color, subpassLoad(uSubpassInputTransparent));
@@ -176,6 +184,6 @@ void main() {
   temporary.xyz *= temporary.w; // Premultiply alpha for opaque fragments
   blend(color, temporary);
 
-  outColor = vec4(color.xyz, (oitCountFragments == 0) ? 1.0 : 0.0);
+  outColor = vec4(clamp(color.xyz, vec3(-65504.0), vec3(65504.0)), (oitCountFragments == 0) ? 1.0 : 0.0);
   
 }

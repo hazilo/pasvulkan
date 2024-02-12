@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -419,7 +419,7 @@ begin
                                                                                                        fResourceSSAO.VulkanImageViews[InFlightFrameIndex].Handle,
                                                                                                        fResourceSSAO.ResourceTransition.Layout),// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                          TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
-                                                                                                       fInstance.SceneMipmappedArray2DImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
+                                                                                                       fInstance.SceneMipmappedArray2DImage.VulkanArrayImageView.Handle,
                                                                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
                                                                         [],
                                                                         [],
@@ -433,7 +433,7 @@ begin
                                                                                                        fInstance.Renderer.EmptySSAOTexture.ImageView.Handle,
                                                                                                        TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)),
                                                                          TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
-                                                                                                       fInstance.SceneMipmappedArray2DImages[InFlightFrameIndex].VulkanArrayImageView.Handle,
+                                                                                                       fInstance.SceneMipmappedArray2DImage.VulkanArrayImageView.Handle,
                                                                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
                                                                         [],
                                                                         [],

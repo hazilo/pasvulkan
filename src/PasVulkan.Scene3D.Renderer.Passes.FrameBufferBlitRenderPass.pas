@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -49,7 +49,7 @@
  * 11. Make sure the code runs on all platforms with Vulkan support           *
  *                                                                            *
  ******************************************************************************)
-unit PasVulkan.Scene3D.Renderer.Passes.DitheringRenderPass;
+unit PasVulkan.Scene3D.Renderer.Passes.FrameBufferBlitRenderPass;
 {$i PasVulkan.inc}
 {$ifndef fpc}
  {$ifdef conditionalexpressions}
@@ -76,8 +76,25 @@ uses SysUtils,
      PasVulkan.Scene3D.Renderer,
      PasVulkan.Scene3D.Renderer.Instance;
 
-type { TpvScene3DRendererPassesDitheringRenderPass }
-      TpvScene3DRendererPassesDitheringRenderPass=class(TpvFrameGraph.TRenderPass)
+type { TpvScene3DRendererPassesFrameBufferBlitRenderPass }
+      TpvScene3DRendererPassesFrameBufferBlitRenderPass=class(TpvFrameGraph.TRenderPass)
+       public
+        const ColorSpaceSRGBNonLinearSDR=0;
+              ColorSpaceExtendedSRGBLinear=1;
+{       const ColorSpaceSRGBNonLinearSDR=0;
+              ColorSpaceSRGBNonLinearSDRManualGammaCorrection=1;
+              ColorSpaceSRGBNonLinearHDR=2;
+              ColorSpaceExtendedSRGBLinear=3;
+              ColorSpaceExtendedSRGBNonLinear=4;
+              ColorSpaceHDR10ST2084=5;
+              ColorSpaceHDR10HLG=6;
+              ColorSpaceBT709Linear=7;
+              ColorSpaceBT2020Linear=8;}
+        type TPushConstants=packed record
+              Mode:TpvUInt32;
+              FrameCounter:TpvInt32;
+             end;
+             PPushConstants=^TPushConstants;
        private
         fInstance:TpvScene3DRendererInstance;
         fVulkanRenderPass:TpvVulkanRenderPass;
@@ -108,9 +125,9 @@ type { TpvScene3DRendererPassesDitheringRenderPass }
 
 implementation
 
-{ TpvScene3DRendererPassesDitheringRenderPass }
+{ TpvScene3DRendererPassesFrameBufferBlitRenderPass }
 
-constructor TpvScene3DRendererPassesDitheringRenderPass.Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance;const aLastOutput:boolean);
+constructor TpvScene3DRendererPassesFrameBufferBlitRenderPass.Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance;const aLastOutput:boolean);
 var OutputName:TpvUTF8String;
 begin
 
@@ -118,7 +135,7 @@ begin
 
  fInstance:=aInstance;
 
- Name:='DitheringRenderPass';
+ Name:='FrameBufferBlitRenderPass';
 
  MultiviewMask:=fInstance.SurfaceMultiviewMask;
 
@@ -168,12 +185,12 @@ begin
 
 end;
 
-destructor TpvScene3DRendererPassesDitheringRenderPass.Destroy;
+destructor TpvScene3DRendererPassesFrameBufferBlitRenderPass.Destroy;
 begin
  inherited Destroy;
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.AcquirePersistentResources;
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.AcquirePersistentResources;
 var Stream:TStream;
 begin
 
@@ -190,7 +207,7 @@ begin
   Stream.Free;
  end;
 
- Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dithering_frag.spv');
+ Stream:=pvScene3DShaderVirtualFileSystem.GetFile('framebuffer_blit_frag.spv');
  try
   fVulkanFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
  finally
@@ -205,7 +222,7 @@ begin
 
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.ReleasePersistentResources;
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.ReleasePersistentResources;
 begin
  FreeAndNil(fVulkanPipelineShaderStageVertex);
  FreeAndNil(fVulkanPipelineShaderStageFragment);
@@ -216,7 +233,7 @@ begin
  inherited ReleasePersistentResources;
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.AcquireVolatileResources;
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.AcquireVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  inherited AcquireVolatileResources;
@@ -270,7 +287,7 @@ begin
 
  fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
  fVulkanPipelineLayout.AddDescriptorSetLayout(fVulkanDescriptorSetLayout);
- fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),0,SizeOf(TpvInt32));
+ fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),0,SizeOf(TpvScene3DRendererPassesFrameBufferBlitRenderPass.TPushConstants));
  fVulkanPipelineLayout.Initialize;
 
  fVulkanGraphicsPipeline:=TpvVulkanGraphicsPipeline.Create(fInstance.Renderer.VulkanDevice,
@@ -340,7 +357,7 @@ begin
 
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.ReleaseVolatileResources;
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.ReleaseVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
 
@@ -362,24 +379,73 @@ begin
  inherited ReleaseVolatileResources;
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt);
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt);
 begin
  inherited Update(aUpdateInFlightFrameIndex,aUpdateFrameIndex);
 end;
 
-procedure TpvScene3DRendererPassesDitheringRenderPass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt);
-var FrameCounter:TpvInt32;
+procedure TpvScene3DRendererPassesFrameBufferBlitRenderPass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt);
+var PushConstants:TpvScene3DRendererPassesFrameBufferBlitRenderPass.TPushConstants;
 begin
+
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
- FrameCounter:=TpvInt32(FrameGraph.DrawFrameIndex);
+
+ case FrameGraph.SurfaceColorSpace of
+  VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:begin
+   PushConstants.Mode:=ColorSpaceSRGBNonLinearSDR;
+{  case FrameGraph.SurfaceColorFormat of
+    VK_FORMAT_R8G8B8A8_SRGB,VK_FORMAT_B8G8R8A8_SRGB:begin
+     PushConstants.Mode:=ColorSpaceSRGBNonLinearSDR;
+    end;
+    VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_B8G8R8A8_UNORM:begin
+     PushConstants.Mode:=ColorSpaceSRGBNonLinearSDRManualGammaCorrection;
+    end;
+    else begin
+     PushConstants.Mode:=ColorSpaceSRGBNonLinearHDR;
+    end; 
+   end;}
+  end;
+  VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:begin
+   PushConstants.Mode:=ColorSpaceExtendedSRGBLinear;
+  end;
+{ VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:begin
+   PushConstants.Mode:=ColorSpaceExtendedSRGBNonLinear;
+  end;
+  VK_COLOR_SPACE_HDR10_ST2084_EXT:begin
+   PushConstants.Mode:=ColorSpaceHDR10ST2084;
+  end;
+  VK_COLOR_SPACE_HDR10_HLG_EXT:begin
+   PushConstants.Mode:=ColorSpaceHDR10HLG;
+  end;
+  VK_COLOR_SPACE_BT709_LINEAR_EXT:begin
+   PushConstants.Mode:=ColorSpaceBT709Linear;
+  end;
+  VK_COLOR_SPACE_BT2020_LINEAR_EXT:begin
+   PushConstants.Mode:=ColorSpaceBT2020Linear;
+  end;}
+  else begin
+   // Fallback to SRGB Non-Linear SDR for unknown color spaces, even if it would be wrong in the worst case, but still better than nothing
+   PushConstants.Mode:=ColorSpaceSRGBNonLinearSDR;
+  end;
+ end; 
+ 
+ PushConstants.FrameCounter:=TpvInt32(FrameGraph.DrawFrameIndex);
+
  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                       fVulkanPipelineLayout.Handle,
                                       0,
                                       1,
                                       @fVulkanDescriptorSets[aInFlightFrameIndex].Handle,0,nil);
- aCommandBuffer.CmdPushConstants(fVulkanPipelineLayout.Handle,TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT),0,SizeOf(TpvInt32),@FrameCounter);
+
+ aCommandBuffer.CmdPushConstants(fVulkanPipelineLayout.Handle,
+                                 TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT),
+                                 0,
+                                 SizeOf(TpvScene3DRendererPassesFrameBufferBlitRenderPass.TPushConstants),
+                                 @PushConstants);
+
  aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,fVulkanGraphicsPipeline.Handle);
  aCommandBuffer.CmdDraw(3,1,0,0);
+
 end;
 
 end.

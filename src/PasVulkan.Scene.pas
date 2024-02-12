@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2023, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -169,7 +169,9 @@ type TpvScene=class;
        procedure WaitForLoaded; virtual;
        function IsLoaded:boolean; virtual;
        procedure Store; virtual;
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Update(const aDeltaTime:TpvDouble); virtual;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Interpolate(const aAlpha:TpvDouble); virtual;
        procedure FrameUpdate; virtual;
        procedure Render; virtual;
@@ -197,7 +199,9 @@ type TpvScene=class;
        procedure WaitForLoaded; virtual;
        function IsLoaded:boolean; virtual;
        procedure Store; virtual;
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Update(const aDeltaTime:TpvDouble); virtual;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Interpolate(const aAlpha:TpvDouble); virtual;
        procedure FrameUpdate; virtual;
        procedure Render; virtual;
@@ -227,7 +231,9 @@ type TpvScene=class;
        constructor Create(const aParent:TpvSceneNode;const aData:TObject=nil); override;
        destructor Destroy; override;
        procedure Store; override;
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); override;
        procedure Update(const aDeltaTime:TpvDouble); override;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); override;
        procedure Interpolate(const aAlpha:TpvDouble); override;
       public
        property Transform:TpvMatrix4x4 read fTransform write SetTransform;
@@ -494,6 +500,20 @@ begin
  end;
 end;
 
+procedure TpvSceneNode.BeginUpdate(const aDeltaTime:TpvDouble);
+var ChildNodeIndex:TpvSizeInt;
+    ChildNode:TpvSceneNode;
+begin
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.BeginUpdate(aDeltaTime);
+   end;
+  end;
+ end;
+end;
+
 procedure TpvSceneNode.Update(const aDeltaTime:TpvDouble);
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
@@ -503,6 +523,20 @@ begin
    ChildNode:=fChildren[ChildNodeIndex];
    if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
     ChildNode.Update(aDeltaTime);
+   end;
+  end;
+ end;
+end;
+
+procedure TpvSceneNode.EndUpdate(const aDeltaTime:TpvDouble);
+var ChildNodeIndex:TpvSizeInt;
+    ChildNode:TpvSceneNode;
+begin
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.EndUpdate(aDeltaTime);
    end;
   end;
  end;
@@ -610,9 +644,19 @@ begin
  fRootNode.Store;
 end;
 
+procedure TpvScene.BeginUpdate(const aDeltaTime:TpvDouble);
+begin
+ fRootNode.BeginUpdate(aDeltaTime);
+end;
+
 procedure TpvScene.Update(const aDeltaTime:TpvDouble);
 begin
  fRootNode.Update(aDeltaTime);
+end;
+
+procedure TpvScene.EndUpdate(const aDeltaTime:TpvDouble);
+begin
+ fRootNode.EndUpdate(aDeltaTime);
 end;
 
 procedure TpvScene.Interpolate(const aAlpha:TpvDouble);
@@ -721,9 +765,19 @@ begin
  fLastCachedWorldTransform:=fCachedWorldTransform;
 end;
 
+procedure TpvSceneNode3D.BeginUpdate(const aDeltaTime:TpvDouble);
+begin
+ inherited BeginUpdate(aDeltaTime);
+end;
+
 procedure TpvSceneNode3D.Update(const aDeltaTime:TpvDouble);
 begin
  inherited Update(aDeltaTime);
+end;
+
+procedure TpvSceneNode3D.EndUpdate(const aDeltaTime:TpvDouble);
+begin
+ inherited EndUpdate(aDeltaTime);
 end;
 
 procedure TpvSceneNode3D.Interpolate(const aAlpha:TpvDouble);

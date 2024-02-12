@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -72,6 +72,7 @@ uses SysUtils,
      PasVulkan.Application,
      PasVulkan.FrameGraph,
      PasVulkan.Scene3D,
+     PasVulkan.Scene3D.Planet,
      PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer,
      PasVulkan.Scene3D.Renderer.Instance;
@@ -101,6 +102,7 @@ type { TpvScene3DRendererPassesDepthPrepassRenderPass }
        fVulkanPipelineShaderStageMeshDepthMaskedFragment:TpvVulkanPipelineShaderStage;
        fVulkanGraphicsPipelines:array[TpvScene3D.TMaterial.TAlphaMode] of TpvScene3D.TGraphicsPipelines;
        fVulkanPipelineLayout:TpvVulkanPipelineLayout;
+       fPlanetDepthPrePass:TpvScene3DPlanet.TRenderPass;
       public
        constructor Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance); reintroduce;
        destructor Destroy; override;
@@ -239,10 +241,28 @@ begin
  fVulkanPipelineShaderStageMeshDepthMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshDepthMaskedFragmentShaderModule,'main');
  MeshFragmentSpecializationConstants.SetPipelineShaderStage(fVulkanPipelineShaderStageMeshDepthMaskedFragment);
 
+ if fInstance.Renderer.GPUCulling then begin
+  fPlanetDepthPrePass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                           fInstance,
+                                                           fInstance.Renderer.Scene3D,
+                                                           TpvScene3DPlanet.TRenderPass.TMode.DepthPrepassDisocclusion,
+                                                           nil,
+                                                           nil);
+ end else begin
+  fPlanetDepthPrePass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                           fInstance,
+                                                           fInstance.Renderer.Scene3D,
+                                                           TpvScene3DPlanet.TRenderPass.TMode.DepthPrePass,
+                                                           nil,
+                                                           nil);
+ end;
+
 end;
 
 procedure TpvScene3DRendererPassesDepthPrepassRenderPass.ReleasePersistentResources;
 begin
+
+ FreeAndNil(fPlanetDepthPrePass);
 
  FreeAndNil(fVulkanPipelineShaderStageMeshVertex);
 
@@ -423,6 +443,11 @@ begin
 
  end;
 
+ fPlanetDepthPrePass.AllocateResources(fVulkanRenderPass,
+                                       fInstance.ScaledWidth,
+                                       fInstance.ScaledHeight,
+                                       fInstance.Renderer.SurfaceSampleCountFlagBits);
+
 end;
 
 procedure TpvScene3DRendererPassesDepthPrepassRenderPass.ReleaseVolatileResources;
@@ -431,6 +456,7 @@ var Index:TpvSizeInt;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
 begin
+ fPlanetDepthPrePass.ReleaseResources;
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
    for FaceCullingMode:=Low(TpvScene3D.TFaceCullingMode) to High(TpvScene3D.TFaceCullingMode) do begin
@@ -486,6 +512,13 @@ begin
   if fInstance.GlobalIlluminationCascadedVoxelConeTracingDebugVisualization then begin
 
   end else begin
+
+   fPlanetDepthPrePass.Draw(aInFlightFrameIndex,
+                            aFrameIndex,
+                            InFlightFrameState^.ViewRenderPassIndex,
+                            InFlightFrameState^.FinalViewIndex,
+                            InFlightFrameState^.CountFinalViews,
+                            aCommandBuffer);
 
    fInstance.Renderer.Scene3D.Draw(fInstance,
                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],

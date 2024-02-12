@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -51,10 +51,17 @@
  ******************************************************************************)
 unit PasVulkan.Application;
 {$i PasVulkan.inc}
-{$ifndef fpc}
+{$ifdef fpc}
+ {$if defined(FPC_VERSION) and (FPC_VERSION>=3)}
+  {$define HAS_NAMETHREADFORDEBUGGING}
+ {$ifend}
+{$else}
  {$ifdef conditionalexpressions}
   {$if CompilerVersion>=24.0}
    {$legacyifend on}
+  {$ifend}
+  {$if CompilerVersion>=31.0}
+   {$define HAS_NAMETHREADFORDEBUGGING}
   {$ifend}
  {$endif}
 {$endif}
@@ -1215,6 +1222,29 @@ type EpvApplication=class(Exception)
        DebugUtils=1
       );
 
+     { TpvApplicationUpdateThread }
+
+     TpvApplicationUpdateThread=class(TPasMPThread)
+      private
+       fApplication:TpvApplication;
+       fEvent:TPasMPSimpleEvent;
+       fDoneEvent:TPasMPSimpleEvent;
+       fFPUExceptionMask:TFPUExceptionMask;
+       fFPUPrecisionMode:TFPUPrecisionMode;
+       fFPURoundingMode:TFPURoundingMode;
+       fInvoked:TPasMPBool32;
+      protected
+       procedure Execute; override;
+      public
+       constructor Create(const aApplication:TpvApplication); reintroduce;
+       destructor Destroy; override;
+       procedure Shutdown;
+       procedure Invoke;
+       procedure WaitForDone;
+      published
+       property Invoked:TPasMPBool32 read fInvoked;
+     end;
+
      { TpvApplication }
 
      TpvApplication=class
@@ -1310,6 +1340,8 @@ type EpvApplication=class(Exception)
 
        fSwapChainColorSpace:TpvApplicationSwapChainColorSpace;
 
+       fSwapChainHDR:Boolean;
+
        fWidth:TpvInt32;
        fHeight:TpvInt32;
        fFullscreen:boolean;
@@ -1332,6 +1364,7 @@ type EpvApplication=class(Exception)
        fAndroidTrapBackButton:boolean;
        fUseAudio:boolean;
        fBlocking:boolean;
+       fUpdateUsesGPU:boolean;
        fWaitOnPreviousFrames:boolean;
        fWaitOnPreviousFrame:boolean;
        fTerminationWithAltF4:boolean;
@@ -1620,6 +1653,10 @@ type EpvApplication=class(Exception)
 
        fUniverse:TObject;
 
+       fUpdateThread:TpvApplicationUpdateThread;
+
+       fInUpdateJobFunction:TPasMPBool32;
+
 {$if not (defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless))}
        fNativeEventQueue:TpvApplicationNativeEventQueue;
 
@@ -1877,6 +1914,8 @@ type EpvApplication=class(Exception)
 
        property SwapChainColorSpace:TpvApplicationSwapChainColorSpace read fSwapChainColorSpace write fSwapChainColorSpace;
 
+       property SwapChainHDR:Boolean read fSwapChainHDR write fSwapChainHDR;
+
        property Width:TpvInt32 read fWidth write fWidth;
        property Height:TpvInt32 read fHeight write fHeight;
 
@@ -1931,6 +1970,8 @@ type EpvApplication=class(Exception)
        property UseAudio:boolean read fUseAudio write fUseAudio;
 
        property Blocking:boolean read fBlocking write fBlocking;
+
+       property UpdateUsesGPU:boolean read fUpdateUsesGPU write fUpdateUsesGPU;
 
        property WaitOnPreviousFrames:boolean read fWaitOnPreviousFrames write fWaitOnPreviousFrames;
 
@@ -6875,6 +6916,7 @@ begin
  while (AudioEngine.IsReady and AudioEngine.IsActive) and assigned(AudioEngine.Thread) and not AudioEngine.Thread.Terminated do begin
   if AudioEngine.RingBuffer.AvailableForRead>=Len then begin
    AudioEngine.RingBuffer.Read(Buffer,Len);
+   AudioEngine.Thread.ReadEvent.SetEvent;
    exit;
   end;
   if AudioEngine.Thread.Sleeping<>0 then begin
@@ -6904,6 +6946,85 @@ begin
  until false;
 end;
 {$ifend}
+
+constructor TpvApplicationUpdateThread.Create(const aApplication:TpvApplication);
+begin
+ fApplication:=aApplication;
+ fEvent:=TPasMPSimpleEvent.Create;
+ fDoneEvent:=TPasMPSimpleEvent.Create;
+ fFPUExceptionMask:=GetExceptionMask;
+ fFPUPrecisionMode:=GetPrecisionMode;
+ fFPURoundingMode:=GetRoundMode;
+ fInvoked:=false;
+ inherited Create(false);
+end;
+
+destructor TpvApplicationUpdateThread.Destroy;
+begin
+ Shutdown;
+ FreeAndNil(fEvent);
+ FreeAndNil(fDoneEvent);
+ inherited Destroy;
+end;
+
+procedure TpvApplicationUpdateThread.Shutdown;
+begin
+ if not Finished then begin
+  Terminate;
+  fEvent.SetEvent;
+  WaitFor;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.Invoke;
+begin
+ if not fInvoked then begin
+  fInvoked:=true;
+  fEvent.SetEvent;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.WaitForDone;
+begin
+ if fInvoked then begin
+  fDoneEvent.WaitFor;
+  fInvoked:=false;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.Execute;
+var ExceptionString:String;
+begin
+{$ifdef HAS_NAMETHREADFORDEBUGGING}
+ NameThreadForDebugging('TpvApplicationUpdateThread');
+{$endif}
+ ReturnValue:=0;
+ Priority:=TThreadPriority.tpHigher;
+ try
+  SetExceptionMask(fFPUExceptionMask);
+  SetPrecisionMode(fFPUPrecisionMode);
+  SetRoundMode(fFPURoundingMode);
+  while not Terminated do begin
+   fEvent.WaitFor;
+   if Terminated then begin
+    fDoneEvent.SetEvent;
+    break;
+   end else begin
+    fApplication.UpdateJobFunction(nil,0);
+    fDoneEvent.SetEvent;
+   end;
+  end;
+ except
+  on e:Exception do begin
+   ExceptionString:={$ifdef fpc}DumpExceptionCallStack{$else}DumpException{$endif}(e);
+{$if defined(fpc) and defined(android) and (defined(Release) or not defined(Debug))}
+   __android_log_write(ANDROID_LOG_ERROR,'PasVulkanApplication',PAnsiChar(TpvApplicationRawByteString(ExceptionString)));
+{$ifend}
+   TpvApplication.Log(LOG_ERROR,'TpvApplicationUpdateThread.Execute',ExceptionString);
+   raise;
+  end;
+ end;
+end;
 
 constructor TpvApplication.Create;
 var FrameIndex:TpvInt32;
@@ -7016,6 +7137,8 @@ begin
 
  fSwapChainColorSpace:=TpvApplicationSwapChainColorSpace.SRGB;
 
+ fSwapChainHDR:=false;
+
  fWidth:=1280;
  fHeight:=720;
  fFullscreen:=false;
@@ -7040,6 +7163,7 @@ begin
  fAndroidTrapBackButton:=true;
  fUseAudio:=false;
  fBlocking:=true;
+ fUpdateUsesGPU:=false;
  fWaitOnPreviousFrames:=false;
  fWaitOnPreviousFrame:=false;
  fTerminationWithAltF4:=true;
@@ -7525,6 +7649,17 @@ begin
 {$ifend}
  try
   if assigned(fVulkanDevice) then begin
+   if fUpdateUsesGPU then begin
+    if assigned(fUpdateThread) then begin
+     if fUpdateThread.fInvoked then begin
+      fUpdateThread.WaitForDone;
+     end;
+    end else begin
+     while fInUpdateJobFunction do begin
+      TPasMP.Yield;
+     end;
+    end;
+   end;
    fVulkanDevice.WaitIdle;
    for Index:=0 to Max(length(fVulkanPresentCompleteFencesReady),length(fVulkanWaitFences))-1 do begin
     if (Index<length(fVulkanPresentCompleteFencesReady)) and fVulkanPresentCompleteFencesReady[Index] then begin
@@ -7670,6 +7805,13 @@ begin
      (fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_MARKER_EXTENSION_NAME)>=0) and
      (fVulkanDevice.Instance.EnabledExtensionNames.IndexOf(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)<0) then begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_DEBUG_MARKER_EXTENSION_NAME);
+  end;
+
+  if fVulkanDebugging and
+     fVulkanDebuggingEnabled and
+     fVulkanValidation and
+     (fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_TOOLING_INFO_EXTENSION_NAME)>=0) then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_TOOLING_INFO_EXTENSION_NAME);
   end;
 
   fVulkanNVIDIADiagnosticConfigExtensionFound:=fVulkanNVIDIAAfterMath and
@@ -7866,7 +8008,7 @@ var Index:TpvInt32;
 {$if defined(PasVulkanUseSDL2)}
     SDL_SysWMinfo:TSDL_SysWMinfo;
 {$ifend}
-    CountExtensions:TSDLInt32;
+    CountExtensions:TpvInt32;
     Extensions:TExtensions;
     DebugExtensionName:TpvUTF8String;
 begin
@@ -8342,6 +8484,7 @@ begin
                                              true,
                                              TVkSurfaceTransformFlagsKHR($ffffffff),
                                              fSwapChainColorSpace=TpvApplicationSwapChainColorSpace.SRGB,
+                                             fSwapChainHDR,
                                              fFullscreen,
                                              fExclusiveFullScreenMode,
                                              {$if defined(Windows)}@WindowHandle{$else}nil{$ifend});
@@ -9392,6 +9535,18 @@ begin
       TAcquireVulkanBackBufferState.RecreateSwapChain,
       TAcquireVulkanBackBufferState.RecreateSurface:begin
 
+       if fUpdateUsesGPU then begin
+        if assigned(fUpdateThread) then begin
+         if fUpdateThread.fInvoked then begin
+          fUpdateThread.WaitForDone;
+         end;
+        end else begin
+         while fInUpdateJobFunction do begin
+          TPasMP.Yield;
+         end;
+        end;
+       end;
+
        for ImageIndex:=0 to fCountSwapChainImages-1 do begin
         if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
          fVulkanPresentCompleteFences[ImageIndex].WaitFor;
@@ -10119,7 +10274,12 @@ end;
 
 procedure TpvApplication.UpdateJobFunction(const aJob:PPasMPJob;const aThreadIndex:TPasMPInt32);
 begin
- Update(fUpdateDeltaTime);
+ TPasMPInterlocked.Write(fInUpdateJobFunction,TPasMPBool32(true));
+ try
+  Update(fUpdateDeltaTime);
+ finally
+  TPasMPInterlocked.Write(fInUpdateJobFunction,TPasMPBool32(false));
+ end;
 end;
 
 procedure TpvApplication.DrawJobFunction(const aJob:PPasMPJob;const aThreadIndex:TPasMPInt32);
@@ -10419,8 +10579,6 @@ begin
 end;
 
 procedure TpvApplication.ProcessMessages;
-{-$define TpvApplicationUpdateJobOnMainThread}
-{$define TpvApplicationDrawJobOnMainThread}
 var Index,Counter,Tries:TpvInt32;
 {$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
     SDLJoystick:PSDL_Joystick;
@@ -10435,13 +10593,7 @@ var Index,Counter,Tries:TpvInt32;
  {$ifend}
 {$ifend}
     OK,Found:boolean;
-{$if defined(TpvApplicationUpdateJobOnMainThread)}
-    DrawJob:PPasMPJob;
-{$elseif defined(TpvApplicationDrawJobOnMainThread)}
     UpdateJob:PPasMPJob;
-{$else}
-    Jobs:array[0..1] of PPasMPJob;
-{$ifend}
     DoSkipNextFrameForRendering,ReadyForSwapChainLatency:boolean;
 begin
 
@@ -11284,7 +11436,13 @@ begin
    fUpdateInFlightFrameIndex:=fCurrentInFlightFrameIndex;
 
    Check(fUpdateDeltaTime);
-   UpdateJobFunction(nil,0);
+
+   if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+    fUpdateThread.Invoke;
+    fUpdateThread.WaitForDone;
+   end else begin
+    UpdateJobFunction(nil,0);
+   end;
 
    inc(fFrameCounter);
 
@@ -11294,6 +11452,8 @@ begin
    if fSwapChainImageCounterIndex>=fCountSwapChainImages then begin
     dec(fSwapChainImageCounterIndex,fCountSwapChainImages);
    end;
+
+   VulkanWaitIdle;
 
   end else if ReadyForSwapChainLatency then begin
 
@@ -11332,9 +11492,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
-
-        fPasMPInstance.Run(UpdateJob);
+        if assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+        end else begin
+         UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+         fPasMPInstance.Run(UpdateJob);
+        end;
 
        end else begin
 
@@ -11348,7 +11511,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJobFunction(nil,0);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJobFunction(nil,0);
+        end;
 
        end;
 
@@ -11368,9 +11536,23 @@ begin
        finally
         if assigned(fVulkanDevice) then begin
          try
-          PresentVulkanBackBuffer;
+          if fUpdateUsesGPU then begin
+           if assigned(fUpdateThread) then begin
+            if fUpdateThread.fInvoked then begin
+             fUpdateThread.WaitForDone;
+            end;
+           end else begin
+            while fInUpdateJobFunction do begin
+             TPasMP.Yield;
+            end;
+           end;
+          end;
          finally
-          PostPresent(fSwapChainImageIndex);
+          try
+           PresentVulkanBackBuffer;
+          finally
+           PostPresent(fSwapChainImageIndex);
+          end;
          end;
         end;
        end;
@@ -11379,8 +11561,14 @@ begin
       end;
 
      finally
-      if assigned(UpdateJob) then begin
-       fPasMPInstance.WaitRelease(UpdateJob);
+      if assigned(fUpdateThread) then begin
+       if fUpdateThread.fInvoked then begin
+        fUpdateThread.WaitForDone;
+       end;
+      end else begin
+       if assigned(UpdateJob) then begin
+        fPasMPInstance.WaitRelease(UpdateJob);
+       end;
       end;
      end;
 
@@ -11423,27 +11611,19 @@ begin
 
         BeginFrame(fUpdateDeltaTime);
 
- {$if defined(TpvApplicationUpdateJobOnMainThread)}
-        DrawJob:=fPasMPInstance.Acquire(DrawJobFunction);
-        try
-         fPasMPInstance.Run(DrawJob);
-         UpdateJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
-        finally
-         fPasMPInstance.WaitRelease(DrawJob);
-        end;
- {$elseif defined(TpvApplicationDrawJobOnMainThread)}
-        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
-        try
-         fPasMPInstance.Run(UpdateJob);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
          DrawJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
-        finally
-         fPasMPInstance.WaitRelease(UpdateJob);
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+         try
+          fPasMPInstance.Run(UpdateJob);
+          DrawJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
+         finally
+          fPasMPInstance.WaitRelease(UpdateJob);
+         end;
         end;
- {$else}
-        Jobs[0]:=fPasMPInstance.Acquire(UpdateJobFunction);
-        Jobs[1]:=fPasMPInstance.Acquire(DrawJobFunction);
-        fPasMPInstance.Invoke(Jobs);
- {$ifend}
 
         FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
 
@@ -11459,7 +11639,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJobFunction(nil,0);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJobFunction(nil,0);
+        end;
 
         BeginFrame(fUpdateDeltaTime);
 
@@ -13024,8 +13209,21 @@ begin
 {$ifend}
            try
 
-            while not fTerminated do begin
-             ProcessMessages;
+            fUpdateThread:=TpvApplicationUpdateThread.Create(self);
+            try
+
+             while not fTerminated do begin
+              ProcessMessages;
+             end;
+
+            finally
+             if assigned(fUpdateThread) then begin
+              try
+               fUpdateThread.Shutdown;
+              finally
+               FreeAndNil(fUpdateThread);
+              end;
+             end;
             end;
 
            finally

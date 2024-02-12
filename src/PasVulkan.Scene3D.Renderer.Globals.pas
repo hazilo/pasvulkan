@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -180,6 +180,38 @@ type TpvScene3DRendererAntialiasingMode=
       );
 
      PpvScene3DRendererGlobalIlluminatonMode=^TpvScene3DRendererGlobalIlluminationMode;
+
+     TpvScene3DRendererToneMappingMode=
+      (
+       Auto=0,
+       Linear=1,
+       Reinhard=2,
+       Hejl=3,
+       Hejl2015=4,
+       ACESFilm=5,
+       ACESFilm2=6,
+       Uncharted2=7,
+       Uchimura=8,
+       Lottes=9,
+       AMD=10,
+       AGXRec709=11,
+       AGXRec709Golden=12,
+       AGXRec709Punchy=13,
+       AGXRec2020=14,
+       AGXRec2020Golden=15,
+       AGXRec2020Punchy=16
+      );
+     PpvScene3DRendererToneMappingMode=^TpvScene3DRendererToneMappingMode;
+
+     TpvScene3DRendererCullRenderPass=
+      (
+       None=0,
+       FinalView=1,
+       CascadedShadowMap=2,
+       First=1,
+       Last=2
+      );
+     PpvScene3DRendererCullRenderPass=^TpvScene3DRendererCullRenderPass;
 
 var pvScene3DShaderVirtualFileSystem:TpvVirtualFileSystem=nil;
 

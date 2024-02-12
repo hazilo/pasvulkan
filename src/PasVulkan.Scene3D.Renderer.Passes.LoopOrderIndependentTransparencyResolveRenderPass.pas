@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -238,6 +238,9 @@ begin
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,2*fInstance.Renderer.CountInFlightFrames);
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,2*fInstance.Renderer.CountInFlightFrames);
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1*fInstance.Renderer.CountInFlightFrames);
+ if fInstance.Renderer.SurfaceSampleCountFlagBits<>TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
+  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1*fInstance.Renderer.CountInFlightFrames);
+ end;
  fVulkanDescriptorPool.Initialize;
 
  fVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
@@ -264,6 +267,11 @@ begin
  if fInstance.Renderer.SurfaceSampleCountFlagBits<>TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
   fVulkanDescriptorSetLayout.AddBinding(4,
                                         VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+                                        1,
+                                        TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                        []);
+  fVulkanDescriptorSetLayout.AddBinding(5,
+                                        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                         1,
                                         TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                         []);
@@ -310,7 +318,7 @@ begin
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
                                                                  [],
                                                                  [],
-                                                                 [fInstance.LoopOrderIndependentTransparencyABufferBuffers[InFlightFrameIndex].VulkanBufferView.Handle],
+                                                                 [fInstance.LoopOrderIndependentTransparencyABufferBuffer.VulkanBufferView.Handle],
                                                                  false
                                                                 );
   if fInstance.Renderer.SurfaceSampleCountFlagBits<>TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
@@ -320,7 +328,16 @@ begin
                                                                   TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
                                                                   [],
                                                                   [],
-                                                                  [fInstance.LoopOrderIndependentTransparencySBufferBuffers[InFlightFrameIndex].VulkanBufferView.Handle],
+                                                                  [fInstance.LoopOrderIndependentTransparencySBufferBuffer.VulkanBufferView.Handle],
+                                                                  false
+                                                                 );
+   fVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(5,
+                                                                  0,
+                                                                  1,
+                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                                                  [],
+                                                                  [fInstance.LuminanceVulkanBuffers[(InFlightFrameIndex+(FrameGraph.CountInFlightFrames-1)) mod FrameGraph.CountInFlightFrames].DescriptorBufferInfo],
+                                                                  [],
                                                                   false
                                                                  );
   end;

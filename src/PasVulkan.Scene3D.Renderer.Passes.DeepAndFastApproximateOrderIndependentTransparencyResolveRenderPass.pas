@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -304,7 +304,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyFragmentCounterFragmentDepthsSampleMaskImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyFragmentCounterFragmentDepthsSampleMaskImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -313,7 +313,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAccumulationImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAccumulationImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -322,7 +322,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAverageImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAverageImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -331,7 +331,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyBucketImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyBucketImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false

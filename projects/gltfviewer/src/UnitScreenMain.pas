@@ -38,8 +38,9 @@ uses SysUtils,
      PasVulkan.TimerQuery,
      PasVulkan.Scene3D,
      PasVulkan.Scene3D.Renderer,
+     PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer.Instance,
-     PasVulkan.Scene3D.Renderer.SkyCubeMap;
+     PasVulkan.Scene3D.Renderer.EnvironmentCubeMap;
 
 type { TScreenMain }
      TScreenMain=class(TpvApplicationScreen)
@@ -150,8 +151,11 @@ uses PasGLTF,
 constructor TScreenMain.Create;
 var Center,Bounds:TpvVector3;
     CameraRotationX,CameraRotationY:TpvScalar;
+    Stream:TStream;
 begin
  inherited Create;
+
+///writeln(SizeOf(TpvScene3D.TMaterial.TShaderData));
 
  fCountInFlightFrames:=pvApplication.CountInFlightFrames;
 
@@ -178,13 +182,50 @@ begin
 
  fUpdateLock:=TPasMPCriticalSection.Create;
 
- fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice),fCountInFlightFrames);
+ fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice) and false,fCountInFlightFrames);
+
+ fScene3D.EnvironmentMode:=TpvScene3DEnvironmentMode.Texture;
+
+ if pvApplication.Assets.ExistAsset('envmap.hdr') then begin
+  fScene3D.EnvironmentTextureImage:=TpvScene3D.TImage.Create(pvApplication.ResourceManager,fScene3D);
+  Stream:=pvApplication.Assets.GetAssetStream('envmap.hdr');
+  if assigned(Stream) then begin
+   try
+    fScene3D.EnvironmentTextureImage.AssignFromStream('$envmap$',Stream);
+   finally
+    FreeAndNil(Stream);
+   end;
+  end else begin
+   fScene3D.EnvironmentTextureImage.AssignFromWhiteTexture;
+  end;
+  fScene3D.EnvironmentTextureImage.IncRef;
+  fScene3D.EnvironmentTextureImage.Upload;
+
+  fScene3D.SkyBoxMode:=TpvScene3DEnvironmentMode.Texture;
+
+  if pvApplication.Assets.ExistAsset('skybox.hdr') then begin
+   fScene3D.SkyBoxTextureImage:=TpvScene3D.TImage.Create(pvApplication.ResourceManager,fScene3D);
+   Stream:=pvApplication.Assets.GetAssetStream('skybox.hdr');
+   if assigned(Stream) then begin
+    try
+     fScene3D.SkyBoxTextureImage.AssignFromStream('$skybox$',Stream);
+    finally
+     FreeAndNil(Stream);
+    end;
+   end else begin
+    fScene3D.SkyBoxTextureImage.AssignFromWhiteTexture;
+   end;
+   fScene3D.SkyBoxTextureImage.IncRef;
+   fScene3D.SkyBoxTextureImage.Upload;
+  end;
+
+ end;
 
  fPrimaryDirectionalLight:=TpvScene3D.TLight.Create(fScene3D);
  fPrimaryDirectionalLight.Type_:=TpvScene3D.TLightData.TType.PrimaryDirectional;
  fPrimaryDirectionalLight.Color:=TpvVector3.InlineableCreate(1.7,1.15,0.70);
  fPrimaryDirectionalLight.Matrix:=TpvMatrix4x4.CreateConstructZ(-fScene3D.PrimaryLightDirection);
- fPrimaryDirectionalLight.Intensity:=1.0;
+ fPrimaryDirectionalLight.Intensity:=1000.0;
  fPrimaryDirectionalLight.Range:=0.0;
  fPrimaryDirectionalLight.CastShadows:=true;
  fPrimaryDirectionalLight.DataPointer^.Visible:=true;
@@ -202,6 +243,7 @@ begin
  fRenderer.MaxShadowMSAA:=UnitApplication.Application.MaxShadowMSAA;
  fRenderer.ShadowMapSize:=UnitApplication.Application.ShadowMapSize;
  fRenderer.GlobalIlluminationCaching:=false;
+ fRenderer.ToneMappingMode:=TpvScene3DRendererToneMappingMode.AGXRec2020Punchy;
  fRenderer.Prepare;
 
  fRenderer.AcquirePersistentResources;
@@ -211,6 +253,8 @@ begin
  fRendererInstance.PixelAmountFactor:=1.0;
 
  fRendererInstance.UseDebugBlit:=false;
+
+ fRendererInstance.LuminanceFactor:=2.0;
 
  fRendererInstance.Prepare;
 
@@ -588,7 +632,7 @@ begin
 
  InFlightFrameState:=@fInFlightFrameStates[InFlightFrameIndex];
 
- fScene3D.BeginFrame(InFlightFrameIndex);
+ fScene3D.BeginFrame(InFlightFrameIndex,aWaitSemaphore,nil);
 
  fRendererInstance.UploadFrame(InFlightFrameIndex);
 
@@ -598,9 +642,9 @@ begin
                              pvApplication.DrawInFlightFrameIndex,
                              pvApplication.DrawFrameCounter,
                              aWaitSemaphore,
-                             aWaitFence);
+                             nil);
 
- fScene3D.EndFrame(InFlightFrameIndex);
+ fScene3D.EndFrame(InFlightFrameIndex,aWaitSemaphore,aWaitFence);
 
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,false);
 
@@ -834,6 +878,7 @@ begin
   end;
 
   fGroup:=TpvScene3D.TGroup(aResource);
+//fGroup.DynamicAABBTreeCulling:=true;
 
   fGroupInstance:=fGroup.CreateInstance;
 

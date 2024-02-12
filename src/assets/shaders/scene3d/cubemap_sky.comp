@@ -12,14 +12,19 @@ layout(push_constant, std140, row_major) uniform PushConstants {
 } pushConstants;
 /* clang-format on */
 
+#ifdef USE_RGB9E5
+layout(set = 0, binding = 0, r32ui) writeonly uniform uimageCube uDestinationTexture;
+#else
 layout(set = 0, binding = 0) writeonly uniform imageCube uDestinationTexture;
+#endif
 
 const float HALF_PI = 1.57079632679;
 const float PI = 3.1415926535897932384626433832795;
 const float TWO_PI = 6.28318530718;
 
-const float Is = 10.0;      // Sun intensity
-const float Im = 2.0;       // Moon intensity
+// Sun 120000 lux, Moon 0.3 lux, but here in 1/2 lux, since fp16 clamps at 65504, so 120000 is too much  
+const float Is = 120000.0 * 0.5; // Sun intensity 
+const float Im = 0.3 * 0.5;      // Moon intensity 
 
 vec3 sunDirection = pushConstants.lightDirection;
 vec3 moonDirection = -sunDirection;
@@ -91,9 +96,10 @@ vec4 atmosphereGet(const in vec3 rayOrigin, const in vec3 rayDirection, out vec3
   const float atmosphereClarity = 8.0;
   const float atmosphereSunDiskSize = 2.0;
   const float atmosphereSunDiskPower = 8.0;
-  const float atmosphereSunDiskBrightness = 10.0;
+  const float atmosphereSunDiskBrightness = 30000.0;
   const float earthRadius = 6371e3; // meters
   const float earthAtmosphereHeight = 100e3; // meters
+  const float dayBrightness = 30000.0;
   const float nightBrightness = 0.015625;        
   const float planetRadius = earthRadius * atmospherePlanetSize; 
   const float planetAtmosphereRadius = planetRadius + (earthAtmosphereHeight * atmosphereHeight);
@@ -110,7 +116,7 @@ vec4 atmosphereGet(const in vec3 rayOrigin, const in vec3 rayDirection, out vec3
   const float sunDiskParameterX = 1.0 / (1.0 + sunDiskParameterY1);  
   const vec4 sunDiskParameters = vec4(sunDiskParameterX, sunDiskParameterX * sunDiskParameterY1, atmosphereSunDiskPower, atmosphereSunDiskBrightness); 
   vec3 totalInscattering = vec3(0.0), maximumExtiniction = vec3(0.0);
-  vec2 passData = vec2(1.0, 1.0);
+  vec2 passData = vec2(dayBrightness, 1.0);
   for(int i = 0; i < 2; i++){
     vec3 lightDirection = (i == 0) ? sunDirection : moonDirection; 
     float a = atmosphereRadius.x * max(rayDirection.y, min(-lightDirection.y, 0.0));
@@ -138,7 +144,7 @@ vec4 atmosphereGet(const in vec3 rayOrigin, const in vec3 rayDirection, out vec3
   return vec4(totalInscattering * atmosphereBrightness, dot(minimumTransmittance, vec3(1.0 / 3.0)));           
 }
 #else
-const float luxScale = 1e-4;
+const float luxScale = 1.0;//1e-4;
 const float planetScale = 1e0;
 const float planetInverseScale = 1.0 / planetScale;
 const float cameraScale = 1e-0 * planetScale;
@@ -155,9 +161,9 @@ const float heightScaleOzone = 8.0 * planetScale;
 const float heightScaleAbsorption = 8.0 * planetScale;
 const float planetToSunDistance = 149597870.61 * planetScale;
 const float sunRadius = 696342.0 * planetScale;
-const float sunIntensity = 100000.0 * luxScale;
+const float sunIntensity = 30000.0 * luxScale; // midday sun, otherwise 120000.0 * luxScale when the sun is at the brightest spot
 const float moonRadius = 1737.0 * planetScale;
-const float moonIntensity = 1000.0 * luxScale;
+const float moonIntensity = 0.3 * luxScale;
 const vec3 scatteringCoefficientRayleigh = vec3(5.8e-3, 1.35e-2, 3.31e-2) * planetInverseScale;
 const vec3 scatteringCoefficientMie = vec3(21e-3, 21e-3, 21e-3) * planetInverseScale;
 const vec3 scatteringCoefficientOzone = vec3(3.486, 8.298, 0.356) * planetInverseScale;
@@ -358,24 +364,11 @@ vec3 space(vec3 rayOrigin, vec3 rayDirection){
   return c.xyz; //pow(c.xyz, vec3(1.0));// * smoothstep(15e+3, 21e+3, length(rayOrigin) - Re);
 }
 
-/* clang-format off */
-vec3 getCubeMapDirection(in vec2 uv,
-                         in int faceIndex){                        
-  vec3 zDir = vec3(ivec3((faceIndex <= 1) ? 1 : 0,
-                         (faceIndex & 2) >> 1,
-                         (faceIndex & 4) >> 2)) *
-             (((faceIndex & 1) == 1) ? -1.0 : 1.0),
-       yDir = (faceIndex == 2)
-                ? vec3(0.0, 0.0, 1.0)
-                : ((faceIndex == 3)
-                     ? vec3(0.0, 0.0, -1.0)
-                     : vec3(0.0, -1.0, 0.0)),
-       xDir = cross(zDir, yDir);
-  return normalize((mix(-1.0, 1.0, uv.x) * xDir) +
-                   (mix(-1.0, 1.0, uv.y) * yDir) +
-                   zDir);
-}
-/* clang-format on */
+#include "cubemap.glsl"
+
+#ifdef USE_RGB9E5
+#include "rgb9e5.glsl"
+#endif
 
 void main() {
   ivec3 uvw = ivec3(gl_GlobalInvocationID.xyz);
@@ -445,7 +438,13 @@ void main() {
       }
     }
 
-    vec4 outputColor = vec4(inscattering, 1.0);
-    imageStore(uDestinationTexture, uvw, outputColor);
+    vec4 outputColor = vec4(inscattering * 0.5, 1.0); // scale down to "bi-lux" for the 16-bit floating point format, where a bi-lux is 2 lux 
+
+#ifdef USE_RGB9E5
+    imageStore(uDestinationTexture, uvw, uvec4(encodeRGB9E5(outputColor.xyz)));
+#else    
+    imageStore(uDestinationTexture, uvw, clamp(outputColor, vec4(-65504.0), vec4(65504.0))); // Clamp to the range of 16-bit floating point numbers.
+#endif
+
   }
 }

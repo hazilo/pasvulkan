@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -647,6 +647,7 @@ type PpvAudioInt32=^TpvInt32;
        AudioEngine:TpvAudio;
        Buffer:TpvPointer;
        Event:TEvent;
+       ReadEvent:TEvent;
        Sleeping:TpvInt32;
        constructor Create(AAudioEngine:TpvAudio);
        destructor Destroy; override;
@@ -2708,8 +2709,10 @@ begin
   Pan:=131071;
  end;
  MixVolume:=SARLongint(Volume*AudioEngine.MusicVolume,16);
- VolLeft:=SARLongint((131072-Pan)*MixVolume,17);
- VolRight:=SARLongint(Pan*MixVolume,17);
+ VolLeft:=SARLongint(AudioEngine.PanningLUT[SARLongint(131072-Pan,1)]*MixVolume,15);
+ VolRight:=SARLongint(AudioEngine.PanningLUT[SARLongint(Pan,1)]*MixVolume,15);
+{VolLeft:=SARLongint((131072-Pan)*MixVolume,17);
+ VolRight:=SARLongint(Pan*MixVolume,17);}
  if VolLeft<0 then begin
   VolLeft:=0;
  end else if VolLeft>=4096 then begin
@@ -2963,8 +2966,10 @@ begin
    Pan:=131071;
   end;
   MixVolume:=SARLongint(Volume*MixVolume,16);
-  VolLeft:=SARLongint((131072-Pan)*MixVolume,17);
-  VolRight:=SARLongint(Pan*MixVolume,17);
+  VolLeft:=SARLongint(AudioEngine.PanningLUT[SARLongint(131072-Pan,1)]*MixVolume,15);
+  VolRight:=SARLongint(AudioEngine.PanningLUT[SARLongint(Pan,1)]*MixVolume,15);
+{ VolLeft:=SARLongint((131072-Pan)*MixVolume,17);
+  VolRight:=SARLongint(Pan*MixVolume,17);}
   if VolLeft<0 then begin
    VolLeft:=0;
   end else if VolLeft>=4096 then begin
@@ -4320,6 +4325,7 @@ begin
  FillChar(Buffer^,AudioEngine.OutputBufferSize,AnsiChar(#0));
  FreeOnTerminate:=false;
  Event:=TEvent.Create(nil,false,false,'');
+ ReadEvent:=TEvent.Create(nil,false,false,'');
 //Priority:=tpHighest;
  inherited Create(false);
 end;
@@ -4327,9 +4333,11 @@ end;
 destructor TpvAudioThread.Destroy;
 begin
  Terminate;
+ ReadEvent.SetEvent;
  Event.SetEvent;
  WaitFor;
- Event.Destroy;
+ FreeAndNil(ReadEvent);
+ FreeAndNil(Event);
  FreeMem(Buffer);
  inherited Destroy;
 end;
@@ -4367,7 +4375,7 @@ begin
       AudioEngine.RingBuffer.Write(AudioEngine.OutputBuffer,AudioEngine.OutputBufferSize);
       break;
      end else begin
-      Sleep(1);
+      ReadEvent.WaitFor(1);
      end;
     until Terminated or not (AudioEngine.IsReady and AudioEngine.IsActive);
    end else begin
@@ -4385,6 +4393,11 @@ begin
 end;
 
 constructor TpvAudio.Create(ASampleRate,AChannels,ABits,ABufferSamples:TpvInt32);
+const SqrtThree=1.7320508075688772;
+      InvSqrtThree=0.5773502691896258;
+      Minus3dB=0.7071067811865475244008443621048490392848359376884740365883398689;
+      OneOverMinus3dB=1.0/Minus3dB;
+      OneOverSqrMinus3dB=1.0/sqr(Minus3dB);
 var i,TableLengthSize:TpvInt32;
     X,TableLength:{$ifdef cpuarm}TpvFloat{$else}TpvDouble{$endif};
 begin

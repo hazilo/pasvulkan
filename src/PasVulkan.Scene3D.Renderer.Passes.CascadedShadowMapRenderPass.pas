@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -72,6 +72,7 @@ uses SysUtils,
      PasVulkan.Application,
      PasVulkan.FrameGraph,
      PasVulkan.Scene3D,
+     PasVulkan.Scene3D.Planet,
      PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer,
      PasVulkan.Scene3D.Renderer.Instance,
@@ -102,6 +103,7 @@ type { TpvScene3DRendererPassesCascadedShadowMapRenderPass }
        fVulkanPipelineShaderStageMeshMaskedFragment:TpvVulkanPipelineShaderStage;
        fVulkanGraphicsPipelines:array[TpvScene3D.TMaterial.TAlphaMode] of TpvScene3D.TGraphicsPipelines;
        fVulkanPipelineLayout:TpvVulkanPipelineLayout;
+       fPlanetShadowMapPass:TpvScene3DPlanet.TRenderPass;
       public
        constructor Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance); reintroduce;
        destructor Destroy; override;
@@ -142,31 +144,58 @@ inherited Create(aFrameGraph);
  case fInstance.Renderer.ShadowMode of
   TpvScene3DRendererShadowMode.MSM:begin
    if fInstance.Renderer.ShadowMapSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
-    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_depth',
+    if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+     fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_depth',
                                         'resource_cascadedshadowmap_single_depth',
-                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                        TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
-                                                                     TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                          TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                        );
+    end else begin
+     fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_depth',
+                                         'resource_cascadedshadowmap_single_depth',
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
+                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                        );
+    end;
    end else begin
-    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_msaa_depth',
+    if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+     fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_msaa_depth',
                                         'resource_cascadedshadowmap_msaa_depth',
+                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                        [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                         TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                       );
+    end else begin
+     fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_msaa_depth',
+                                         'resource_cascadedshadowmap_msaa_depth',
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
+                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
+                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                        );
+    end;
+   end;
+  end
+  else begin
+   if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+    fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_data',
+                                       'resource_cascadedshadowmap_data_final',
+                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                        TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                      );
+   end else begin
+    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_data',
+                                        'resource_cascadedshadowmap_data_final',
                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                        );
    end;
-  end
-  else begin
-   fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_data',
-                                       'resource_cascadedshadowmap_data_final',
-                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                       TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
-                                                                    TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
-                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
-                                      );
   end;
  end;
 
@@ -216,11 +245,29 @@ begin
 
  fVulkanPipelineShaderStageMeshMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshMaskedFragmentShaderModule,'main');
 
+ if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+  fPlanetShadowMapPass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                            fInstance,
+                                                            fInstance.Renderer.Scene3D,
+                                                            TpvScene3DPlanet.TRenderPass.TMode.ShadowMapDisocclusion,
+                                                            nil,
+                                                            nil);
+ end else begin
+  fPlanetShadowMapPass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                            fInstance,
+                                                            fInstance.Renderer.Scene3D,
+                                                            TpvScene3DPlanet.TRenderPass.TMode.ShadowMap,
+                                                            nil,
+                                                            nil);
+ end;
+
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleasePersistentResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
+
+ FreeAndNil(fPlanetShadowMapPass);
 
  FreeAndNil(fVulkanPipelineShaderStageMeshVertex);
 
@@ -412,6 +459,11 @@ begin
 
  end;
 
+ fPlanetShadowMapPass.AllocateResources(fVulkanRenderPass,
+                                        fInstance.CascadedShadowMapWidth,
+                                        fInstance.CascadedShadowMapHeight,
+                                        fInstance.Renderer.ShadowMapSampleCountFlagBits);
+
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleaseVolatileResources;
@@ -420,6 +472,7 @@ var Index:TpvSizeInt;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
 begin
+ fPlanetShadowMapPass.ReleaseResources;
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
    for FaceCullingMode:=Low(TpvScene3D.TFaceCullingMode) to High(TpvScene3D.TFaceCullingMode) do begin
@@ -474,6 +527,13 @@ begin
 
   if fInstance.Renderer.ShadowMode<>TpvScene3DRendererShadowMode.None then begin
 
+   fPlanetShadowMapPass.Draw(aInFlightFrameIndex,
+                             aFrameIndex,
+                             InFlightFrameState^.CascadedShadowMapRenderPassIndex,
+                             InFlightFrameState^.CascadedShadowMapViewIndex,
+                             InFlightFrameState^.CountCascadedShadowMapViews,
+                             aCommandBuffer);
+
    fInstance.Renderer.Scene3D.Draw(fInstance,
                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],
                                    -1,
@@ -485,7 +545,9 @@ begin
                                    aCommandBuffer,
                                    fVulkanPipelineLayout,
                                    OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Opaque]);
+                                   [TpvScene3D.TMaterial.TAlphaMode.Opaque],
+                                   nil,
+                                   fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);
 
    fInstance.Renderer.Scene3D.Draw(fInstance,
                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
@@ -498,7 +560,9 @@ begin
                                    aCommandBuffer,
                                    fVulkanPipelineLayout,
                                    OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Mask]);
+                                   [TpvScene3D.TMaterial.TAlphaMode.Mask],
+                                   nil,
+                                   fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);
 
  { fInstance.Renderer.Scene3D.Draw(fInstance,
                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
@@ -511,7 +575,9 @@ begin
                                    aCommandBuffer,
                                    fVulkanPipelineLayout,
                                    OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Blend]);}
+                                   [TpvScene3D.TMaterial.TAlphaMode.Blend],
+                                   nil,
+                                   fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);}
 
   end;
 

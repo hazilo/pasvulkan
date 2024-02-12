@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -396,6 +396,8 @@ type EpvVulkanException=class(Exception);
        fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
        fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
        fHostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT;
+       fFragmentShaderBarycentricFeaturesKHR:TVkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR;
+       fFragmentShaderBarycentricPropertiesKHR:TVkPhysicalDeviceFragmentShaderBarycentricPropertiesKHR;
        fRayTracingPipelineFeaturesKHR:TVkPhysicalDeviceRayTracingPipelineFeaturesKHR;
        fRayTracingPipelinePropertiesKHR:TVkPhysicalDeviceRayTracingPipelinePropertiesKHR;
        fRayQueryFeaturesKHR:TVkPhysicalDeviceRayQueryFeaturesKHR;
@@ -419,6 +421,8 @@ type EpvVulkanException=class(Exception);
        fFragmentShaderSampleInterlock:boolean;
        fFragmentShaderPixelInterlock:boolean;
        fFragmentShaderShadingRateInterlock:boolean;
+       fRenderDocDetected:boolean;
+       fNVIDIANsightGraphicsDetected:boolean;
       public
        constructor Create(const aInstance:TpvVulkanInstance;const aPhysicalDevice:TVkPhysicalDevice);
        destructor Destroy; override;
@@ -447,7 +451,8 @@ type EpvVulkanException=class(Exception);
        function GetMemoryType(const aTypeBits:TpvUInt32;const aProperties:TVkFlags):TpvUInt32;
        function GetBestSupportedDepthFormat(const aWithStencil:boolean):TVkFormat;
        function GetQueueNodeIndex(const aSurface:TpvVulkanSurface;const aQueueFlagBits:TVkQueueFlagBits):TpvInt32;
-       function GetSurfaceFormat(const aSurface:TpvVulkanSurface;const aSRGB:boolean=false):TVkSurfaceFormatKHR;
+       function GetSurfaceFormat(const aSurface:TpvVulkanSurface;const aSRGB:boolean=true;const aHDR:boolean=false):TVkSurfaceFormatKHR;
+       function GetSurfaceHDRSupport(const aSurface:TpvVulkanSurface;const aSRGB:boolean=true):Boolean;
        property Properties:TVkPhysicalDeviceProperties read fProperties;
        property MemoryProperties:TVkPhysicalDeviceMemoryProperties read fMemoryProperties;
        property Features:TVkPhysicalDeviceFeatures read fFeatures;
@@ -468,6 +473,8 @@ type EpvVulkanException=class(Exception);
        property FragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT read fFragmentShaderInterlockFeaturesEXT;
        property BufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR read fBufferDeviceAddressFeaturesKHR;
        property HostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT read fHostQueryResetFeaturesEXT;
+       property FragmentShaderBarycentricFeaturesKHR:TVkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR read fFragmentShaderBarycentricFeaturesKHR;
+       property FragmentShaderBarycentricPropertiesKHR:TVkPhysicalDeviceFragmentShaderBarycentricPropertiesKHR read fFragmentShaderBarycentricPropertiesKHR;
        property RayTracingPipelineFeaturesKHR:TVkPhysicalDeviceRayTracingPipelineFeaturesKHR read fRayTracingPipelineFeaturesKHR;
        property RayTracingPipelinePropertiesKHR:TVkPhysicalDeviceRayTracingPipelinePropertiesKHR read fRayTracingPipelinePropertiesKHR;
        property RayQueryFeaturesKHR:TVkPhysicalDeviceRayQueryFeaturesKHR read fRayQueryFeaturesKHR;
@@ -494,6 +501,8 @@ type EpvVulkanException=class(Exception);
        property FragmentShaderSampleInterlock:boolean read fFragmentShaderSampleInterlock;
        property FragmentShaderPixelInterlock:boolean read fFragmentShaderPixelInterlock;
        property FragmentShaderShadingRateInterlock:boolean read fFragmentShaderShadingRateInterlock;
+       property RenderDocDetected:boolean read fRenderDocDetected;
+       property NVIDIANsightGraphicsDetected:boolean read fNVIDIANsightGraphicsDetected;
      end;
 
      PpvVulkanSurfacePlatform=^TpvVulkanSurfacePlatform;
@@ -676,6 +685,7 @@ type EpvVulkanException=class(Exception);
        fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
        fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
        fHostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT;
+       fFragmentShaderBarycentricFeaturesKHR:TVkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR;
        fRayTracingPipelineFeaturesKHR:TVkPhysicalDeviceRayTracingPipelineFeaturesKHR;
        fRayQueryFeaturesKHR:TVkPhysicalDeviceRayQueryFeaturesKHR;
        fRayTracingMaintenance1FeaturesKHR:TVkPhysicalDeviceRayTracingMaintenance1FeaturesKHR;
@@ -757,6 +767,7 @@ type EpvVulkanException=class(Exception);
        property FragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT read fFragmentShaderInterlockFeaturesEXT write fFragmentShaderInterlockFeaturesEXT;
        property BufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR read fBufferDeviceAddressFeaturesKHR write fBufferDeviceAddressFeaturesKHR;
        property HostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT read fHostQueryResetFeaturesEXT write fHostQueryResetFeaturesEXT;
+       property FragmentShaderBarycentricFeaturesKHR:TVkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR read fFragmentShaderBarycentricFeaturesKHR;
        property RayTracingPipelineFeaturesKHR:TVkPhysicalDeviceRayTracingPipelineFeaturesKHR read fRayTracingPipelineFeaturesKHR write fRayTracingPipelineFeaturesKHR;
        property RayQueryFeaturesKHR:TVkPhysicalDeviceRayQueryFeaturesKHR read fRayQueryFeaturesKHR write fRayQueryFeaturesKHR;
        property RayTracingMaintenance1FeaturesKHR:TVkPhysicalDeviceRayTracingMaintenance1FeaturesKHR read fRayTracingMaintenance1FeaturesKHR write fRayTracingMaintenance1FeaturesKHR;
@@ -1316,6 +1327,7 @@ type EpvVulkanException=class(Exception);
                                         const aWaitSemaphore:TpvVulkanSemaphore=nil;
                                         const aSignalSemaphore:TpvVulkanSemaphore=nil); overload; static;
        procedure Flush(const aMappedMemory:Pointer;const aDataOffset,aDataSize:TVkDeviceSize;const aForceFlush:boolean=false);
+       procedure Invalidate(const aMappedMemory:Pointer;const aDataOffset,aDataSize:TVkDeviceSize;const aForceInvalidate:boolean=false);
        procedure UploadData(const aTransferQueue:TpvVulkanQueue;
                             const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                             const aTransferFence:TpvVulkanFence;
@@ -1898,7 +1910,9 @@ type EpvVulkanException=class(Exception);
                           const aBaseMipLevel:TpvUInt32=0;
                           const aCountMipMapLevels:TpvUInt32=1;
                           const aBaseArrayLayer:TpvUInt32=1;
-                          const aCountArrayLayers:TpvUInt32=0); reintroduce; overload;
+                          const aCountArrayLayers:TpvUInt32=0;
+                          const aHasUsageFlags:Boolean=false;
+                          const aUsageFlags:TVkImageUsageFlags=0); reintroduce; overload;
        destructor Destroy; override;
       published
        property Device:TpvVulkanDevice read fDevice;
@@ -2063,7 +2077,8 @@ type EpvVulkanException=class(Exception);
                           const aPresentMode:TVkPresentModeKHR=VK_PRESENT_MODE_MAILBOX_KHR;
                           const aClipped:boolean=true;
                           const aDesiredTransform:TVkSurfaceTransformFlagsKHR=TVkSurfaceTransformFlagsKHR($ffffffff);
-                          const aSRGB:boolean=false;
+                          const aSRGB:boolean=true;
+                          const aHDR:boolean=false;
                           const aFullScreen:boolean=false;
                           const aExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode=TpvVulkanExclusiveFullScreenMode.Default;
                           const aWindow:Pointer=nil); reintroduce; overload;
@@ -3418,7 +3433,8 @@ type EpvVulkanException=class(Exception);
                                  const aStream:TStream;
                                  const aMipMaps:boolean;
                                  const aSRGB:boolean;
-                                 const aAdditionalSRGB:boolean=false);
+                                 const aAdditionalSRGB:boolean=false;
+                                 const aDestinationFormat:TVkFormat=VK_FORMAT_R32G32B32A32_SFLOAT);
        constructor CreateFromTGA(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3561,7 +3577,7 @@ type EpvVulkanException=class(Exception);
        procedure LoadFromKTX(const aStream:TStream;const aAdditionalSRGB:boolean=false);
        procedure LoadFromKTX2(const aStream:TStream;const aAdditionalSRGB:boolean=false);
        procedure LoadFromDDS(const aStream:TStream;const aAdditionalSRGB:boolean=false);
-       procedure LoadFromHDR(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false);
+       procedure LoadFromHDR(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false;const aDestinationFormat:TVkFormat=VK_FORMAT_R32G32B32A32_SFLOAT);
        procedure LoadFromTGA(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false);
        procedure LoadFromQOI(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false);
        procedure LoadFromPNG(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false);
@@ -3641,6 +3657,9 @@ const VulkanImageViewTypeToImageTiling:array[TVkImageViewType] of TVkImageTiling
       BooleanToVkBool32:array[boolean] of TVkBool32=(VK_FALSE,VK_TRUE);
 
 procedure VulkanCheckResult(const ResultCode:TVkResult);
+
+function VulkanIsCoherent(const aFlags:TVkMemoryPropertyFlags):Boolean;
+function VulkanIsNonCoherent(const aFlags:TVkMemoryPropertyFlags):Boolean;
 
 function VulkanGetFormatFromOpenGLFormat(const aFormat,aType:TpvUInt32):TVkFormat;
 function VulkanGetFormatFromOpenGLType(const aType,aNumComponents:TpvUInt32;const aNormalized:boolean):TVkFormat;
@@ -7255,6 +7274,16 @@ begin
  end;
 end;
 
+function VulkanIsCoherent(const aFlags:TVkMemoryPropertyFlags):Boolean;
+begin
+ result:=(aFlags and (TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)))=(TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
+end;
+
+function VulkanIsNonCoherent(const aFlags:TVkMemoryPropertyFlags):Boolean;
+begin
+ result:=(aFlags and (TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)))=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+end;
+
 function VulkanAccessFlagsToPipelineStages(const aPhysicalDevice:TpvVulkanPhysicalDevice;const aAccessFlags:TVkAccessFlags;const aDefaultPipelineStageFlags:TVkPipelineStageFlags=TVkPipelineStageFlags(0)):TVkPipelineStageFlags;
 begin
  result:=TVkPipelineStageFlags(0);
@@ -7689,15 +7718,27 @@ begin
  fApplicationInfo.applicationVersion:=aApplicationVersion;
  fApplicationInfo.pEngineName:=PVkChar(fEngineName);
  fApplicationInfo.engineVersion:=aEngineVersion;
+
+ // Assign the provided API version to fApplicationInfo.apiVersion
  fApplicationInfo.apiVersion:=aAPIVersion;
 
  if ApplicationInfo.apiVersion=0 then begin
-  fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
+
+  // If the apiVersion is not specified (0), set default and check for available versions
+
+  fApplicationInfo.apiVersion:=VK_API_VERSION_1_0; // Default to Vulkan API version 1.0
+
+   // Get the highest available instance version
   if assigned(fVulkan.Commands.EnumerateInstanceVersion) and
      (fVulkan.EnumerateInstanceVersion(@fApplicationInfo.apiVersion)<>VK_SUCCESS) then begin
+   // If unsuccessful in getting a higher version, stick to Vulkan API version 1.0
    fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
   end;
+
  end;
+
+ // Ensure the API version is at least Vulkan 1.0, without considering patch version, and
+ // if the API version exceeds Vulkan 1.3, cap the version to Vulkan 1.3 (for now)
  if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_0 then begin
   fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
  end else if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>VK_API_VERSION_1_3 then begin
@@ -8069,6 +8110,10 @@ var Index,SubIndex:TpvInt32;
     ExtensionProperties:TVkExtensionPropertiesArray;
     ExtensionProperty:PpvVulkanAvailableExtension;
     MultiviewSupportEnabled:boolean;
+    GetPhysicalDeviceToolPropertiesEXT:TvkGetPhysicalDeviceToolPropertiesEXT;
+    ToolCount:TVkUInt32;
+    ToolPropertiesArray:array of TVkPhysicalDeviceToolPropertiesEXT;
+    ToolProperties:PVkPhysicalDeviceToolPropertiesEXT;
 begin
  inherited Create;
 
@@ -8275,6 +8320,15 @@ begin
  end;
 
  begin
+  FillChar(fFragmentShaderBarycentricFeaturesKHR,SizeOf(TVkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR),#0);
+  fFragmentShaderBarycentricFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR;
+  if AvailableExtensionNames.IndexOf(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)>0 then begin
+   fFragmentShaderBarycentricFeaturesKHR.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fFragmentShaderBarycentricFeaturesKHR;
+  end;
+ end;
+
+ begin
   FillChar(fRayTracingPipelineFeaturesKHR,SizeOf(TVkPhysicalDeviceRayTracingPipelineFeaturesKHR),#0);
   fRayTracingPipelineFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
   if AvailableExtensionNames.IndexOf(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)>0 then begin
@@ -8429,6 +8483,13 @@ begin
   fProperties2KHR.pNext:=@fRayTracingPipelinePropertiesKHR;
  end;
 
+ FillChar(fFragmentShaderBarycentricPropertiesKHR,SizeOf(TVkPhysicalDeviceFragmentShaderBarycentricPropertiesKHR),#0);
+ fFragmentShaderBarycentricPropertiesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_PROPERTIES_KHR;
+ if fAvailableExtensionNames.IndexOf(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)>=0 then begin
+  fFragmentShaderBarycentricPropertiesKHR.pNext:=fProperties2KHR.pNext;
+  fProperties2KHR.pNext:=@fFragmentShaderBarycentricPropertiesKHR;
+ end;
+
  if ((fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0) and
     assigned(fInstance.Commands.Commands.GetPhysicalDeviceProperties2KHR) then begin
   fInstance.Commands.GetPhysicalDeviceProperties2KHR(Handle,@fProperties2KHR);
@@ -8454,6 +8515,61 @@ begin
  fFragmentShaderSampleInterlock:=fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock<>VK_FALSE;
  fFragmentShaderPixelInterlock:=fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock<>VK_FALSE;
  fFragmentShaderShadingRateInterlock:=fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock<>VK_FALSE;
+
+ fRenderDocDetected:=false;
+
+ fNVIDIANsightGraphicsDetected:=false;
+
+ if fAvailableExtensionNames.IndexOf(VK_EXT_TOOLING_INFO_EXTENSION_NAME)>=0 then begin
+
+  if assigned(fInstance.Commands.Commands.GetPhysicalDeviceToolProperties) then begin
+   GetPhysicalDeviceToolPropertiesEXT:=fInstance.Commands.Commands.GetPhysicalDeviceToolProperties;
+  end else begin
+   GetPhysicalDeviceToolPropertiesEXT:=fInstance.Commands.Commands.GetPhysicalDeviceToolPropertiesEXT;
+  end;
+
+  if assigned(GetPhysicalDeviceToolPropertiesEXT) then begin
+
+   ToolPropertiesArray:=nil;
+   try
+
+    ToolCount:=0;
+
+    if GetPhysicalDeviceToolPropertiesEXT(fPhysicalDeviceHandle,@ToolCount,nil)=VK_SUCCESS then begin
+
+     if ToolCount>0 then begin
+
+      SetLength(ToolPropertiesArray,Count);
+
+      FillChar(ToolPropertiesArray[0],SizeOf(TVkPhysicalDeviceToolPropertiesEXT)*ToolCount,#0);
+
+      if GetPhysicalDeviceToolPropertiesEXT(fPhysicalDeviceHandle,@ToolCount,@ToolPropertiesArray[0])=VK_SUCCESS then begin
+
+       for Index:=0 to length(ToolPropertiesArray)-1 do begin
+
+        ToolProperties:=@ToolPropertiesArray[Index];
+
+        if LowerCase(PAnsiChar(@ToolProperties^.name[0]))='renderdoc' then begin
+         fRenderDocDetected:=true;
+        end else if LowerCase(PAnsiChar(@ToolProperties^.name[0]))='nvidia nsight graphics' then begin
+         fNVIDIANsightGraphicsDetected:=true;
+        end;
+
+       end;
+
+      end;
+
+     end;
+
+    end;
+
+   finally
+    ToolPropertiesArray:=nil;
+   end;
+
+  end;
+
+ end;
 
 end;
 
@@ -8762,10 +8878,11 @@ begin
  end;
 end;
 
-function TpvVulkanPhysicalDevice.GetSurfaceFormat(const aSurface:TpvVulkanSurface;const aSRGB:boolean=false):TVkSurfaceFormatKHR;
-var FormatCount,Index,BestIndex:TpvUInt32;
+function TpvVulkanPhysicalDevice.GetSurfaceFormat(const aSurface:TpvVulkanSurface;const aSRGB:boolean;const aHDR:boolean):TVkSurfaceFormatKHR;
+var FormatCount,Index,BestIndex,BestScore,Score:TpvUInt32;
     SurfaceFormats:TVkSurfaceFormatKHRArray;
 begin
+
  SurfaceFormats:=nil;
  try
 
@@ -8812,21 +8929,130 @@ begin
 {$ifend}
    result.ColorSpace:=SurfaceFormats[0].colorSpace;
   end else begin
-   BestIndex:=0;
-   for Index:=0 to FormatCount-1 do begin
-    if (aSRGB and (SurfaceFormats[Index].format in [VK_FORMAT_R8G8B8A8_SRGB,VK_FORMAT_B8G8R8A8_SRGB])) or
-       ((not aSRGB) and (SurfaceFormats[Index].format in [VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_B8G8R8A8_UNORM])) then begin
-     BestIndex:=Index;
-     break;
+   result.format:=VK_FORMAT_UNDEFINED;
+   if aHDR then begin
+    BestScore:=0;
+    for Index:=0 to FormatCount-1 do begin
+     case SurfaceFormats[Index].format of
+      VK_FORMAT_R16G16B16A16_SFLOAT{,
+      VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+      VK_FORMAT_B10G11R11_UFLOAT_PACK32}:begin
+       case SurfaceFormats[Index].colorSpace of
+        VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:begin
+         Score:=1;
+        end;
+{       VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT:begin // Ignore for now, so that all color calculations can be done in linear sRGB, even for HDR, when aSRGB is true
+         Score:=4;
+        end;}
+{       VK_COLOR_SPACE_BT2020_LINEAR_EXT:begin
+         if aSRGB then begin
+          // Not sRGB compatible, so skip it
+          Score:=0;
+         end else begin
+          Score:=3;
+         end;
+        end;
+        VK_COLOR_SPACE_HDR10_ST2084_EXT:begin
+         if aSRGB then begin
+          // Not sRGB compatible, so skip it
+          Score:=0;
+         end else begin
+          Score:=2;
+         end;
+        end;
+        VK_COLOR_SPACE_HDR10_HLG_EXT:begin
+         if aSRGB then begin
+          // Not sRGB compatible, so skip it
+          Score:=0;
+         end else begin
+          Score:=1;
+         end;
+        end; }
+        else begin
+         Score:=0;
+        end;
+       end;
+       if BestScore<Score then begin
+        BestScore:=Score;
+        result:=SurfaceFormats[Index];
+       end;
+      end;
+      else begin
+      end;
+     end;
     end;
    end;
-   result:=SurfaceFormats[BestIndex];
+   if result.format=VK_FORMAT_UNDEFINED then begin
+    BestIndex:=0;
+    for Index:=0 to FormatCount-1 do begin
+     if (aSRGB and (SurfaceFormats[Index].format in [VK_FORMAT_R8G8B8A8_SRGB,VK_FORMAT_B8G8R8A8_SRGB])) or
+        ((not aSRGB) and (SurfaceFormats[Index].format in [VK_FORMAT_R8G8B8A8_UNORM,VK_FORMAT_B8G8R8A8_UNORM])) then begin
+      BestIndex:=Index;
+      break;
+     end;
+    end;
+    result:=SurfaceFormats[BestIndex];
+   end;
   end;
 
 {$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
   VulkanDebugLn('GetSurfaceFormat, Format: '+IntToStr(TpvInt64(result.Format)));
   VulkanDebugLn('GetSurfaceFormat, ColorSpace: '+IntToStr(TpvInt64(result.ColorSpace)));
 {$ifend}
+
+ finally
+  SetLength(SurfaceFormats,0);
+ end;
+
+end;
+
+function TpvVulkanPhysicalDevice.GetSurfaceHDRSupport(const aSurface:TpvVulkanSurface;const aSRGB:boolean):Boolean;
+var FormatCount,Index:TpvUInt32;
+    SurfaceFormats:TVkSurfaceFormatKHRArray;
+begin
+
+ result:=false;
+
+ SurfaceFormats:=nil;
+ try
+
+  FormatCount:=0;
+  VulkanCheckResult(vkGetPhysicalDeviceSurfaceFormatsKHR(fPhysicalDeviceHandle,aSurface.fSurfaceHandle,@FormatCount,nil));
+
+  if FormatCount>0 then begin
+   SetLength(SurfaceFormats,FormatCount);
+   VulkanCheckResult(vkGetPhysicalDeviceSurfaceFormatsKHR(fPhysicalDeviceHandle,aSurface.fSurfaceHandle,@FormatCount,@SurfaceFormats[0]));
+  end;
+
+  if FormatCount>0 then begin
+   for Index:=0 to FormatCount-1 do begin
+    case SurfaceFormats[Index].format of
+     VK_FORMAT_R16G16B16A16_SFLOAT{,
+     VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+     VK_FORMAT_B10G11R11_UFLOAT_PACK32}:begin
+      case SurfaceFormats[Index].colorSpace of
+       VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT:begin
+        result:=true;
+        break;
+       end;
+       // VK_COLOR_SPACE_EXTENDED_SRGB_NONLINEAR_EXT  // Ignore for now, so that all color calculations can be done in linear sRGB, even for HDR, when aSRGB is true
+{      VK_COLOR_SPACE_BT2020_LINEAR_EXT,
+       VK_COLOR_SPACE_HDR10_ST2084_EXT,
+       VK_COLOR_SPACE_HDR10_HLG_EXT:begin
+        if not aSRGB then begin
+         result:=true;
+         break;
+        end;
+       end;}
+       else begin
+       end;
+      end;
+     end;
+     else begin
+     end;
+    end;
+   end;
+  end;
 
  finally
   SetLength(SurfaceFormats,0);
@@ -10167,6 +10393,15 @@ begin
     fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock;
     fFragmentShaderInterlockFeaturesEXT.pNext:=DeviceCreateInfo.pNext;
     DeviceCreateInfo.pNext:=@fFragmentShaderInterlockFeaturesEXT;
+   end;
+
+   FillChar(fFragmentShaderBarycentricFeaturesKHR,SizeOf(TVkPhysicalDeviceRayTracingPipelineFeaturesKHR),#0);
+   fFragmentShaderBarycentricFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR;
+   if (fEnabledExtensionNames.IndexOf(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)>0) and
+      (PhysicalDevice.fFragmentShaderBarycentricFeaturesKHR.fragmentShaderBarycentric<>VK_FALSE) then begin
+    fFragmentShaderBarycentricFeaturesKHR.fragmentShaderBarycentric:=PhysicalDevice.fFragmentShaderBarycentricFeaturesKHR.fragmentShaderBarycentric;
+    fFragmentShaderBarycentricFeaturesKHR.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fFragmentShaderBarycentricFeaturesKHR;
    end;
 
    FillChar(fRayTracingPipelineFeaturesKHR,SizeOf(TVkPhysicalDeviceRayTracingPipelineFeaturesKHR),#0);
@@ -12071,7 +12306,7 @@ begin
      end;
 
      // Flush and invalidate mapped memory, if needed
-     if (fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0 then begin
+     if VulkanIsNonCoherent(fMemoryPropertyFlags) then begin
       InvalidateMappedMemory;
       FlushMappedMemory;
      end;
@@ -12586,14 +12821,17 @@ begin
         ((aMemoryRequiredHeapFlags=0) or ((MemoryChunk.fMemoryHeapFlags and aMemoryRequiredHeapFlags)=aMemoryRequiredHeapFlags)) and
         ((aMemoryAvoidHeapFlags=0) or ((MemoryChunk.fMemoryHeapFlags and aMemoryAvoidHeapFlags)=0)) and
         ((MemoryChunk.fSize-MemoryChunk.fUsed)>=aMemoryBlockSize) and
-        ((MemoryChunk.fMemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])=(MemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])) and
+        ((MemoryChunk.fMemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])=(MemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])) and
+        ((not (TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in MemoryChunkFlags)) or
+         (TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in MemoryChunk.fMemoryChunkFlags)) and
+//      ((MemoryChunk.fMemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])=(MemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])) and
         (not (TpvVulkanDeviceMemoryChunkFlag.OwnSingleMemoryChunk in MemoryChunk.fMemoryChunkFlags)) then begin
 
       CurrentCost:=TPasMPMath.PopulationCount(aMemoryPreferredPropertyFlags and not MemoryChunk.fMemoryPropertyFlags)+
                    TPasMPMath.PopulationCount(MemoryChunk.fMemoryPropertyFlags and aMemoryPreferredNotPropertyFlags)+
                    TPasMPMath.PopulationCount(aMemoryPreferredHeapFlags and not MemoryChunk.fMemoryHeapFlags)+
                    TPasMPMath.PopulationCount(MemoryChunk.fMemoryHeapFlags and aMemoryPreferredNotHeapFlags)+
-                   TPasMPMath.PopulationCount((ord(TpvVulkanDeviceMemoryChunkFlag.PersistentMappedIfPossibe in MemoryChunkFlags) and 1) and not (ord(TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in MemoryChunk.fMemoryChunkFlags) and 1));
+                   TPasMPMath.PopulationCount((ord((TpvVulkanDeviceMemoryChunkFlag.PersistentMappedIfPossibe in MemoryChunkFlags) or (TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in MemoryChunkFlags)) and 1) and not (ord(TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in MemoryChunk.fMemoryChunkFlags) and 1));
 
       if CurrentCost<BestCost then begin
 
@@ -12654,7 +12892,7 @@ begin
       if not assigned(result) then begin
        FreeAndNil(MemoryChunk);
       end;
-     end;
+     end;{}
 
      // When a new fresh allocation would have higher costs or it even did failed, then try to
      // allocate a block in the best found memory chunk with the lowest overall cost.
@@ -13010,7 +13248,7 @@ begin
    try
     if assigned(p) then begin
      FillChar(p^,aDataSize,#0);
-     if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
+     if aForceFlush or VulkanIsNonCoherent(fMemoryPropertyFlags) then begin
       DataSize:=aDataSize;
       NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
       if NonCoherentAtomSize>0 then begin
@@ -13018,14 +13256,14 @@ begin
         if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
          inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
          if (aDataOffset+aDataSize)>=Memory.Size then begin
-          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+          DataSize:=Memory.Size-aDataOffset;
          end;
         end;
        end else begin
         if (DataSize mod NonCoherentAtomSize)=0 then begin
          inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
          if (aDataOffset+aDataSize)>=Memory.Size then begin
-          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+          DataSize:=Memory.Size-aDataOffset;
          end;
         end;
        end;
@@ -13076,7 +13314,7 @@ procedure TpvVulkanBuffer.CopyFrom(var aCopyBatchItemArray:TpvVulkanBufferCopyBa
 var Index:TpvSizeInt;
     CopyBatchItem:PpvVulkanBufferCopyBatchItem;
 begin
- Index:=aCopyBatchItemArray.AddNew;
+ Index:=aCopyBatchItemArray.AddNewIndex;
  CopyBatchItem:=@aCopyBatchItemArray.Items[Index];
  CopyBatchItem^.SourceBuffer:=aSourceBuffer.Handle;
  CopyBatchItem^.DestinationBuffer:=Handle;
@@ -13159,7 +13397,7 @@ end;
 procedure TpvVulkanBuffer.Flush(const aMappedMemory:Pointer;const aDataOffset,aDataSize:TVkDeviceSize;const aForceFlush:boolean=false);
 var DataSize,NonCoherentAtomSize:TVkDeviceSize;
 begin
- if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
+ if aForceFlush or VulkanIsNonCoherent(fMemoryPropertyFlags) then begin
   DataSize:=aDataSize;
   NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
   if NonCoherentAtomSize>0 then begin
@@ -13167,19 +13405,46 @@ begin
     if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
      inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
      if (aDataOffset+aDataSize)>=Memory.Size then begin
-      DataSize:=Memory.Size-(aDataOffset+aDataSize);
+      DataSize:=Memory.Size-aDataOffset;
      end;
     end;
    end else begin
     if (DataSize mod NonCoherentAtomSize)=0 then begin
      inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
      if (aDataOffset+aDataSize)>=Memory.Size then begin
-      DataSize:=Memory.Size-(aDataOffset+aDataSize);
+      DataSize:=Memory.Size-aDataOffset;
      end;
     end;
    end;
   end;
   Memory.FlushMappedMemoryRange(aMappedMemory,DataSize);
+ end;
+end;
+
+procedure TpvVulkanBuffer.Invalidate(const aMappedMemory:Pointer;const aDataOffset,aDataSize:TVkDeviceSize;const aForceInvalidate:boolean=false);
+var DataSize,NonCoherentAtomSize:TVkDeviceSize;
+begin
+ if aForceInvalidate or VulkanIsNonCoherent(fMemoryPropertyFlags) then begin
+  DataSize:=aDataSize;
+  NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
+  if NonCoherentAtomSize>0 then begin
+   if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
+    if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
+     inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
+     if (aDataOffset+aDataSize)>=Memory.Size then begin
+      DataSize:=Memory.Size-aDataOffset;
+     end;
+    end;
+   end else begin
+    if (DataSize mod NonCoherentAtomSize)=0 then begin
+     inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
+     if (aDataOffset+aDataSize)>=Memory.Size then begin
+      DataSize:=Memory.Size-aDataOffset;
+     end;
+    end;
+   end;
+  end;
+  Memory.InvalidateMappedMemoryRange(aMappedMemory,DataSize);
  end;
 end;
 
@@ -13335,6 +13600,7 @@ begin
    p:=StagingBuffer.Memory.MapMemory;
    try
     if assigned(p) then begin
+     StagingBuffer.Invalidate(p,aDataOffset,aDataSize);
      Move(p^,aData,aDataSize);
     end else begin
      raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
@@ -13353,10 +13619,8 @@ begin
    p:=Memory.MapMemory(aDataOffset,aDataSize);
    try
     if assigned(p) then begin
+     Invalidate(p,aDataOffset,aDataSize);
      Move(p^,aData,aDataSize);
-{    if (fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0 then begin
-      Memory.FlushMappedMemoryRange(p,aDataSize);
-     end;}
     end else begin
      raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
     end;
@@ -13380,10 +13644,8 @@ begin
   p:=Memory.MapMemory(aDataOffset,aDataSize);
   try
    if assigned(p) then begin
+    Invalidate(p,aDataOffset,aDataSize);
     Move(p^,aData,aDataSize);
-{   if (fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0 then begin
-     Memory.FlushMappedMemoryRange(p,aDataSize);
-    end;}
    end else begin
     raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
    end;
@@ -13549,7 +13811,7 @@ begin
   Source:=aSourceBuffer.Memory.MapMemory;
   if assigned(Source) then begin
    try
-    aSourceBuffer.Flush(Source,aSourceOffset,aSize);
+    aSourceBuffer.Invalidate(Source,aSourceOffset,aSize);
     Move(Pointer(TpvPtrUInt(TpvPtrUInt(Source)+TpvPtrUInt(aSourceOffset)))^,aDestinationData,aSize);
    finally
     aSourceBuffer.Memory.UnmapMemory;
@@ -13620,22 +13882,30 @@ begin
    TpvUInt32(TpvVulkanVendorID.AMD),
    TpvUInt32(TpvVulkanVendorID.NVIDIA),
    TpvUInt32(TpvVulkanVendorID.Intel):begin
+{$ifdef CPU32}
+    fSize:=16 shl 20; // fixed 16MB for 32-bit based targets
+    MemoryRequiredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    MemoryPreferredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    MemoryAvoidPropertyFlags:=0;
+    MemoryPreferredNotPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+{$else}
     // For desktop/notebook GPUs, like NVIDIA, AMD and Intel GPUs
     if fDevice.fMemoryManager.fMaximumMemoryMappableNonDeviceLocalHeapSize>=(32 shl 20) then begin
      fSize:=Min(Max(TpvUInt64(fDevice.fMemoryManager.fMaximumMemoryMappableNonDeviceLocalHeapSize shr 5),TpvUInt64(32 shl 20)),TpvUInt64(256 shl 20));
      MemoryRequiredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-     MemoryPreferredPropertyFlags:=0;
+     MemoryPreferredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
      MemoryAvoidPropertyFlags:=0;
      MemoryPreferredNotPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     end else if fDevice.fMemoryManager.fMaximumMemoryMappableDeviceLocalHeapSize>=(32 shl 20) then begin
      fSize:=Min(Max(TpvUInt64(fDevice.fMemoryManager.fMaximumMemoryMappableDeviceLocalHeapSize shr 5),TpvUInt64(32 shl 20)),TpvUInt64(256 shl 20));
      MemoryRequiredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-     MemoryPreferredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+     MemoryPreferredPropertyFlags:=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
      MemoryAvoidPropertyFlags:=0;
      MemoryPreferredNotPropertyFlags:=0;
     end else begin
      fSize:=16 shl 20; // 16MB
     end;
+{$endif}
    end;
    else begin
     // And for other (mobile) GPUs, like for example Mali, Adreno and PowerVR
@@ -13726,7 +13996,7 @@ begin
 
     if Remain>0 then begin
 
-     if (fBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))<>0 then begin
+     if VulkanIsCoherent(fBuffer.fMemoryPropertyFlags) then begin
 
       Destination:=fBuffer.Memory.MapMemory;
       if assigned(Destination) then begin
@@ -13874,7 +14144,7 @@ begin
 
      Source:=@aSourceData;
 
-     if (fBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))<>0 then begin
+     if VulkanIsCoherent(fBuffer.fMemoryPropertyFlags) then begin
 
       Destination:=fBuffer.Memory.MapMemory;
       if assigned(Destination) then begin
@@ -13994,7 +14264,7 @@ begin
   Source:=aSourceBuffer.Memory.MapMemory;
   if assigned(Source) then begin
    try
-    aSourceBuffer.Flush(Source,aSourceOffset,aSize);
+    aSourceBuffer.Invalidate(Source,aSourceOffset,aSize);
     Move(Pointer(TpvPtrUInt(TpvPtrUInt(Source)+TpvPtrUInt(aSourceOffset)))^,aDestinationData,aSize);
    finally
     aSourceBuffer.Memory.UnmapMemory;
@@ -14018,7 +14288,7 @@ begin
 
      Destination:=@aDestinationData;
 
-     if (fBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))<>0 then begin
+     if VulkanIsCoherent(fBuffer.fMemoryPropertyFlags) then begin
 
       Source:=fBuffer.Memory.MapMemory;
       if assigned(Source) then begin
@@ -14160,7 +14430,7 @@ begin
   aQueue.fLock.Acquire;
   try
 
-   // Check if we can merge some items in the queue,w hen we can merge some items, we can reduce the number of command buffer calls, but
+   // Check if we can merge some items in the queue, when we can merge some items, we can reduce the number of command buffer calls, but
    // for this these some items must be smaller than the size of the staging buffer, so we can merge them into the staging buffer and
    // then copy them to the destination buffer in the same command buffer call. 
    Mergable:=false;
@@ -14297,10 +14567,12 @@ begin
          end;
          aTransferCommandBuffer.EndRecording;
          if OffsetSize>0 then begin
+          fBuffer.Invalidate(BufferMemory,0,OffsetSize,false); // Invalidate the staging buffer memory, if necessary, when VK_MEMORY_PROPERTY_HOST_COHERENT_BIT is not set
           fBuffer.Flush(BufferMemory,0,OffsetSize,false); // Flush the staging buffer memory, if necessary, when VK_MEMORY_PROPERTY_HOST_COHERENT_BIT is not set
-         end; 
+         end;
          aTransferCommandBuffer.Execute(aTransferQueue,0,nil,nil,aTransferFence,true); // Execute the command buffer and wait until it is finished
          if OffsetSize>0 then begin
+          fBuffer.Invalidate(BufferMemory,0,OffsetSize,false); // Invalidate the staging buffer memory, if necessary, when VK_MEMORY_PROPERTY_HOST_COHERENT_BIT is not set
           fBuffer.Flush(BufferMemory,0,OffsetSize,false); // Flush the staging buffer memory, if necessary, when VK_MEMORY_PROPERTY_HOST_COHERENT_BIT is not set
          end; 
 
@@ -16275,16 +16547,19 @@ constructor TpvVulkanImageView.Create(const aDevice:TpvVulkanDevice;
                                       const aImage:TpvVulkanImage;
                                       const aImageViewType:TVkImageViewType;
                                       const aFormat:TvkFormat;
-                                      const aComponentRed:TVkComponentSwizzle=VK_COMPONENT_SWIZZLE_IDENTITY;
-                                      const aComponentGreen:TVkComponentSwizzle=VK_COMPONENT_SWIZZLE_IDENTITY;
-                                      const aComponentBlue:TVkComponentSwizzle=VK_COMPONENT_SWIZZLE_IDENTITY;
-                                      const aComponentAlpha:TVkComponentSwizzle=VK_COMPONENT_SWIZZLE_IDENTITY;
-                                      const aImageAspectFlags:TVkImageAspectFlags=TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT);
-                                      const aBaseMipLevel:TpvUInt32=0;
-                                      const aCountMipMapLevels:TpvUInt32=1;
-                                      const aBaseArrayLayer:TpvUInt32=1;
-                                      const aCountArrayLayers:TpvUInt32=0);
+                                      const aComponentRed:TVkComponentSwizzle;
+                                      const aComponentGreen:TVkComponentSwizzle;
+                                      const aComponentBlue:TVkComponentSwizzle;
+                                      const aComponentAlpha:TVkComponentSwizzle;
+                                      const aImageAspectFlags:TVkImageAspectFlags;
+                                      const aBaseMipLevel:TpvUInt32;
+                                      const aCountMipMapLevels:TpvUInt32;
+                                      const aBaseArrayLayer:TpvUInt32;
+                                      const aCountArrayLayers:TpvUInt32;
+                                      const aHasUsageFlags:Boolean;
+                                      const aUsageFlags:TVkImageUsageFlags);
 var ImageViewCreateInfo:TVkImageViewCreateInfo;
+    ImageViewUsageCreateInfo:TVkImageViewUsageCreateInfo;
 begin
 
  inherited Create;
@@ -16311,6 +16586,14 @@ begin
  ImageViewCreateInfo.subresourceRange.levelCount:=aCountMipMapLevels;
  ImageViewCreateInfo.subresourceRange.baseArrayLayer:=aBaseArrayLayer;
  ImageViewCreateInfo.subresourceRange.layerCount:=aCountArrayLayers;
+
+ if aHasUsageFlags then begin
+  FillChar(ImageViewUsageCreateInfo,SizeOf(TVkImageViewUsageCreateInfo),#0);
+  ImageViewUsageCreateInfo.sType:=VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO;
+  ImageViewUsageCreateInfo.pNext:=nil;
+  ImageViewCreateInfo.pNext:=@ImageViewUsageCreateInfo;
+  ImageViewUsageCreateInfo.usage:=aUsageFlags;
+ end;
 
  VulkanCheckResult(fDevice.fDeviceVulkan.CreateImageView(fDevice.fDeviceHandle,@ImageViewCreateInfo,fDevice.fAllocationCallbacks,@fImageViewHandle));
 
@@ -16827,6 +17110,7 @@ constructor TpvVulkanSwapChain.Create(const aDevice:TpvVulkanDevice;
                                       const aClipped:boolean;
                                       const aDesiredTransform:TVkSurfaceTransformFlagsKHR;
                                       const aSRGB:boolean;
+                                      const aHDR:boolean;
                                       const aFullScreen:boolean;
                                       const aExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode;
                                       const aWindow:Pointer);
@@ -16970,7 +17254,7 @@ begin
   end;
 
   if aImageFormat=VK_FORMAT_UNDEFINED then begin
-   SurfaceFormat:=fDevice.fPhysicalDevice.GetSurfaceFormat(fSurface,aSRGB);
+   SurfaceFormat:=fDevice.fPhysicalDevice.GetSurfaceFormat(fSurface,aSRGB,aHDR);
    SwapChainCreateInfo.imageFormat:=SurfaceFormat.format;
    SwapChainCreateInfo.imageColorSpace:=SurfaceFormat.colorSpace;
   end else begin
@@ -17347,6 +17631,7 @@ var Index,y:TpvSizeInt;
     RequiresDedicatedAllocation,
     PrefersDedicatedAllocation:boolean;
     MemoryBlockFlags:TpvVulkanDeviceMemoryBlockFlags;
+    MappedMemoryRange:TVkMappedMemoryRange;
 begin
 
  if assigned(aSwapChainImage) then begin
@@ -17434,10 +17719,10 @@ begin
                                                                 MemoryRequirements.size,
                                                                 MemoryRequirements.alignment,
                                                                 MemoryRequirements.memoryTypeBits,
-                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT),
                                                                 0,
-                                                                0,
-                                                                0,
+                                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
                                                                 0,
                                                                 0,
                                                                 0,
@@ -17492,10 +17777,10 @@ begin
                                                                    MemoryRequirements.size,
                                                                    MemoryRequirements.alignment,
                                                                    MemoryRequirements.memoryTypeBits,
-                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT),
                                                                    0,
-                                                                   0,
-                                                                   0,
+                                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
                                                                    0,
                                                                    0,
                                                                    0,
@@ -17729,9 +18014,17 @@ begin
 
      if NeedTwoSteps then begin
       fDevice.fDeviceVulkan.GetImageSubresourceLayout(fDevice.fDeviceHandle,SecondImage.fImageHandle,@ImageSubresource,@SubresourceLayout);
+      if (SecondMemoryBlock.MemoryChunk.MemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT))=0 then begin
+       MappedMemoryRange:=TVkMappedMemoryRange.Create(SecondMemoryBlock.MemoryChunk.Handle,0,VK_WHOLE_SIZE);
+       fDevice.Commands.InvalidateMappedMemoryRanges(fDevice.Handle,1,@MappedMemoryRange);
+      end;
       p:=SecondMemoryBlock.MapMemory(0,SecondMemoryBlock.fSize);
      end else begin
       fDevice.fDeviceVulkan.GetImageSubresourceLayout(fDevice.fDeviceHandle,FirstImage.fImageHandle,@ImageSubresource,@SubresourceLayout);
+      if (FirstMemoryBlock.MemoryChunk.MemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT))=0 then begin
+       MappedMemoryRange:=TVkMappedMemoryRange.Create(FirstMemoryBlock.MemoryChunk.Handle,0,VK_WHOLE_SIZE);
+       fDevice.Commands.InvalidateMappedMemoryRanges(fDevice.Handle,1,@MappedMemoryRange);
+      end;
       p:=FirstMemoryBlock.MapMemory(0,FirstMemoryBlock.fSize);
      end;
      if assigned(p) then begin
@@ -22379,10 +22672,11 @@ constructor TpvVulkanTexture.CreateFromHDR(const aDevice:TpvVulkanDevice;
                                            const aStream:TStream;
                                            const aMipMaps:boolean;
                                            const aSRGB:boolean;
-                                           const aAdditionalSRGB:boolean);
+                                           const aAdditionalSRGB:boolean;
+                                           const aDestinationFormat:TVkFormat);
 begin
  Create(aDevice);
- LoadFromHDR(aStream,aMipMaps,aSRGB,aAdditionalSRGB);
+ LoadFromHDR(aStream,aMipMaps,aSRGB,aAdditionalSRGB,aDestinationFormat);
  Finish(aGraphicsQueue,aGraphicsCommandBuffer,aGraphicsFence,aTransferQueue,aTransferCommandBuffer,aTransferFence);
 end;
 
@@ -22569,6 +22863,10 @@ begin
    aCompressed:=false;
   end;
   VK_FORMAT_R8G8B8A8_UNORM:begin
+   aMipMapSize:=aMipMapHeight*aMipMapWidth*4*SizeOf(TpvUInt8);
+   aCompressed:=false;
+  end;
+  VK_FORMAT_R8G8B8A8_UINT:begin
    aMipMapSize:=aMipMapHeight*aMipMapWidth*4*SizeOf(TpvUInt8);
    aCompressed:=false;
   end;
@@ -22931,6 +23229,14 @@ begin
   VK_FORMAT_ASTC_12x12_SRGB_BLOCK:begin
    aMipMapSize:=((aMipMapHeight+11) div 12)*((aMipMapWidth+11) div 12)*16;
    aCompressed:=true;
+  end;
+  VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:begin
+   aMipMapSize:=aMipMapHeight*aMipMapWidth*SizeOf(TpvUInt32);
+   aCompressed:=false;
+  end;
+  VK_FORMAT_B10G11R11_UFLOAT_PACK32:begin
+   aMipMapSize:=aMipMapHeight*aMipMapWidth*SizeOf(TpvUInt32);
+   aCompressed:=false;
   end;
   else begin
    raise EpvVulkanTextureException.Create('Non-supported texture image format ('+IntToStr(TpvInt32(aFormat))+')');
@@ -24392,6 +24698,14 @@ const DDS_MAGIC=$20534444;
       D3DFMT_BC5S=$53354342;
       D3DFMT_RXGB=$42475852;
       D3DFMT_DX10=$30315844;
+      D3DFMT_A16B16G16R16=36;
+      D3DFMT_Q16W16V16U16=110;
+      D3DFMT_R16F=111;
+      D3DFMT_G16R16F=112;
+      D3DFMT_A16B16G16R16F=113;
+      D3DFMT_R32F=114;
+      D3DFMT_G32R32F=115;
+      D3DFMT_A32B32G32R32F=116;
       DXGI_FORMAT_UNKNOWN=0;
       DXGI_FORMAT_R32G32B32A32_TYPELESS=1;
       DXGI_FORMAT_R32G32B32A32_FLOAT=2;
@@ -24631,6 +24945,30 @@ begin
     end;
     D3DFMT_BC5S:begin
      ImageFormat:=VK_FORMAT_BC5_SNORM_BLOCK;
+    end;
+    D3DFMT_A16B16G16R16:begin
+     ImageFormat:=VK_FORMAT_BC5_SNORM_BLOCK;
+    end;
+    D3DFMT_Q16W16V16U16:begin
+     ImageFormat:=VK_FORMAT_R16G16B16A16_SNORM;
+    end;
+    D3DFMT_R16F:begin
+     ImageFormat:=VK_FORMAT_R16_SFLOAT;
+    end;
+    D3DFMT_G16R16F:begin
+     ImageFormat:=VK_FORMAT_R16G16_SFLOAT;
+    end;
+    D3DFMT_A16B16G16R16F:begin
+     ImageFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
+    end;
+    D3DFMT_R32F:begin
+     ImageFormat:=VK_FORMAT_R32_SFLOAT;
+    end;
+    D3DFMT_G32R32F:begin
+     ImageFormat:=VK_FORMAT_R32G32_SFLOAT;
+    end;
+    D3DFMT_A32B32G32R32F:begin
+     ImageFormat:=VK_FORMAT_R32G32B32A32_SFLOAT;
     end;
     D3DFMT_DX10:begin
      if aStream.Read(HeaderDX10,SizeOf(TDDSHeaderDX10))<>SizeOf(TDDSHeaderDX10) then begin
@@ -25140,7 +25478,7 @@ begin
  end;
 end;
 
-procedure TpvVulkanTexture.LoadFromHDR(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean=false);
+procedure TpvVulkanTexture.LoadFromHDR(const aStream:TStream;const aMipMaps,aSRGB:boolean;const aAdditionalSRGB:boolean;const aDestinationFormat:TVkFormat);
 const RGBE_DATA_RED=0;
       RGBE_DATA_GREEN=1;
       RGBE_DATA_BLUE=2;
@@ -25149,8 +25487,8 @@ const RGBE_DATA_RED=0;
  var f:TpvFloat;
  begin
   if e<>0 then begin
-   f:=ldexp(1.0,e-(128+8));
- //f:=power(2.0,e-(128+8));
+   f:=ldexp(1.0,TpvInt32(e)-TpvInt32(128+8));
+ //f:=power(2.0,TpvInt32(e)-TpvInt32(128+8));
    red:=r*f;
    green:=g*f;
    blue:=b*f;
@@ -25159,7 +25497,7 @@ const RGBE_DATA_RED=0;
    red:=0.0;
    green:=0.0;
    blue:=0.0;
-   alpha:=0.0;
+   alpha:=1.0;
   end;
  end;
  function LoadHDRImage(var ImageData:TpvPointer;var ImageWidth,ImageHeight:TpvInt32):boolean;
@@ -25174,6 +25512,9 @@ const RGBE_DATA_RED=0;
      rgbe:array[0..3] of TpvUInt8;
      Len,Val:TpvUInt8;
      p:PVkFloat;
+     p8:PpvUInt8;
+     p16:PpvHalfFloat;
+     p32:PpvUInt32;
  begin
   result:=false;
   scanlinebuffer:=nil;
@@ -25191,7 +25532,7 @@ const RGBE_DATA_RED=0;
    begin
     i:=0;
     while aStream.Read(c,SizeOf(AnsiChar))=SizeOf(AnsiChar) do begin
-     if c in [#1..#9,#11..#12,#14..#32] then begin
+     if c in [#0..#32] then begin
       break;
      end else if i<255 then begin
       inc(i);
@@ -25199,11 +25540,6 @@ const RGBE_DATA_RED=0;
      end;
     end;
     programtype[0]:=TpvVulkanRawByteChar(TpvUInt8(i));
-    while aStream.Read(c,SizeOf(AnsiChar))=SizeOf(AnsiChar) do begin
-     if c in [#0,#10,#13] then begin
-      break;
-     end;
-    end;
    end;
    if length(programtype)>0 then begin
    end;
@@ -25262,22 +25598,22 @@ const RGBE_DATA_RED=0;
     if (pos('-Y',String(line))=1) and (pos('+X',String(line))>2) then begin
      Delete(line,1,2);
      line:=ShortString(Trim(String(line)));
-     ImageWidth:=0;
+     ImageHeight:=0;
      i:=0;
      while ((i+1)<=length(line)) and (line[i+1] in ['0'..'9']) do begin
       inc(i);
-      ImageWidth:=(ImageWidth*10)+(TpvUInt8(TpvVulkanRawByteChar(line[i]))-TpvUInt8(TpvVulkanRawByteChar('0')));
+      ImageHeight:=(ImageHeight*10)+(TpvUInt8(TpvVulkanRawByteChar(line[i]))-TpvUInt8(TpvVulkanRawByteChar('0')));
      end;
      Delete(line,1,i);
      line:=ShortString(Trim(String(line)));
-     if pos('-X',String(line))=1 then begin
+     if pos('+X',String(line))=1 then begin
       Delete(line,1,2);
       line:=ShortString(Trim(String(line)));
-      ImageHeight:=0;
+      ImageWidth:=0;
       i:=0;
       while ((i+1)<=length(line)) and (line[i+1] in ['0'..'9']) do begin
        inc(i);
-       ImageHeight:=(ImageHeight*10)+(TpvUInt8(TpvVulkanRawByteChar(line[i]))-TpvUInt8(TpvVulkanRawByteChar('0')));
+       ImageWidth:=(ImageWidth*10)+(TpvUInt8(TpvVulkanRawByteChar(line[i]))-TpvUInt8(TpvVulkanRawByteChar('0')));
       end;
       OK:=true;
      end;
@@ -25320,6 +25656,11 @@ const RGBE_DATA_RED=0;
         if length(scanlinebuffer)<>ImageWidth then begin
          SetLength(scanlinebuffer,ImageWidth);
         end;
+        for x:=0 to ImageWidth-1 do begin
+         for i:=0 to 3 do begin
+          scanlinebuffer[x,i]:=0;
+         end;
+        end;
         for i:=0 to 3 do begin
          x:=0;
          while x<ImageWidth do begin
@@ -25353,18 +25694,18 @@ const RGBE_DATA_RED=0;
            goto DoFail;
           end;
          end;
-         for x:=0 to ImageWidth-1 do begin
-          rgbe2float(scanlinebuffer[x,0],scanlinebuffer[x,1],scanlinebuffer[x,2],scanlinebuffer[x,3],r,g,b,a);
-          p^:=r;
-          inc(p);
-          p^:=g;
-          inc(p);
-          p^:=b;
-          inc(p);
-          p^:=a;
-          inc(p);
-          dec(CountPixels);
-         end;
+        end;
+        for x:=0 to ImageWidth-1 do begin
+         rgbe2float(scanlinebuffer[x,0],scanlinebuffer[x,1],scanlinebuffer[x,2],scanlinebuffer[x,3],r,g,b,a);
+         p^:=r;
+         inc(p);
+         p^:=g;
+         inc(p);
+         p^:=b;
+         inc(p);
+         p^:=a;
+         inc(p);
+         dec(CountPixels);
         end;
        end;
       end else begin
@@ -25389,9 +25730,118 @@ const RGBE_DATA_RED=0;
       inc(p,2);
      end;
     end;
+    case aDestinationFormat of
+     VK_FORMAT_R32G32B32A32_SFLOAT:begin
+      // Just passs through
+     end;
+     VK_FORMAT_R16G16B16A16_SFLOAT:begin
+      CountPixels:=ImageWidth*ImageHeight;
+      p:=ImageData;
+      p16:=ImageData;
+      while CountPixels>0 do begin
+       dec(CountPixels);
+       p16^:=TpvHalfFloat.Create(p^);
+       inc(p);
+       inc(p16);
+       p16^:=TpvHalfFloat.Create(p^);
+       inc(p);
+       inc(p16);
+       p16^:=TpvHalfFloat.Create(p^);
+       inc(p);
+       inc(p16);
+       p16^:=TpvHalfFloat.Create(p^);
+       inc(p);
+       inc(p16);
+      end;
+      ReAllocMem(ImageData,ImageWidth*ImageHeight*SizeOf(TpvHalfFloat)*4);
+     end;
+     VK_FORMAT_E5B9G9R9_UFLOAT_PACK32:begin
+      CountPixels:=ImageWidth*ImageHeight;
+      p:=ImageData;
+      p32:=ImageData;
+      while CountPixels>0 do begin
+       dec(CountPixels);
+       r:=p^;
+       inc(p);
+       g:=p^;
+       inc(p);
+       b:=p^;
+       inc(p,2);
+       p32^:=ConvertRGB32FToRGB9E5(r,g,b);
+       inc(p32);
+      end;
+      ReAllocMem(ImageData,ImageWidth*ImageHeight*SizeOf(TpvUInt32));
+     end;
+     VK_FORMAT_B10G11R11_UFLOAT_PACK32:begin
+      CountPixels:=ImageWidth*ImageHeight;
+      p:=ImageData;
+      p32:=ImageData;
+      while CountPixels>0 do begin
+       dec(CountPixels);
+       r:=p^;
+       inc(p);
+       g:=p^;
+       inc(p);
+       b:=p^;
+       inc(p,2);
+       p32^:=ConvertRGB32FToR11FG11FB10F(r,g,b);
+       inc(p32);
+      end;
+      ReAllocMem(ImageData,ImageWidth*ImageHeight*SizeOf(TpvUInt32));
+     end;
+     VK_FORMAT_R8G8B8A8_UNORM:begin
+      CountPixels:=ImageWidth*ImageHeight;
+      p:=ImageData;
+      p8:=ImageData;
+      while CountPixels>0 do begin
+       dec(CountPixels);
+       p8^:=Min(Max(round(p^*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(p^*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(p^*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(p^*255.0),0),255);
+       inc(p);
+       inc(p8);
+      end;
+      ReAllocMem(ImageData,ImageWidth*ImageHeight*SizeOf(TpvUInt8)*4);
+     end;
+     VK_FORMAT_R8G8B8A8_SRGB:begin
+      CountPixels:=ImageWidth*ImageHeight;
+      p:=ImageData;
+      p8:=ImageData;
+      while CountPixels>0 do begin
+       dec(CountPixels);
+       p8^:=Min(Max(round(ConvertLinearToSRGB(p^)*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(ConvertLinearToSRGB(p^)*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(ConvertLinearToSRGB(p^)*255.0),0),255);
+       inc(p);
+       inc(p8);
+       p8^:=Min(Max(round(p^*255.0),0),255);
+       inc(p);
+       inc(p8);
+      end;
+      ReAllocMem(ImageData,ImageWidth*ImageHeight*SizeOf(TpvUInt8)*4);
+     end;
+     else begin
+      FreeMem(ImageData);
+      ImageData:=nil;
+      result:=false;
+      exit;
+     end;
+    end;
    end else begin
     FreeMem(ImageData);
     ImageData:=nil;
+    result:=false;
    end;
    SetLength(scanlinebuffer,0);
   end;
@@ -25404,7 +25854,7 @@ begin
  ImageHeight:=0;
  try
   if LoadHDRImage(ImageData,ImageWidth,ImageHeight) then begin
-   LoadFromMemory(VK_FORMAT_R32G32B32A32_SFLOAT,
+   LoadFromMemory(aDestinationFormat,
                   VK_SAMPLE_COUNT_1_BIT,
                   Max(1,ImageWidth),
                   Max(1,ImageHeight),

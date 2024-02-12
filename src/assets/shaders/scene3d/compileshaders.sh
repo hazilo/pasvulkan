@@ -70,32 +70,51 @@ compileshaderarguments=(
   "-V cull_depth_resolve.comp -DMULTIVIEW -DMSAA -o ${tempPath}/cull_depth_resolve_multiview_msaa_comp.spv"
   "-V cull_depth_resolve.comp -DMULTIVIEW -DMSAA -DREVERSEDZ -o ${tempPath}/cull_depth_resolve_multiview_msaa_reversedz_comp.spv"
 
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=0 -o ${tempPath}/downsample_culldepthpyramid_level0_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=0 -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_reversedz_level0_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -o ${tempPath}/downsample_culldepthpyramid_multiview_level0_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_multiview_reversedz_level0_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=1 -o ${tempPath}/downsample_culldepthpyramid_level1_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -o ${tempPath}/downsample_culldepthpyramid_multiview_level1_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=1 -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_reversedz_level1_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_multiview_reversedz_level1_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMULTIPASS -o ${tempPath}/downsample_culldepthpyramid_multipass_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMULTIPASS -DMULTIVIEW -o ${tempPath}/downsample_culldepthpyramid_multiview_multipass_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMULTIPASS -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_reversedz_multipass_comp.spv"
-  "-V downsample_culldepthpyramid.comp -DMULTIPASS -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_multiview_reversedz_multipass_comp.spv"
-
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -o ${tempPath}/downsample_depth_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DREVERSEDZ -o ${tempPath}/downsample_depth_reversedz_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMSAA -o ${tempPath}/downsample_depth_msaa_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_msaa_reversedz_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -o ${tempPath}/downsample_depth_multiview_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_reversedz_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DMSAA -o ${tempPath}/downsample_depth_multiview_msaa_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_msaa_reversedz_level0_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=1 -o ${tempPath}/downsample_depth_level1_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -o ${tempPath}/downsample_depth_multiview_level1_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=1 -DREVERSEDZ -o ${tempPath}/downsample_depth_reversedz_level1_comp.spv"
-  "-V downsample_depth.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_reversedz_level1_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DFIRSTPASS -o ${tempPath}/downsample_culldepthpyramid_firstpass_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DFIRSTPASS -DMULTIVIEW -o ${tempPath}/downsample_culldepthpyramid_multiview_firstpass_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DFIRSTPASS -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_reversedz_firstpass_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DFIRSTPASS -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_multiview_reversedz_firstpass_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DREDUCTION -o ${tempPath}/downsample_culldepthpyramid_reduction_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DREDUCTION -DMULTIVIEW -o ${tempPath}/downsample_culldepthpyramid_multiview_reduction_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DREDUCTION -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_reversedz_reduction_comp.spv"
+  "-V downsample_culldepthpyramid.comp -DREDUCTION -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_culldepthpyramid_multiview_reversedz_reduction_comp.spv"
   
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -o ${tempPath}/downsample_depth_old_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DREVERSEDZ -o ${tempPath}/downsample_depth_old_reversedz_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMSAA -o ${tempPath}/downsample_depth_old_msaa_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_old_msaa_reversedz_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -o ${tempPath}/downsample_depth_old_multiview_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_old_multiview_reversedz_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DMSAA -o ${tempPath}/downsample_depth_old_multiview_msaa_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=0 -DMULTIVIEW -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_old_multiview_msaa_reversedz_level0_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=1 -o ${tempPath}/downsample_depth_old_level1_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -o ${tempPath}/downsample_depth_old_multiview_level1_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=1 -DREVERSEDZ -o ${tempPath}/downsample_depth_old_reversedz_level1_comp.spv"
+  #"-V downsample_depth_old.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_old_multiview_reversedz_level1_comp.spv"
+  
+  "-V downsample_depth.comp -DFIRSTPASS -o ${tempPath}/downsample_depth_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DREVERSEDZ -o ${tempPath}/downsample_depth_reversedz_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMSAA -o ${tempPath}/downsample_depth_msaa_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_msaa_reversedz_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMULTIVIEW -o ${tempPath}/downsample_depth_multiview_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_reversedz_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMULTIVIEW -DMSAA -o ${tempPath}/downsample_depth_multiview_msaa_firstpass_comp.spv"
+  "-V downsample_depth.comp -DFIRSTPASS -DMULTIVIEW -DMSAA -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_msaa_reversedz_firstpass_comp.spv"
+  "-V downsample_depth.comp -DREDUCTION -o ${tempPath}/downsample_depth_reduction_comp.spv"
+  "-V downsample_depth.comp -DREDUCTION -DMULTIVIEW -o ${tempPath}/downsample_depth_multiview_reduction_comp.spv"
+  "-V downsample_depth.comp -DREDUCTION -DREVERSEDZ -o ${tempPath}/downsample_depth_reversedz_reduction_comp.spv"
+  "-V downsample_depth.comp -DREDUCTION -DMULTIVIEW -DREVERSEDZ -o ${tempPath}/downsample_depth_multiview_reversedz_reduction_comp.spv"
+  
+  "-V downsample_heightmap.comp -o ${tempPath}/downsample_heightmap_comp.spv"
+
+  "-V downsample_normalmap.comp -o ${tempPath}/downsample_normalmap_comp.spv"
+
+  "-V downsample_cubemap.comp -o ${tempPath}/downsample_cubemap_rgba8_comp.spv"
+  "-V downsample_cubemap.comp -DUSE_RGB9E5 -o ${tempPath}/downsample_cubemap_rgb9e5_comp.spv"
+  "-V downsample_cubemap.comp -DUSE_R11G11B10F -o ${tempPath}/downsample_cubemap_r11g11b10f_comp.spv" 
+  "-V downsample_cubemap.comp -DUSE_RGBA16F -o ${tempPath}/downsample_cubemap_rgba16f_comp.spv"
+  "-V downsample_cubemap.comp -DUSE_RGBA32F -o ${tempPath}/downsample_cubemap_rgba32f_comp.spv"  
+    
   "-V dof_autofocus.comp -o ${tempPath}/dof_autofocus_comp.spv"
   "-V dof_bokeh.comp -o ${tempPath}/dof_bokeh_comp.spv"
   "-V dof_prepare.frag -o ${tempPath}/dof_prepare_frag.spv"
@@ -200,17 +219,26 @@ compileshaderarguments=(
   "-V fullscreen.vert -o ${tempPath}/fullscreen_vert.spv"
   
   "-V cubemap.vert -o ${tempPath}/cubemap_vert.spv"
+  "-V cubemap_cubemap.comp -o ${tempPath}/cubemap_cubemap_comp.spv"
+  "-V cubemap_cubemap.comp -DUSE_RGB9E5 -o ${tempPath}/cubemap_cubemap_rgb9e5_comp.spv"
+  "-V cubemap_equirectangularmap.comp -o ${tempPath}/cubemap_equirectangularmap_comp.spv"
+  "-V cubemap_equirectangularmap.comp -DUSE_RGB9E5 -o ${tempPath}/cubemap_equirectangularmap_rgb9e5_comp.spv"
   "-V cubemap_sky.comp -o ${tempPath}/cubemap_sky_comp.spv"
   "-V cubemap_sky.comp -DFAST -o ${tempPath}/cubemap_sky_fast_comp.spv"
+  "-V cubemap_sky.comp -DUSE_RGB9E5 -o ${tempPath}/cubemap_sky_rgb9e5_comp.spv"
+  "-V cubemap_sky.comp -DUSE_RGB9E5 -DFAST -o ${tempPath}/cubemap_sky_fast_rgb9e5_comp.spv"
   "-V cubemap_sky.frag -o ${tempPath}/cubemap_sky_frag.spv"
   "-V cubemap_sky.frag -DFAST -o ${tempPath}/cubemap_sky_fast_frag.spv"
+  "-V cubemap_starlight.comp -o ${tempPath}/cubemap_starlight_comp.spv"
+  "-V cubemap_starlight.comp -DUSE_RGB9E5 -o ${tempPath}/cubemap_starlight_rgb9e5_comp.spv"
   "-V cubemap_filter.comp -o ${tempPath}/cubemap_filter_comp.spv"
+  "-V cubemap_filter.comp -DUSE_RGB9E5 -o ${tempPath}/cubemap_filter_rgb9e5_comp.spv"
   
   "-V passthrough.vert -o ${tempPath}/passthrough_vert.spv"
   
   "-V dummy.frag -o ${tempPath}/dummy_frag.spv"
 
-  "-V dithering.frag -o ${tempPath}/dithering_frag.spv"
+  #"-V dithering.frag -o ${tempPath}/dithering_frag.spv"
 
   "-V debug_blit.frag -o ${tempPath}/debug_blit_frag.spv"
   
@@ -237,6 +265,8 @@ compileshaderarguments=(
   "-V antialiasing_smaa_weights.frag -o ${tempPath}/antialiasing_smaa_weights_frag.spv"
   
   "-V blit.frag -o ${tempPath}/blit_frag.spv"
+
+  "-V framebuffer_blit.frag -o ${tempPath}/framebuffer_blit_frag.spv"
 
   "-V msaa_resolve.frag -o ${tempPath}/msaa_resolve_frag.spv"
   
@@ -274,6 +304,8 @@ compileshaderarguments=(
   
   "-V cubemap_sphericalharmonics_normalization.comp -o ${tempPath}/cubemap_sphericalharmonics_normalization_comp.spv"
 
+  "-V cubemap_sphericalharmonics_extract_metadata.comp -o ${tempPath}/cubemap_sphericalharmonics_extract_metadata_comp.spv"
+
   "-V topdownskyocclusionmap_resolve.frag -o ${tempPath}/topdownskyocclusionmap_resolve_frag.spv"
 
   "-V topdownskyocclusionmap_blur.frag -o ${tempPath}/topdownskyocclusionmap_blur_frag.spv"
@@ -295,6 +327,100 @@ compileshaderarguments=(
   "-V voxel_mesh_visualization.geom -o ${tempPath}/voxel_mesh_visualization_geom.spv"
   "-V voxel_mesh_visualization.frag -o ${tempPath}/voxel_mesh_visualization_frag.spv"
 
+  "-V planet_base_mesh_index_generation.comp -o ${tempPath}/planet_base_mesh_index_generation_comp.spv"
+  "-V planet_base_mesh_vertex_generation.comp -o ${tempPath}/planet_base_mesh_vertex_generation_comp.spv"
+  "-V planet_mesh_vertex_generation.comp -o ${tempPath}/planet_mesh_vertex_generation_comp.spv"
+
+  "-V planet_icosphere_mesh_index_generation.comp -o ${tempPath}/planet_icosphere_mesh_index_generation_comp.spv"
+  "-V planet_icosphere_mesh_vertex_generation.comp -o ${tempPath}/planet_icosphere_mesh_vertex_generation_comp.spv"
+
+  "-V planet_heightmap_random_initialization.comp -o ${tempPath}/planet_heightmap_random_initialization_comp.spv"
+
+  "-V planet_heightmap_data_initialization.comp -o ${tempPath}/planet_heightmap_data_initialization_comp.spv"
+  
+  "-V planet_heightmap_flatten.comp -o ${tempPath}/planet_heightmap_flatten_comp.spv"
+  
+  "-V planet_heightmap_modification.comp -o ${tempPath}/planet_heightmap_modification_comp.spv"
+
+  "-V planet_normalmap_generation.comp -o ${tempPath}/planet_normalmap_generation_comp.spv"
+
+  "-V planet_tiled_mesh_index_generation.comp -o ${tempPath}/planet_tiled_mesh_index_generation_comp.spv"
+
+  "-V planet_tiled_mesh_vertex_generation.comp -o ${tempPath}/planet_tiled_mesh_vertex_generation_comp.spv"
+
+  "-V planet_tiles_dirty_expansion.comp -o ${tempPath}/planet_tiles_dirty_expansion_comp.spv"
+
+  "-V planet_tiles_dirty_queue_generation.comp -o ${tempPath}/planet_tiles_dirty_queue_generation_comp.spv"
+
+  "-V planet_tiled_mesh_boundingvolumes_generation.comp -o ${tempPath}/planet_tiled_mesh_boundingvolumes_generation_comp.spv"
+
+  "-V planet_ray_intersection.comp -o ${tempPath}/planet_ray_intersection_comp.spv"
+
+  "-V planet_cull.comp -o ${tempPath}/planet_cull_simple_comp.spv"
+  "-V planet_cull.comp -DPASS0 -o ${tempPath}/planet_cull_pass0_comp.spv"
+  "-V planet_cull.comp -DPASS1 -o ${tempPath}/planet_cull_pass1_comp.spv"
+
+  "-V planet_renderpass.vert -o ${tempPath}/planet_renderpass_vert.spv"
+  "-V planet_renderpass.vert -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_vert.spv"
+  "-V planet_renderpass.vert -DTRIANGLES -o ${tempPath}/planet_renderpass_triangles_vert.spv"
+  "-V planet_renderpass.vert -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DOCTAHEDRAL -o ${tempPath}/planet_renderpass_octahedral_vert.spv"
+  "-V planet_renderpass.vert -DOCTAHEDRAL -DVELOCITY -o ${tempPath}/planet_renderpass_octahedral_velocity_vert.spv"
+  "-V planet_renderpass.vert -DOCTAHEDRAL -DTRIANGLES -o ${tempPath}/planet_renderpass_octahedral_triangles_vert.spv"
+  "-V planet_renderpass.vert -DOCTAHEDRAL -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_octahedral_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DICOSAHEDRAL -DTRIANGLES -o ${tempPath}/planet_renderpass_icosahedral_triangles_vert.spv"
+  "-V planet_renderpass.vert -DICOSAHEDRAL -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_icosahedral_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_external_vert.spv"
+  "-V planet_renderpass.vert -DEXTERNAL_VERTICES -DVELOCITY -o ${tempPath}/planet_renderpass_external_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -o ${tempPath}/planet_renderpass_direct_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DVELOCITY -o ${tempPath}/planet_renderpass_direct_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DTRIANGLES -o ${tempPath}/planet_renderpass_direct_triangles_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_direct_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DOCTAHEDRAL -o ${tempPath}/planet_renderpass_direct_octahedral_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DOCTAHEDRAL -DVELOCITY -o ${tempPath}/planet_renderpass_direct_octahedral_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DOCTAHEDRAL -DTRIANGLES -o ${tempPath}/planet_renderpass_direct_octahedral_triangles_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DOCTAHEDRAL -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_direct_octahedral_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DICOSAHEDRAL -DTRIANGLES -o ${tempPath}/planet_renderpass_direct_icosahedral_triangles_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DICOSAHEDRAL -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_direct_icosahedral_triangles_velocity_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_direct_external_vert.spv"
+  "-V planet_renderpass.vert -DDIRECT -DEXTERNAL_VERTICES -DVELOCITY -o ${tempPath}/planet_renderpass_direct_external_velocity_vert.spv"
+
+  "-V planet_renderpass.tesc -o ${tempPath}/planet_renderpass_tesc.spv"
+  "-V planet_renderpass.tesc -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_tesc.spv"
+  "-V planet_renderpass.tesc -DTRIANGLES -o ${tempPath}/planet_renderpass_triangles_tesc.spv"
+  "-V planet_renderpass.tesc -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_triangles_velocity_tesc.spv"
+
+  "-V planet_renderpass.tese -o ${tempPath}/planet_renderpass_tese.spv"
+  "-V planet_renderpass.tese -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_tese.spv"
+  "-V planet_renderpass.tese -DTRIANGLES -o ${tempPath}/planet_renderpass_triangles_tese.spv"
+  "-V planet_renderpass.tese -DTRIANGLES -DVELOCITY -o ${tempPath}/planet_renderpass_triangles_velocity_tese.spv"
+
+  "-V planet_renderpass.frag -o ${tempPath}/planet_renderpass_frag.spv"
+  "-V planet_renderpass.frag -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_frag.spv"
+  "-V planet_renderpass.frag -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_velocity_external_frag.spv"
+  "-V planet_renderpass.frag -DWIREFRAME -o ${tempPath}/planet_renderpass_wireframe_frag.spv"
+  "-V planet_renderpass.frag -DWIREFRAME -DVELOCITY -o ${tempPath}/planet_renderpass_wireframe_velocity_frag.spv"
+  "-V planet_renderpass.frag -DWIREFRAME -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_external_frag.spv"
+  "-V planet_renderpass.frag -DWIREFRAME -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_velocity_external_frag.spv"
+  
+  # MSM
+  "-V planet_renderpass.frag -DMSM -o ${tempPath}/planet_renderpass_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_velocity_external_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DWIREFRAME -o ${tempPath}/planet_renderpass_wireframe_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DWIREFRAME -DVELOCITY -o ${tempPath}/planet_renderpass_wireframe_velocity_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DWIREFRAME -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_external_msm_frag.spv"
+  "-V planet_renderpass.frag -DMSM -DWIREFRAME -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_velocity_external_msm_frag.spv"
+
+  # PCFPCSS
+  "-V planet_renderpass.frag -DPCFPCSS -o ${tempPath}/planet_renderpass_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DVELOCITY -o ${tempPath}/planet_renderpass_velocity_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_velocity_external_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DWIREFRAME -o ${tempPath}/planet_renderpass_wireframe_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DWIREFRAME -DVELOCITY -o ${tempPath}/planet_renderpass_wireframe_velocity_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DWIREFRAME -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_external_pcfpcss_frag.spv"
+  "-V planet_renderpass.frag -DPCFPCSS -DWIREFRAME -DVELOCITY -DEXTERNAL_VERTICES -o ${tempPath}/planet_renderpass_wireframe_velocity_external_pcfpcss_frag.spv"
+    
 )
 
 #############################################
@@ -537,17 +663,19 @@ addMeshFragmentPassTargetVariants(){
   # Depth only stuff
   addMeshFragmentDepthOnlyVariants "${1}_depth" "$2 -DDEPTHONLY"  
 
+  # -DFRUSTUMCLUSTERGRID -DLIGHTCLUSTERS
+
   # The reflective shadow map stuff
-  addMeshFragmentReflectiveShadowMapVariants "${1}_rsm" "$2 -DFRUSTUMCLUSTERGRID -DDECALS -DLIGHTS -DLIGHTCLUSTERS -DSHADOWS -DREFLECTIVESHADOWMAPOUTPUT"  
+  addMeshFragmentReflectiveShadowMapVariants "${1}_rsm" "$2 -DDECALS -DLIGHTS -DSHADOWS -DREFLECTIVESHADOWMAPOUTPUT"  
 
   # The voxelization stuff
   addMeshFragmentVoxelizationVariants "${1}_voxelization" "$2 -DVOXELIZATION"  
 
   # The actual shading stuff
-  addMeshFragmentShadingGlobalIlluminationVariants "${1}_shading" "$2 -DFRUSTUMCLUSTERGRID -DDECALS -DLIGHTS -DLIGHTCLUSTERS -DSHADOWS"  
+  addMeshFragmentShadingGlobalIlluminationVariants "${1}_shading" "$2 -DDECALS -DLIGHTS -DSHADOWS"  
     
   # The environment map stuff
-  #addMeshFragmentShadingGlobalIlluminationVariants "${1}_envmap" "$2 -DFRUSTUMCLUSTERGRID -DDECALS -DLIGHTS -DLIGHTCLUSTERS -DSHADOWS -DENVMAP"
+  #addMeshFragmentShadingGlobalIlluminationVariants "${1}_envmap" "$2 -DDECALS -DLIGHTS -DSHADOWS -DENVMAP"
 
 }
 

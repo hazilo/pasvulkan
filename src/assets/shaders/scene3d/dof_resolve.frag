@@ -6,12 +6,7 @@
 
 layout(location = 0) in vec2 inTexCoord;
 
-#ifdef PASS1
-layout(location = 0) out vec4 outFragColor0;
-layout(location = 1) out vec4 outFragColor1;
-#else
 layout(location = 0) out vec4 outFragColor;
-#endif
 
 layout(push_constant) uniform PushConstants {
   float bokehChromaticAberration;
@@ -31,7 +26,7 @@ void main(){
   vec4 colorA = textureLod(uTextureInputs[0], uvw, 0.0);
   //vec4 colorB = fma(textureLod(uTextureInputs[1], uvw, 0.0), vec2(1.0, 2.0).xxxy, vec2(0.0, -1.0).xxxy);
 
-  colorA.xyz = clamp(colorA.xyz, vec3(0.0), vec3(32768.0));
+  colorA.xyz = clamp(colorA.xyz, vec3(0.0), vec3(65504.0));
 
   float CoC = colorA.w;
 
@@ -42,7 +37,7 @@ void main(){
   vec3 color = vec3(textureLod(uTextureInputs[1], uvw + vec3(vec2(0.0, 1.0) * chromaticAberrationFringeOffset, 0.0), 0.0).x, 
                     textureLod(uTextureInputs[1], uvw + vec3(vec2(-0.866, -0.5) * chromaticAberrationFringeOffset, 0.0), 0.0).y, 
                     textureLod(uTextureInputs[1], uvw + vec3(vec2(0.866, -0.5) * chromaticAberrationFringeOffset, 0.0), 0.0).z); 
-  color.xyz = clamp(color.xyz, vec3(0.0), vec3(32768.0));
+  color.xyz = clamp(color.xyz, vec3(0.0), vec3(65504.0));
 
   color = mix(colorA.xyz, color, smoothstep(1.0 * inverseInputTextureSize.y, 2.0 * inverseInputTextureSize.y, abs(CoC))); 
 
@@ -50,6 +45,6 @@ void main(){
    color = mix(color, mix(mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), smoothstep(0.5 * inverseInputTextureSize.y, 1.0 * inverseInputTextureSize.y, CoC)), vec3(0.0, 0.0, 1.0), smoothstep(0.5 * inverseInputTextureSize.y, 1.0 * inverseInputTextureSize.y, -CoC)), 0.125);
   }
   
-  outFragColor = vec4(color, 1.0);                                                                                     
+  outFragColor = vec4(clamp(color.xyz, vec3(-65504.0), vec3(65504.0)), 1.0);                                                                                     
 
 }

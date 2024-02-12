@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -144,7 +144,7 @@ begin
                                                     TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
                                                     VK_QUEUE_FAMILY_IGNORED,
                                                     VK_QUEUE_FAMILY_IGNORED,
-                                                    fInstance.LockOrderIndependentTransparencyABufferBuffers[aInFlightFrameIndex].VulkanBuffer.Handle,
+                                                    fInstance.LockOrderIndependentTransparencyABufferBuffer.VulkanBuffer.Handle,
                                                     0,
                                                     VK_WHOLE_SIZE);
 
@@ -156,7 +156,7 @@ begin
                                                       TVkImageLayout(VK_IMAGE_LAYOUT_GENERAL),
                                                       VK_QUEUE_FAMILY_IGNORED,
                                                       VK_QUEUE_FAMILY_IGNORED,
-                                                      fInstance.LockOrderIndependentTransparencyAuxImages[aInFlightFrameIndex].VulkanImage.Handle,
+                                                      fInstance.LockOrderIndependentTransparencyAuxImage.VulkanImage.Handle,
                                                       ImageSubresourceRange);
 
  if fInstance.Renderer.TransparencyMode=TpvScene3DRendererTransparencyMode.SPINLOCKOIT then begin
@@ -166,7 +166,7 @@ begin
                                                        TVkImageLayout(VK_IMAGE_LAYOUT_GENERAL),
                                                        VK_QUEUE_FAMILY_IGNORED,
                                                        VK_QUEUE_FAMILY_IGNORED,
-                                                       fInstance.LockOrderIndependentTransparencySpinLockImages[aInFlightFrameIndex].VulkanImage.Handle,
+                                                       fInstance.LockOrderIndependentTransparencySpinLockImage.VulkanImage.Handle,
                                                        ImageSubresourceRange);
   CountImageMemoryBarriers:=2;
  end else begin
