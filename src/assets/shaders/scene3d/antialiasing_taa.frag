@@ -143,7 +143,7 @@ void main() {
         // Variance clipping ("An Excursion in Temporal Supersampling")
         vec4 m0 = currentSamples[0],
             m1 = currentSamples[0] * currentSamples[0];   
-        for(int i = 1; i < 9; ++i) {
+        for(int i = 1; i < 9; i++) {
           vec4 currentSample = currentSamples[i]; 
           m0 += currentSample;
           m1 += currentSample * currentSample;
@@ -176,7 +176,7 @@ void main() {
                   mix(historySample, current, mix(pushConstants.translucentCoefficient, pushConstants.opaqueCoefficient, clamp(currentSamples[4].w, 0.0, 1.0))), 
                   clamp(pushConstants.mixCoefficient, 0.0, 1.0)); 
 
-      color = clamp(Untonemap(YCoCgToRGB(color)), vec4(0.0), vec4(65536.0));    
+      color = clamp(Untonemap(YCoCgToRGB(color)), vec4(0.0), vec4(65504.0));    
 
     }
 
